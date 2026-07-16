@@ -12,6 +12,7 @@ import java.util.function.Supplier;
 import javax.swing.SwingUtilities;
 
 import ghidra.framework.main.AppInfo;
+import ghidra.framework.main.FrontEndTool;
 import ghidra.framework.model.DomainFile;
 import ghidra.framework.model.Project;
 import ghidra.framework.model.ProjectLocator;
@@ -23,9 +24,16 @@ import ghidra.util.task.TaskMonitor;
 /** Project lifecycle operations that require a live Ghidra GUI tool. */
 public final class GuiProjectService {
 
+    interface ActiveProjectController {
+        Project getActiveProject();
+
+        void setActiveProject(Project project);
+    }
+
     private final Supplier<PluginTool> toolSupplier;
     private final SecurityConfig security;
     private final Supplier<ProjectManager> projectManagerSupplier;
+    private final Supplier<ActiveProjectController> activeProjectControllerSupplier;
 
     public GuiProjectService(Supplier<PluginTool> toolSupplier) {
         this(toolSupplier, SecurityConfig.getInstance());
@@ -35,14 +43,37 @@ public final class GuiProjectService {
         this(toolSupplier, security, () -> {
             PluginTool tool = toolSupplier.get();
             return tool != null ? tool.getProjectManager() : null;
-        });
+        }, GuiProjectService::frontEndProjectController);
     }
 
     GuiProjectService(Supplier<PluginTool> toolSupplier, SecurityConfig security,
             Supplier<ProjectManager> projectManagerSupplier) {
+        this(toolSupplier, security, projectManagerSupplier,
+            GuiProjectService::frontEndProjectController);
+    }
+
+    GuiProjectService(Supplier<PluginTool> toolSupplier, SecurityConfig security,
+            Supplier<ProjectManager> projectManagerSupplier,
+            Supplier<ActiveProjectController> activeProjectControllerSupplier) {
         this.toolSupplier = toolSupplier;
         this.security = security;
         this.projectManagerSupplier = projectManagerSupplier;
+        this.activeProjectControllerSupplier = activeProjectControllerSupplier;
+    }
+
+    private static ActiveProjectController frontEndProjectController() {
+        FrontEndTool frontEnd = AppInfo.getFrontEndTool();
+        return new ActiveProjectController() {
+            @Override
+            public Project getActiveProject() {
+                return frontEnd.getProject();
+            }
+
+            @Override
+            public void setActiveProject(Project project) {
+                frontEnd.setActiveProject(project);
+            }
+        };
     }
 
     /** Register project lifecycle endpoints on the shared UDS server. */
@@ -171,11 +202,22 @@ public final class GuiProjectService {
                 + "\"}";
         }
 
-        PluginTool tool = toolSupplier.get();
-        if (tool == null) {
-            return "{\"error\": \"No active GUI tool\"}";
+        ProjectManager manager = projectManagerSupplier.get();
+        if (manager == null) {
+            return "{\"error\": \"ProjectManager not available on this tool\"}";
         }
-        Project currentProject = tool.getProject();
+        ActiveProjectController activeProjects;
+        try {
+            activeProjects = activeProjectControllerSupplier.get();
+        } catch (Exception e) {
+            return "{\"error\": \"FrontEndTool not available: "
+                + escapeJson(message(e)) + "\"}";
+        }
+        if (activeProjects == null) {
+            return "{\"error\": \"FrontEndTool not available\"}";
+        }
+
+        Project currentProject = manager.getActiveProject();
         if (currentProject != null && locator.equals(currentProject.getProjectLocator())) {
             String launchResult = null;
             if (!headless && programToLaunch != null && !programToLaunch.isEmpty()) {
@@ -188,13 +230,10 @@ public final class GuiProjectService {
                 + "}";
         }
 
-        ProjectManager manager = tool.getProjectManager();
-        if (manager == null) {
-            return "{\"error\": \"ProjectManager not available on this tool\"}";
-        }
-
         String[] error = {null};
         Project[] opened = {null};
+        boolean[] previousClosed = {false};
+        boolean[] cleanupNeeded = {false};
         Runnable openTask = () -> {
             try {
                 if (currentProject != null) {
@@ -204,15 +243,27 @@ public final class GuiProjectService {
                         // Preserve the existing best-effort save policy.
                     }
                     currentProject.close();
+                    previousClosed[0] = true;
+                    activeProjects.setActiveProject(null);
+                    AppInfo.setActiveProject(null);
                 }
+                cleanupNeeded[0] = true;
                 Project project = manager.openProject(locator, true, false);
                 if (project == null) {
-                    error[0] = "ProjectManager.openProject returned null";
-                    return;
+                    throw new IOException("ProjectManager.openProject returned null");
                 }
-                AppInfo.setActiveProject(project);
                 opened[0] = project;
+                activeProjects.setActiveProject(project);
+                AppInfo.setActiveProject(project);
+                if (activeProjects.getActiveProject() != project
+                        || AppInfo.getActiveProject() != project) {
+                    throw new IllegalStateException("Opened project did not become active");
+                }
             } catch (Exception e) {
+                if (previousClosed[0] || cleanupNeeded[0] || opened[0] != null) {
+                    closeFailedProject(manager, locator, opened[0], activeProjects);
+                    opened[0] = null;
+                }
                 error[0] = e.getClass().getSimpleName() + ": " + e.getMessage();
             }
         };
@@ -330,27 +381,39 @@ public final class GuiProjectService {
             return error("destination_exists", "Project destination already exists: "
                 + destination);
         }
-
-        Project current = manager.getActiveProject();
-        if (current != null) {
-            try {
-                current.save();
-            } catch (Exception ignored) {
-                // Match the existing /open_project best-effort save policy.
-            }
-            current.close();
+        ActiveProjectController activeProjects = activeProjectControllerSupplier.get();
+        if (activeProjects == null) {
+            return creationError(destination, false,
+                "FrontEndTool is not available for project activation");
         }
 
         Project created = null;
         boolean createdKnown = false;
+        boolean clearOnFailure = false;
         try {
+            Project current = manager.getActiveProject();
+            if (current != null) {
+                try {
+                    current.save();
+                } catch (Exception ignored) {
+                    // Match the existing /open_project best-effort save policy.
+                }
+                current.close();
+                clearOnFailure = true;
+                activeProjects.setActiveProject(null);
+                AppInfo.setActiveProject(null);
+            }
+
+            clearOnFailure = true;
             created = manager.createProject(locator, null, true);
             if (created == null) {
                 throw new IOException("ProjectManager.createProject returned null");
             }
             createdKnown = true;
+            activeProjects.setActiveProject(created);
             AppInfo.setActiveProject(created);
-            if (AppInfo.getActiveProject() != created) {
+            if (AppInfo.getActiveProject() != created
+                    || activeProjects.getActiveProject() != created) {
                 throw new IllegalStateException("Created project did not become active");
             }
             return Response.ok(JsonHelper.mapOf(
@@ -359,14 +422,16 @@ public final class GuiProjectService {
                 "path", destination,
                 "active", true));
         } catch (Exception e) {
-            closeFailedProject(manager, locator, created);
+            if (clearOnFailure) {
+                closeFailedProject(manager, locator, created, activeProjects);
+            }
             return creationError(destination,
                 createdKnown || artifactsExist(markerPath, projectDirPath), message(e));
         }
     }
 
     private void closeFailedProject(ProjectManager manager, ProjectLocator locator,
-            Project created) {
+            Project created, ActiveProjectController activeProjects) {
         Project failed = created;
         if (failed == null) {
             failed = manager.getActiveProject();
@@ -380,6 +445,11 @@ public final class GuiProjectService {
             } catch (Exception ignored) {
                 // Keep the failure response; disk artifacts are intentionally preserved.
             }
+        }
+        try {
+            activeProjects.setActiveProject(null);
+        } catch (Exception ignored) {
+            // AppInfo must still be cleared when FrontEnd cleanup fails.
         }
         AppInfo.setActiveProject(null);
     }
