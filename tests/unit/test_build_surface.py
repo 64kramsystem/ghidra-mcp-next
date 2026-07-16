@@ -30,3 +30,31 @@ def test_workflows_do_not_invoke_removed_build_surfaces():
     assert "./gradlew" not in workflow_text
     assert "gradlew.bat" not in workflow_text
     assert "docker compose" not in workflow_text
+
+
+def test_pom_has_no_docker_build_profile():
+    pom = (ROOT / "pom.xml").read_text(encoding="utf-8")
+    assert "docker-maven-plugin" not in pom
+    assert "docker/Dockerfile" not in pom
+
+
+def test_test_runner_has_no_docker_mode():
+    runner = (ROOT / "tests/run_tests.py").read_text(encoding="utf-8")
+    assert "--docker" not in runner
+    assert 'tests_dir / "docker"' not in runner
+    assert "args.docker" not in runner
+    assert all(flag in runner for flag in ("--unit", "--integration", "--all"))
+    assert all(
+        target in runner
+        for target in ('tests_dir / "unit"', 'tests_dir / "integration"', "args.extra_args")
+    )
+
+
+def test_env_template_has_no_build_backend_selector():
+    env_template = (ROOT / ".env.template").read_text(encoding="utf-8")
+    assert "TOOLS_SETUP_BACKEND" not in env_template
+
+
+def test_version_bump_has_no_docker_tag_rule():
+    version_bump = (ROOT / "tools/setup/version_bump.py").read_text(encoding="utf-8")
+    assert 'f"v{new_version}:"' not in version_bump

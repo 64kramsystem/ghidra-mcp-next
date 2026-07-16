@@ -5,7 +5,6 @@ GhidraMCP Test Runner
 Usage:
     python run_tests.py --unit           # Run unit tests only
     python run_tests.py --integration    # Run integration tests
-    python run_tests.py --docker         # Run Docker tests
     python run_tests.py --all            # Run all tests
     python run_tests.py --server URL     # Specify server URL
 
@@ -39,8 +38,6 @@ def main():
                         help="Run unit tests only (no server required)")
     parser.add_argument("--integration", action="store_true",
                         help="Run integration tests (requires running server)")
-    parser.add_argument("--docker", action="store_true",
-                        help="Run Docker tests (requires Docker)")
     parser.add_argument("--all", action="store_true",
                         help="Run all tests")
 
@@ -107,11 +104,9 @@ def main():
             pytest_args.append(str(tests_dir / "unit"))
         if args.integration:
             pytest_args.append(str(tests_dir / "integration"))
-        if args.docker:
-            pytest_args.append(str(tests_dir / "docker"))
 
     # If no test type specified, run all
-    if not (args.unit or args.integration or args.docker or args.all):
+    if not (args.unit or args.integration or args.all):
         if args.extra_args:
             # Run specified files
             pytest_args.extend(args.extra_args)
@@ -120,7 +115,7 @@ def main():
             pytest_args.append(str(tests_dir / "integration"))
 
     # Add extra arguments
-    if args.extra_args and not (args.unit or args.integration or args.docker or args.all):
+    if args.extra_args and not (args.unit or args.integration or args.all):
         pass  # Already added above
     elif args.extra_args:
         pytest_args.extend(args.extra_args)

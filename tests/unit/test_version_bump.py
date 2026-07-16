@@ -2,7 +2,7 @@
 Unit tests for tools.setup.version_bump — validate_version, build_rules, apply_version_bump.
 
 Tests pass `old_version` explicitly so no pom.xml is required for most cases.
-The complete-repo test creates a minimal file tree and verifies all 14 rules fire.
+The complete-repo test creates a minimal file tree and verifies all rules fire.
 """
 from __future__ import annotations
 
@@ -23,14 +23,12 @@ NEW = "5.5.0"
 @pytest.fixture()
 def repo(tmp_path: Path) -> Path:
     """Minimal file tree with OLD version in every location that build_rules targets."""
-    # pom.xml — two rules: <version> tag and docker tag reference.
-    # Project version is anchored after <packaging>jar</packaging> so the
-    # bump regex doesn't catch dependency versions; the fixture mirrors the
+    # pom.xml project version. The rule is anchored after <packaging>jar</packaging>
+    # so the bump regex doesn't catch dependency versions; the fixture mirrors the
     # real pom's coordinates block.
     (tmp_path / "pom.xml").write_text(
         f"<packaging>jar</packaging>\n"
-        f"<version>{OLD}</version>\n"
-        f"  ghidra image: v{OLD}:latest\n",
+        f"<version>{OLD}</version>\n",
         encoding="utf-8",
     )
 
@@ -173,16 +171,6 @@ def test_rule_pom_version_tag(repo: Path):
     content = (repo / "pom.xml").read_text(encoding="utf-8")
     assert f"<version>{NEW}</version>" in content
     assert f"<version>{OLD}</version>" not in content
-
-
-def test_rule_pom_docker_tag(repo: Path):
-    from tools.setup.version_bump import apply_version_bump
-
-    apply_version_bump(repo, NEW, old_version=OLD)
-
-    content = (repo / "pom.xml").read_text(encoding="utf-8")
-    assert f"v{NEW}:" in content
-    assert f"v{OLD}:" not in content
 
 
 def test_rule_manifest_plugin_version(repo: Path):
