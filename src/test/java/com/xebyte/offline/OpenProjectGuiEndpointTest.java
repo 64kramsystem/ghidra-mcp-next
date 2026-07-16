@@ -10,7 +10,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Source-level invariants for the GUI-side {@code /open_project} route.
+ * Source-level invariants for GUI project-lifecycle routes.
  *
  * <p>The headless server has had {@code /open_project} since v4.x. The
  * GUI plugin gained its own implementation as part of Option C — a
@@ -44,6 +44,21 @@ public class OpenProjectGuiEndpointTest extends TestCase {
                 p.matcher(src).find());
     }
 
+    public void testPluginRegistersCreateProjectRouteAndParameters() throws IOException {
+        String src = readUtf8("src/main/java/com/xebyte/GhidraMCPPlugin.java");
+        Pattern routeBlock = Pattern.compile(
+                "server\\.createContext\\(\\s*\"/create_project\"[\\s\\S]*?"
+                        + "guiProjectService\\.createProject\\s*\\(",
+                Pattern.MULTILINE);
+        Matcher m = routeBlock.matcher(src);
+        assertTrue("Expected TCP /create_project to delegate to GuiProjectService.",
+                m.find());
+
+        String block = src.substring(m.start(), Math.min(src.length(), m.end() + 200));
+        assertTrue("Route must read parentDir.", block.contains("\"parentDir\""));
+        assertTrue("Route must read name.", block.contains("\"name\""));
+    }
+
     public void testOpenProjectHandlerReadsHeadlessAndProgramParams() throws IOException {
         String src = readUtf8("src/main/java/com/xebyte/GhidraMCPPlugin.java");
         // The route registration block should parse the body, default
@@ -51,7 +66,8 @@ public class OpenProjectGuiEndpointTest extends TestCase {
         // optional `program` to launchCodeBrowser when the user asked
         // for a non-headless open.
         Pattern routeBlock = Pattern.compile(
-                "server\\.createContext\\(\\s*\"/open_project\"[\\s\\S]*?openProject\\s*\\(",
+                "server\\.createContext\\(\\s*\"/open_project\"[\\s\\S]*?"
+                        + "guiProjectService\\.openProject\\s*\\(",
                 Pattern.MULTILINE);
         Matcher m = routeBlock.matcher(src);
         assertTrue("Expected /open_project route block to call openProject(...)",
@@ -73,14 +89,13 @@ public class OpenProjectGuiEndpointTest extends TestCase {
     }
 
     public void testOpenProjectHelperRunsOnEDT() throws IOException {
-        String src = readUtf8("src/main/java/com/xebyte/GhidraMCPPlugin.java");
-        // Find the private helper.
+        String src = readUtf8("src/main/java/com/xebyte/core/GuiProjectService.java");
         Pattern decl = Pattern.compile(
-                "private\\s+String\\s+openProject\\s*\\(\\s*String[^)]*\\)\\s*\\{",
+                "public\\s+String\\s+openProject\\s*\\(\\s*String[^)]*\\)\\s*\\{",
                 Pattern.MULTILINE);
         Matcher m = decl.matcher(src);
         assertTrue(
-                "GhidraMCPPlugin must declare a private openProject(String, boolean, String) helper.",
+                "GuiProjectService must expose the shared openProject helper.",
                 m.find());
 
         int braceStart = m.end() - 1;
@@ -96,7 +111,7 @@ public class OpenProjectGuiEndpointTest extends TestCase {
         assertTrue(
                 "openProject must invoke ProjectManager.openProject(locator, ...) "
                         + "— that's the canonical API for opening into the FrontEnd.",
-                body.contains("pm.openProject(locator"));
+                body.contains(".openProject(locator"));
         assertTrue(
                 "openProject must run the open/close on the EDT — FrontEnd "
                         + "state updates expect Swing.",
@@ -110,6 +125,35 @@ public class OpenProjectGuiEndpointTest extends TestCase {
                         + "already the active one — silent re-open would needlessly "
                         + "close and reopen the same project, dropping CodeBrowser state.",
                 body.contains("already_open"));
+    }
+
+    public void testUdsRegistersBothProjectLifecycleRoutes() throws IOException {
+        String src = readUtf8("src/main/java/com/xebyte/core/GuiProjectService.java");
+        assertTrue("GuiProjectService must provide a UDS endpoint registrar.",
+                src.contains("registerUdsEndpoints"));
+        assertTrue("UDS must expose /create_project.",
+                src.contains("server.createContext(\"/create_project\""));
+        assertTrue("UDS must expose /open_project.",
+                src.contains("server.createContext(\"/open_project\""));
+        assertTrue("UDS handlers must resolve the active tool at request time.",
+                src.contains("ServerManager.getInstance().getActiveTool()"));
+    }
+
+    public void testBothUdsStartupPathsInstallGuiProjectRoutes() throws IOException {
+        String src = readUtf8("src/main/java/com/xebyte/GhidraMCPPlugin.java");
+        Pattern registration = Pattern.compile(
+                "registerTool\\s*\\(\\s*tool\\s*,\\s*"
+                        + "GuiProjectService::registerUdsEndpoints\\s*\\)");
+        assertEquals("Initial startup and menu-driven restart must install GUI routes.",
+                2, countMatches(src, registration));
+        assertFalse("Project lifecycle routes must not be omitted from UDS startup.",
+                src.contains("registerTool(tool, null)"));
+    }
+
+    public void testCreateProjectHasOneCatalogEntry() throws IOException {
+        String catalog = readUtf8("tests/endpoints.json");
+        assertEquals("The existing catalogued endpoint must remain unique.",
+                1, countOccurrences(catalog, "\"path\": \"/create_project\""));
     }
 
     public void testCatalogIncludesOpenProjectParams() throws IOException {
@@ -133,5 +177,24 @@ public class OpenProjectGuiEndpointTest extends TestCase {
         assertTrue(
                 "/open_project params must include 'program' (GUI mode optional auto-launch).",
                 params.contains("\"program\""));
+    }
+
+    private int countOccurrences(String text, String needle) {
+        int count = 0;
+        int offset = 0;
+        while ((offset = text.indexOf(needle, offset)) >= 0) {
+            count++;
+            offset += needle.length();
+        }
+        return count;
+    }
+
+    private int countMatches(String text, Pattern pattern) {
+        int count = 0;
+        Matcher matcher = pattern.matcher(text);
+        while (matcher.find()) {
+            count++;
+        }
+        return count;
     }
 }
