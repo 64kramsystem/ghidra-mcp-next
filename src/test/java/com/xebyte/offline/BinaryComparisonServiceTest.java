@@ -2,6 +2,7 @@ package com.xebyte.offline;
 
 import com.xebyte.core.BinaryComparisonService;
 import com.xebyte.core.BinaryComparisonService.FunctionSignature;
+import com.xebyte.core.Response;
 import junit.framework.TestCase;
 
 /**
@@ -10,6 +11,38 @@ import junit.framework.TestCase;
  * tests). Uses constructed FunctionSignatures so it runs offline with no Ghidra.
  */
 public class BinaryComparisonServiceTest extends TestCase {
+
+    private BinaryComparisonService service;
+
+    @Override
+    protected void setUp() {
+        service = new BinaryComparisonService(
+            ServiceFactory.stubProvider(), new NoopThreadingStrategy());
+    }
+
+    public void testPublicComparisonEndpointsLiveOnBinaryComparisonService() throws Exception {
+        assertNotNull(BinaryComparisonService.class.getMethod(
+            "getFunctionHash", String.class, String.class));
+        assertNotNull(BinaryComparisonService.class.getMethod(
+            "getBulkFunctionHashes", int.class, int.class, String.class, String.class));
+        assertNotNull(BinaryComparisonService.class.getMethod(
+            "getFunctionSignature", String.class, String.class));
+        assertNotNull(BinaryComparisonService.class.getMethod(
+            "findSimilarFunctionsFuzzy", String.class, String.class, String.class,
+            double.class, int.class));
+        assertNotNull(BinaryComparisonService.class.getMethod(
+            "bulkFuzzyMatch", String.class, String.class, double.class,
+            int.class, int.class, String.class));
+        assertNotNull(BinaryComparisonService.class.getMethod(
+            "diffFunctions", String.class, String.class, String.class, String.class));
+    }
+
+    public void testBulkFuzzyMatchStillValidatesSourceProgramFirst() {
+        Response response = service.bulkFuzzyMatch("", "Target.dll", 0.7, 0, 50, "");
+        assertTrue(response instanceof Response.Err);
+        assertTrue(((Response.Err) response).message().contains(
+            "source_program parameter is required"));
+    }
 
     private static FunctionSignature sig(int insn, int bb, int edges, int calls,
                                          String... callees) {

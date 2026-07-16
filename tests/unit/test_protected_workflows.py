@@ -32,6 +32,13 @@ LOCAL_COMPARISON_ENDPOINTS = {
     "/bulk_fuzzy_match", "/diff_functions",
 }
 
+REMOVED_DOCUMENTATION_ENDPOINTS = {
+    "/get_function_documentation", "/apply_function_documentation",
+    "/compare_programs_documentation", "/find_undocumented_by_string",
+    "/batch_string_anchor_report", "/merge_program_documentation",
+    "/archive_ingest_function", "/archive_ingest_program",
+}
+
 TRACE_RMI_CONTRACT_TOOLS = {
     "debugger/launch_offers",
     "debugger/launch",
@@ -85,6 +92,10 @@ def test_trace_rmi_workflow_endpoints_are_cataloged():
 
 def test_local_comparison_endpoints_are_cataloged():
     assert LOCAL_COMPARISON_ENDPOINTS <= _catalog_paths()
+
+
+def test_documentation_propagation_endpoints_are_absent():
+    assert REMOVED_DOCUMENTATION_ENDPOINTS.isdisjoint(_catalog_paths())
 
 
 def test_debugger_service_owns_the_trace_rmi_group():

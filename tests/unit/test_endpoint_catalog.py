@@ -105,7 +105,7 @@ class TestAnnotatedEndpoints(unittest.TestCase):
             "XrefCallGraphService",
             "DataTypeService",
             "AnalysisService",
-            "DocumentationHashService",
+            "BinaryComparisonService",
             "MalwareSecurityService",
             "ProgramScriptService",
         ]
@@ -263,7 +263,7 @@ class TestAnnotationScannerExists(unittest.TestCase):
             "XrefCallGraphService",
             "DataTypeService",
             "AnalysisService",
-            "DocumentationHashService",
+            "BinaryComparisonService",
             "MalwareSecurityService",
             "ProgramScriptService",
         ]
