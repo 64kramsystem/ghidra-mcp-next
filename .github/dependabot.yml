@@ -5,7 +5,6 @@
 # Covers every package ecosystem in the repo:
 #   * GitHub Actions used by the workflows under .github/workflows/
 #   * Python requirements at the repo root (bridge runtime + test + debugger)
-#   * Python requirements under fun-doc/ (the documentation workflow)
 #   * Maven (pom.xml) for the Java plugin
 #
 # Schedule: weekly per ecosystem to keep noise manageable but stay
@@ -34,16 +33,6 @@ updates:
     labels:
       - dependencies
       - python
-
-  - package-ecosystem: pip
-    directory: "/fun-doc"
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
-    labels:
-      - dependencies
-      - python
-      - fun-doc
 
   - package-ecosystem: maven
     directory: "/"
