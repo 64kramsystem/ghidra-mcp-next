@@ -681,6 +681,44 @@ def test_run_deploy_tests_default_does_not_import_benchmark(
     assert calls == ["smoke"]
 
 
+def test_reset_benchmark_fixture_builds_generic_fixture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from tools.setup import ghidra
+
+    invocation: dict[str, object] = {}
+
+    class BuildInvoked(Exception):
+        pass
+
+    def fake_run(command, **kwargs):
+        invocation["command"] = command
+        invocation["kwargs"] = kwargs
+        raise BuildInvoked
+
+    monkeypatch.setattr(ghidra, "_terminate_processes_by_name", lambda _name: None)
+    monkeypatch.setattr(ghidra.subprocess, "run", fake_run)
+
+    with pytest.raises(BuildInvoked):
+        ghidra.reset_benchmark_fixture(tmp_path, "http://127.0.0.1:8089")
+
+    build_script = (
+        tmp_path / "tests" / "fixtures" / "ghidra_benchmark" / "build.py"
+    )
+    assert invocation == {
+        "command": [sys.executable, str(build_script)],
+        "kwargs": {"cwd": tmp_path, "check": True},
+    }
+
+
+def test_benchmark_regression_dir_uses_generic_fixture(tmp_path: Path):
+    from tools.setup import ghidra
+
+    assert ghidra._benchmark_regression_dir(tmp_path) == (
+        tmp_path / "tests" / "fixtures" / "ghidra_benchmark" / "regression"
+    )
+
+
 # ---------------------------------------------------------------------------
 # mark_extension_known_in_tool_config — suppress Ghidra's first-run plugin
 # dialog by recording the extension as already known. Without this the user

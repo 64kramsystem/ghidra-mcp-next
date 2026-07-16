@@ -56,8 +56,9 @@ PLUGIN_EXTENSION_NAME = "GhidraMCP"
 DEFAULT_MCP_URL = "http://127.0.0.1:8089"
 DEFAULT_MCP_WAIT_SECONDS = 120
 DEFAULT_GHIDRA_EXIT_WAIT_SECONDS = 15
-DEFAULT_BENCHMARK_DLL = Path("fun-doc") / "benchmark" / "build" / "Benchmark.dll"
-DEFAULT_BENCHMARK_DEBUG_EXE = Path("fun-doc") / "benchmark" / "build" / "BenchmarkDebug.exe"
+BENCHMARK_FIXTURE_ROOT = Path("tests") / "fixtures" / "ghidra_benchmark"
+DEFAULT_BENCHMARK_DLL = BENCHMARK_FIXTURE_ROOT / "build" / "Benchmark.dll"
+DEFAULT_BENCHMARK_DEBUG_EXE = BENCHMARK_FIXTURE_ROOT / "build" / "BenchmarkDebug.exe"
 LEGACY_BENCHMARK_PROGRAM = "/benchmark/Benchmark.dll"
 DEFAULT_BENCHMARK_FOLDER = "/testing/benchmark"
 DEFAULT_BENCHMARK_PROGRAM = f"{DEFAULT_BENCHMARK_FOLDER}/Benchmark.dll"
@@ -990,7 +991,7 @@ def reset_benchmark_fixture(repo_root: Path, mcp_url: str) -> None:
     if not benchmark_dll.is_file() or not benchmark_debug_exe.is_file():
         print("Benchmark binary output missing; building it now.")
         subprocess.run(
-            [sys.executable, str(repo_root / "fun-doc" / "benchmark" / "build.py")],
+            [sys.executable, str(repo_root / BENCHMARK_FIXTURE_ROOT / "build.py")],
             cwd=repo_root,
             check=True,
         )
@@ -1621,7 +1622,7 @@ def run_selected_endpoint_contract_test(repo_root: Path, mcp_url: str) -> None:
 
 
 def _benchmark_regression_dir(repo_root: Path) -> Path:
-    return repo_root / "fun-doc" / "benchmark" / "regression"
+    return repo_root / BENCHMARK_FIXTURE_ROOT / "regression"
 
 
 def _bench_get(repo_root: Path, mcp_url: str, path: str, params: dict | None = None,
@@ -1883,7 +1884,7 @@ def _bench_ensure_full_analysis(repo_root: Path, mcp_url: str, program_path: str
 def run_benchmark_yaml_regression(repo_root: Path, mcp_url: str) -> None:
     """Run YAML-driven assertions against the imported benchmark binaries.
 
-    Reads every fun-doc/benchmark/regression/*.yaml file and verifies its
+    Reads every tests/fixtures/ghidra_benchmark/regression/*.yaml file and verifies its
     contents end-to-end against the live MCP server. Failures are collected
     across the whole pass and raised as a single RuntimeError so a single
     deploy run reports every regression at once.
