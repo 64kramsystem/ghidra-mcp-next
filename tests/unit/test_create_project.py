@@ -1,12 +1,15 @@
 """Discovery, selection, and bootstrap tests for static create_project."""
 
+import asyncio
 import json
 import os
+import threading
 from unittest import mock
 
 import pytest
 
-from bridge_mcp_ghidra import discovery, state, static_tools
+from bridge_mcp_ghidra import config, discovery, registry, state, static_tools
+from bridge_mcp_ghidra.server import mcp
 
 
 def _instance(**overrides):
@@ -20,6 +23,48 @@ def _instance(**overrides):
     }
     record.update(overrides)
     return record
+
+
+@pytest.fixture
+def clean_bridge_state():
+    connection = (
+        state._active_socket,
+        state._active_tcp,
+        state._transport_mode,
+        state._connected_project,
+    )
+    dynamic_names = list(state._dynamic_tool_names)
+    dynamic_tools = {
+        name: mcp._tool_manager._tools.get(name) for name in dynamic_names
+    }
+    full_schema = state._full_schema
+    loaded_groups = set(state._loaded_groups)
+    state._active_socket = "/tmp/previous.sock"
+    state._active_tcp = None
+    state._transport_mode = "uds"
+    state._connected_project = "Previous"
+    state._dynamic_tool_names.clear()
+    state._full_schema = []
+    state._loaded_groups.clear()
+    try:
+        yield
+    finally:
+        for name in list(state._dynamic_tool_names):
+            if name not in dynamic_tools:
+                mcp._tool_manager._tools.pop(name, None)
+        state._dynamic_tool_names[:] = dynamic_names
+        for name, tool in dynamic_tools.items():
+            if tool is not None:
+                mcp._tool_manager._tools[name] = tool
+        state._full_schema = full_schema
+        state._loaded_groups.clear()
+        state._loaded_groups.update(loaded_groups)
+        (
+            state._active_socket,
+            state._active_tcp,
+            state._transport_mode,
+            state._connected_project,
+        ) = connection
 
 
 def test_discovery_materializes_tcp_before_uds_and_merges_records(monkeypatch):
@@ -186,6 +231,20 @@ def test_list_instances_uses_merged_discovery_and_preserves_connected_state(
     assert result["instances"][0]["connected"] is True
 
 
+def test_list_instances_matches_connected_tcp_endpoint_after_normalization(
+    monkeypatch,
+):
+    merged = [_instance(url="http://127.0.0.1:8089")]
+    monkeypatch.setattr(discovery, "discover_all_instances", lambda: merged)
+    monkeypatch.setattr(state, "_transport_mode", "tcp")
+    monkeypatch.setattr(state, "_active_tcp", "http://localhost:8089/")
+    monkeypatch.setattr(state, "_active_socket", None)
+
+    result = json.loads(static_tools.list_instances())
+
+    assert result["instances"][0]["connected"] is True
+
+
 def test_selection_automatically_uses_the_only_instance():
     selected, mode, endpoint = static_tools._select_instance([_instance()])
 
@@ -267,3 +326,414 @@ def test_selection_rejects_instance_without_reachable_transport():
 
     assert "no reachable transport" in str(error.value).lower()
     assert error.value.available == [instance]
+
+
+def test_create_project_is_an_always_available_static_management_tool():
+    assert "create_project" in config.MANAGEMENT_TOOL_NAMES
+    assert "create_project" in config.STATIC_TOOL_NAMES
+    assert "create_project" in mcp._tool_manager._tools
+
+
+def test_schema_create_project_is_suppressed_by_static_owner():
+    existing = mcp._tool_manager._tools.get("create_project")
+    original_dynamic_names = list(state._dynamic_tool_names)
+    tool_def = {
+        "name": "create_project",
+        "description": "schema duplicate",
+        "endpoint": "/create_project",
+        "http_method": "POST",
+        "category": "project",
+        "input_schema": {"type": "object", "properties": {}},
+    }
+    try:
+        assert registry._register_tool_def(tool_def) is False
+        assert "create_project" not in state._dynamic_tool_names
+        assert mcp._tool_manager._tools.get("create_project") is existing
+    finally:
+        state._dynamic_tool_names[:] = original_dynamic_names
+        if existing is None:
+            mcp._tool_manager._tools.pop("create_project", None)
+        else:
+            mcp._tool_manager._tools["create_project"] = existing
+
+
+def test_ghidra_request_lock_is_reentrant():
+    acquired_first = state._ghidra_lock.acquire(timeout=0.1)
+    acquired_second = False
+    try:
+        assert acquired_first
+        acquired_second = state._ghidra_lock.acquire(blocking=False)
+        assert acquired_second
+    finally:
+        if acquired_second:
+            state._ghidra_lock.release()
+        if acquired_first:
+            state._ghidra_lock.release()
+
+    assert isinstance(state._ghidra_lock, type(threading.RLock()))
+
+
+def test_clear_dynamic_tools_removes_registered_and_cached_state():
+    name = "create_project_stale_dynamic"
+    existing = mcp._tool_manager._tools.get(name)
+    original_names = list(state._dynamic_tool_names)
+    original_schema = state._full_schema
+    original_groups = set(state._loaded_groups)
+    try:
+        mcp._tool_manager._tools[name] = object()
+        state._dynamic_tool_names[:] = [name]
+        state._full_schema = [{"name": name}]
+        state._loaded_groups.clear()
+        state._loaded_groups.add("project")
+
+        registry._clear_dynamic_tools()
+
+        assert name not in mcp._tool_manager._tools
+        assert state._dynamic_tool_names == []
+        assert state._full_schema == []
+        assert state._loaded_groups == set()
+    finally:
+        if existing is None:
+            mcp._tool_manager._tools.pop(name, None)
+        else:
+            mcp._tool_manager._tools[name] = existing
+        state._dynamic_tool_names[:] = original_names
+        state._full_schema = original_schema
+        state._loaded_groups.clear()
+        state._loaded_groups.update(original_groups)
+
+
+def test_schema_registration_clears_dynamic_state_through_shared_helper(
+    monkeypatch,
+):
+    clear = mock.Mock(wraps=registry._clear_dynamic_tools)
+    monkeypatch.setattr(registry, "_clear_dynamic_tools", clear)
+
+    registry.register_tools_from_schema([])
+
+    clear.assert_called_once_with()
+    assert state._full_schema == []
+
+
+@pytest.mark.parametrize("mode", ["uds", "tcp"])
+def test_create_project_posts_directly_to_selected_transport(
+    mode, monkeypatch, clean_bridge_state
+):
+    instance = _instance(
+        uds_reachable=mode == "uds",
+        tcp_reachable=mode == "tcp",
+    )
+    response = json.dumps(
+        {
+            "success": True,
+            "project": "NewProject",
+            "path": "/projects/NewProject",
+            "active": True,
+        }
+    )
+    uds_request = mock.Mock(return_value=(response, 200))
+    tcp_request = mock.Mock(return_value=(response, 200))
+    monkeypatch.setattr(discovery, "discover_all_instances", lambda: [instance])
+    monkeypatch.setattr(static_tools.transport, "uds_request", uds_request)
+    monkeypatch.setattr(static_tools.transport, "tcp_request", tcp_request)
+    monkeypatch.setattr(registry, "_fetch_and_register_schema", lambda: 4)
+    notify = mock.AsyncMock()
+    monkeypatch.setattr(registry, "_notify_tools_changed", notify)
+
+    result = json.loads(
+        asyncio.run(
+            static_tools.create_project("/projects", "NewProject")
+        )
+    )
+
+    assert result["connected"] is True
+    assert result["registered_tool_count"] == 4
+    selected_request = uds_request if mode == "uds" else tcp_request
+    other_request = tcp_request if mode == "uds" else uds_request
+    args, kwargs = selected_request.call_args
+    assert args[:3] == (
+        instance["socket"] if mode == "uds" else instance["url"],
+        "POST",
+        "/create_project",
+    )
+    assert kwargs["json_data"] == {
+        "parentDir": "/projects",
+        "name": "NewProject",
+    }
+    other_request.assert_not_called()
+    notify.assert_awaited_once_with(None)
+
+
+def test_create_project_does_not_fallback_after_uncertain_uds_failure(
+    monkeypatch, clean_bridge_state
+):
+    instance = _instance()
+    monkeypatch.setattr(discovery, "discover_all_instances", lambda: [instance])
+    monkeypatch.setattr(
+        static_tools.transport,
+        "uds_request",
+        mock.Mock(side_effect=TimeoutError("outcome unknown")),
+    )
+    tcp_request = mock.Mock()
+    monkeypatch.setattr(static_tools.transport, "tcp_request", tcp_request)
+    clear = mock.Mock()
+    monkeypatch.setattr(registry, "_clear_dynamic_tools", clear)
+
+    with pytest.raises(RuntimeError, match="outcome unknown"):
+        asyncio.run(static_tools.create_project("/projects", "NewProject"))
+
+    tcp_request.assert_not_called()
+    clear.assert_not_called()
+    assert state._active_socket == "/tmp/previous.sock"
+    assert state._connected_project == "Previous"
+
+
+def test_create_project_gui_failure_preserves_previous_bridge_state(
+    monkeypatch, clean_bridge_state
+):
+    instance = _instance()
+    state._dynamic_tool_names.append("old_dynamic")
+    state._full_schema = [{"name": "old_dynamic"}]
+    state._loaded_groups.add("old_group")
+    response = json.dumps(
+        {
+            "success": False,
+            "category": "destination_exists",
+            "message": "already exists",
+        }
+    )
+    monkeypatch.setattr(discovery, "discover_all_instances", lambda: [instance])
+    monkeypatch.setattr(
+        static_tools.transport,
+        "uds_request",
+        mock.Mock(return_value=(response, 200)),
+    )
+    clear = mock.Mock()
+    monkeypatch.setattr(registry, "_clear_dynamic_tools", clear)
+    notify = mock.AsyncMock()
+    monkeypatch.setattr(registry, "_notify_tools_changed", notify)
+
+    with pytest.raises(RuntimeError, match="destination_exists"):
+        asyncio.run(static_tools.create_project("/projects", "NewProject"))
+
+    clear.assert_not_called()
+    notify.assert_not_awaited()
+    assert state._active_socket == "/tmp/previous.sock"
+    assert state._transport_mode == "uds"
+    assert state._connected_project == "Previous"
+    assert state._dynamic_tool_names == ["old_dynamic"]
+    assert state._full_schema == [{"name": "old_dynamic"}]
+    assert state._loaded_groups == {"old_group"}
+
+
+def test_create_project_changes_state_only_after_gui_success_and_clears_before_fetch(
+    monkeypatch, clean_bridge_state
+):
+    instance = _instance(
+        uds_reachable=False,
+        tcp_reachable=True,
+        project="unknown",
+    )
+    events = []
+
+    def tcp_request(*args, **kwargs):
+        assert state._active_socket == "/tmp/previous.sock"
+        assert state._connected_project == "Previous"
+        events.append("post")
+        return (
+            json.dumps(
+                {
+                    "success": True,
+                    "project": "NewProject",
+                    "path": "/projects/NewProject",
+                    "active": True,
+                }
+            ),
+            200,
+        )
+
+    real_clear = registry._clear_dynamic_tools
+
+    def clear():
+        events.append("clear")
+        real_clear()
+
+    def fetch():
+        events.append("fetch")
+        assert state._transport_mode == "tcp"
+        assert state._active_tcp == instance["url"]
+        assert state._active_socket is None
+        assert state._connected_project == "NewProject"
+        assert state._full_schema == []
+        return 7
+
+    monkeypatch.setattr(discovery, "discover_all_instances", lambda: [instance])
+    monkeypatch.setattr(static_tools.transport, "tcp_request", tcp_request)
+    monkeypatch.setattr(registry, "_clear_dynamic_tools", clear)
+    monkeypatch.setattr(registry, "_fetch_and_register_schema", fetch)
+    notify = mock.AsyncMock()
+    monkeypatch.setattr(registry, "_notify_tools_changed", notify)
+
+    result = json.loads(
+        asyncio.run(static_tools.create_project("/projects", "NewProject"))
+    )
+
+    assert events == ["post", "clear", "fetch"]
+    assert result == {
+        "created": True,
+        "active": True,
+        "connected": True,
+        "project": "NewProject",
+        "path": "/projects/NewProject",
+        "instance": {
+            "pid": 123,
+            "socket": "/tmp/ghidra-123.sock",
+            "url": "http://127.0.0.1:8089",
+        },
+        "registered_tool_count": 7,
+    }
+    notify.assert_awaited_once_with(None)
+
+
+def test_create_project_refresh_failure_clears_partial_state_and_notifies(
+    monkeypatch, clean_bridge_state
+):
+    instance = _instance()
+    response = json.dumps(
+        {
+            "success": True,
+            "project": "NewProject",
+            "path": "/projects/NewProject",
+            "active": True,
+        }
+    )
+    monkeypatch.setattr(discovery, "discover_all_instances", lambda: [instance])
+    monkeypatch.setattr(
+        static_tools.transport,
+        "uds_request",
+        mock.Mock(return_value=(response, 200)),
+    )
+    real_clear = registry._clear_dynamic_tools
+    clear = mock.Mock(side_effect=real_clear)
+    monkeypatch.setattr(registry, "_clear_dynamic_tools", clear)
+
+    def partial_fetch():
+        state._dynamic_tool_names.append("partial")
+        mcp._tool_manager._tools["partial"] = object()
+        state._full_schema = [{"name": "partial"}]
+        state._loaded_groups.add("partial_group")
+        raise RuntimeError("schema exploded")
+
+    monkeypatch.setattr(registry, "_fetch_and_register_schema", partial_fetch)
+    notify = mock.AsyncMock()
+    monkeypatch.setattr(registry, "_notify_tools_changed", notify)
+
+    result = json.loads(
+        asyncio.run(static_tools.create_project("/projects", "NewProject"))
+    )
+
+    assert result["created"] is True
+    assert result["active"] is True
+    assert result["connected"] is False
+    assert result["registered_tool_count"] == 0
+    assert "schema exploded" in result["refresh_error"]
+    assert state._transport_mode == "uds"
+    assert state._active_socket == instance["socket"]
+    assert state._connected_project == "NewProject"
+    assert state._dynamic_tool_names == []
+    assert state._full_schema == []
+    assert state._loaded_groups == set()
+    assert "partial" not in mcp._tool_manager._tools
+    assert clear.call_count == 2
+    notify.assert_awaited_once_with(None)
+
+
+def test_create_project_holds_lock_through_refresh_but_not_notification(
+    monkeypatch, clean_bridge_state
+):
+    instance = _instance()
+    response = json.dumps(
+        {
+            "success": True,
+            "project": "NewProject",
+            "path": "/projects/NewProject",
+            "active": True,
+        }
+    )
+    lock = TrackingLock()
+    monkeypatch.setattr(state, "_ghidra_lock", lock)
+    monkeypatch.setattr(discovery, "discover_all_instances", lambda: [instance])
+
+    def uds_request(*args, **kwargs):
+        assert lock.held
+        return response, 200
+
+    def fetch():
+        assert lock.held
+        return 3
+
+    async def notify(ctx):
+        assert not lock.held
+
+    monkeypatch.setattr(static_tools.transport, "uds_request", uds_request)
+    monkeypatch.setattr(registry, "_fetch_and_register_schema", fetch)
+    monkeypatch.setattr(registry, "_notify_tools_changed", notify)
+
+    asyncio.run(static_tools.create_project("/projects", "NewProject"))
+
+    assert lock.entries == 1
+
+
+def test_import_file_dispatches_immediately_through_new_target(
+    monkeypatch, clean_bridge_state
+):
+    instance = _instance()
+    response = json.dumps(
+        {
+            "success": True,
+            "project": "NewProject",
+            "path": "/projects/NewProject",
+            "active": True,
+        }
+    )
+    monkeypatch.setattr(discovery, "discover_all_instances", lambda: [instance])
+    monkeypatch.setattr(
+        static_tools.transport,
+        "uds_request",
+        mock.Mock(return_value=(response, 200)),
+    )
+    monkeypatch.setattr(registry, "_fetch_and_register_schema", lambda: 1)
+    monkeypatch.setattr(registry, "_notify_tools_changed", mock.AsyncMock())
+    asyncio.run(static_tools.create_project("/projects", "NewProject"))
+
+    def import_post(endpoint, payload):
+        assert state._transport_mode == "uds"
+        assert state._active_socket == instance["socket"]
+        assert state._connected_project == "NewProject"
+        return json.dumps({"success": True})
+
+    post = mock.Mock(side_effect=import_post)
+    monkeypatch.setattr(static_tools.dispatch, "dispatch_post", post)
+
+    result = json.loads(
+        asyncio.run(static_tools.import_file("/samples/program.exe"))
+    )
+
+    assert result["success"] is True
+    post.assert_called_once()
+
+
+class TrackingLock:
+    def __init__(self):
+        self.held = False
+        self.entries = 0
+
+    def __enter__(self):
+        assert not self.held
+        self.held = True
+        self.entries += 1
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        self.held = False
+        return False

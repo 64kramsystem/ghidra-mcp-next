@@ -67,6 +67,7 @@ logger = logging.getLogger("bridge_mcp_ghidra")
 MANAGEMENT_TOOL_NAMES = {
     "list_instances",
     "connect_instance",
+    "create_project",
     "list_tool_groups",
     "load_tool_group",
     "unload_tool_group",

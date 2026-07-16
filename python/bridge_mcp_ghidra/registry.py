@@ -180,6 +180,24 @@ def _report_tool_registration_failures(failures: list[str]) -> None:
     sys.stderr.flush()
 
 
+def _clear_dynamic_tools() -> None:
+    """Remove dynamic registrations and clear all cached schema state."""
+    for name in state._dynamic_tool_names:
+        try:
+            mcp._tool_manager._tools.pop(name, None)
+        except Exception as e:
+            logger.warning(
+                "Failed to unregister dynamic tool %r via "
+                "mcp._tool_manager._tools "
+                "(FastMCP internals may have changed): %s",
+                name,
+                e,
+            )
+    state._dynamic_tool_names.clear()
+    state._full_schema = []
+    state._loaded_groups.clear()
+
+
 def register_tools_from_schema(
     schema: list[dict], groups: set[str] | None = None
 ) -> int:
@@ -191,18 +209,7 @@ def register_tools_from_schema(
 
     Returns: count of registered tools.
     """
-    # Remove previously registered dynamic tools
-    for name in state._dynamic_tool_names:
-        try:
-            mcp._tool_manager._tools.pop(name, None)
-        except Exception as e:
-            # Reaches into FastMCP internals; if its private structure changes this
-            # would silently leak tools across reloads. Log so the breakage is visible.
-            logger.warning(
-                "Failed to unregister dynamic tool %r via mcp._tool_manager._tools "
-                "(FastMCP internals may have changed): %s", name, e)
-    state._dynamic_tool_names.clear()
-    state._loaded_groups.clear()
+    _clear_dynamic_tools()
 
     # Store full schema for lazy loading
     state._full_schema = _normalize_tool_def_names(schema)

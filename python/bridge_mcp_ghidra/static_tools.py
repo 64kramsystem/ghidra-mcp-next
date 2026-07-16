@@ -79,6 +79,79 @@ def _select_instance(
     )
 
 
+def _selection_tool_error(error: InstanceSelectionError) -> RuntimeError:
+    return RuntimeError(
+        json.dumps({"error": str(error), "available": error.available})
+    )
+
+
+def _create_request(
+    mode: str, endpoint: str, parent_dir: str, name: str
+) -> tuple[str, int]:
+    payload = {"parentDir": parent_dir, "name": name}
+    request = (
+        transport.uds_request if mode == "uds" else transport.tcp_request
+    )
+    return request(
+        endpoint,
+        "POST",
+        "/create_project",
+        json_data=payload,
+        timeout=30,
+    )
+
+
+def _parse_create_response(text: str, status: int) -> dict:
+    try:
+        response = discovery._unwrap_response_data(text)
+    except Exception as e:
+        raise RuntimeError(
+            f"create_project returned invalid JSON after the mutating request: {e}"
+        ) from e
+
+    if status != 200 or not isinstance(response, dict):
+        raise RuntimeError(
+            json.dumps(
+                {
+                    "error": "GUI project creation failed",
+                    "http_status": status,
+                    "response": response,
+                }
+            )
+        )
+    if response.get("success") is not True:
+        raise RuntimeError(
+            json.dumps(
+                {
+                    "error": "GUI project creation failed",
+                    "response": response,
+                }
+            )
+        )
+    if (
+        response.get("active") is not True
+        or not response.get("project")
+        or not response.get("path")
+    ):
+        raise RuntimeError(
+            json.dumps(
+                {
+                    "error": "GUI returned an incomplete create_project success",
+                    "response": response,
+                }
+            )
+        )
+    return response
+
+
+def _instance_summary(instance: dict) -> dict:
+    return {
+        key: instance[key]
+        for key in ("pid", "socket", "url")
+        if instance.get(key) is not None
+    }
+
+
 @mcp.tool()
 def list_instances() -> str:
     """
@@ -95,17 +168,95 @@ def list_instances() -> str:
         )
 
     for inst in instances:
+        socket = discovery._normalize_socket_path(inst.get("socket"))
+        active_socket = discovery._normalize_socket_path(state._active_socket)
+        url = discovery._normalize_tcp_url(inst.get("url"))
+        active_url = discovery._normalize_tcp_url(state._active_tcp)
         inst["connected"] = (
             state._transport_mode == "uds"
-            and bool(inst.get("socket"))
-            and inst.get("socket") == state._active_socket
+            and bool(socket)
+            and socket == active_socket
         ) or (
             state._transport_mode == "tcp"
-            and bool(inst.get("url"))
-            and inst.get("url") == state._active_tcp
+            and bool(url)
+            and url == active_url
         )
 
     return json.dumps({"instances": instances}, indent=2)
+
+
+@mcp.tool()
+async def create_project(
+    parent_dir: str,
+    name: str,
+    instance: str | None = None,
+    ctx: Context | None = None,
+) -> str:
+    """Create and connect to a project through a running Ghidra GUI instance.
+
+    With no instance selector, exactly one deduplicated GUI instance must be
+    available. A selector matches exact PID text, socket path, TCP URL, or
+    project name. On success, the new project's dynamic tools are immediately
+    registered and clients are notified that the tool list changed.
+
+    Args:
+        parent_dir: Existing parent directory for the new project.
+        name: Project name validated by Ghidra's ProjectLocator.
+        instance: Optional exact instance selector.
+    """
+    instances = discovery.discover_all_instances()
+    try:
+        selected, mode, endpoint = _select_instance(instances, instance)
+    except InstanceSelectionError as e:
+        raise _selection_tool_error(e) from e
+
+    refresh_error = None
+    registered_count = 0
+    with state._ghidra_lock:
+        try:
+            text, status = _create_request(mode, endpoint, parent_dir, name)
+        except Exception as e:
+            raise RuntimeError(
+                "create_project request failed with an uncertain outcome; "
+                f"the bridge did not retry another transport: {e}"
+            ) from e
+
+        response = _parse_create_response(text, status)
+        project = str(response["project"])
+        path = str(response["path"])
+
+        if mode == "uds":
+            state._active_socket = endpoint
+            state._active_tcp = None
+        else:
+            state._active_tcp = endpoint
+            state._active_socket = None
+        state._transport_mode = mode
+        state._connected_project = project
+
+        try:
+            registry._clear_dynamic_tools()
+            registered_count = registry._fetch_and_register_schema()
+        except Exception as e:
+            refresh_error = str(e)
+            registry._clear_dynamic_tools()
+
+        result = {
+            "created": True,
+            "active": True,
+            "connected": refresh_error is None,
+            "project": project,
+            "path": path,
+            "instance": _instance_summary(selected),
+            "registered_tool_count": (
+                registered_count if refresh_error is None else 0
+            ),
+        }
+        if refresh_error is not None:
+            result["refresh_error"] = refresh_error
+
+    await registry._notify_tools_changed(ctx)
+    return json.dumps(result)
 
 
 @mcp.tool()

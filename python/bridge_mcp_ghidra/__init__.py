@@ -97,6 +97,7 @@ from .static_tools import (  # noqa: F401
     _auto_connect,
     check_tools,
     connect_instance,
+    create_project,
     import_file,
     list_instances,
     list_tool_groups,
