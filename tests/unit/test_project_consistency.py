@@ -192,7 +192,7 @@ class TestJavaArchitecture(unittest.TestCase):
         expected = [
             "ListingService", "FunctionService", "CommentService",
             "SymbolLabelService", "XrefCallGraphService", "DataTypeService",
-            "AnalysisService", "DocumentationHashService",
+            "AnalysisService", "BinaryComparisonService",
             "MalwareSecurityService", "ProgramScriptService",
         ]
         for name in expected:

@@ -272,7 +272,7 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
     private final com.xebyte.core.FunctionService functionService;
     private final com.xebyte.core.XrefCallGraphService xrefCallGraphService;
     private final com.xebyte.core.DataTypeService dataTypeService;
-    private final com.xebyte.core.DocumentationHashService documentationHashService;
+    private final com.xebyte.core.BinaryComparisonService binaryComparisonService;
     private final com.xebyte.core.AnalysisService analysisService;
     private final com.xebyte.core.MalwareSecurityService malwareSecurityService;
     private final com.xebyte.core.ProgramScriptService programScriptService;
@@ -295,8 +295,7 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
         this.functionService = new com.xebyte.core.FunctionService(programProvider, threadingStrategy);
         this.xrefCallGraphService = new com.xebyte.core.XrefCallGraphService(programProvider, threadingStrategy);
         this.dataTypeService = new com.xebyte.core.DataTypeService(programProvider, threadingStrategy);
-        this.documentationHashService = new com.xebyte.core.DocumentationHashService(programProvider, threadingStrategy, new com.xebyte.core.BinaryComparisonService());
-        this.documentationHashService.setFunctionService(this.functionService);
+        this.binaryComparisonService = new com.xebyte.core.BinaryComparisonService(programProvider, threadingStrategy);
         this.analysisService = new com.xebyte.core.AnalysisService(programProvider, threadingStrategy, this.functionService);
         this.malwareSecurityService = new com.xebyte.core.MalwareSecurityService(programProvider, threadingStrategy);
         this.programScriptService = new com.xebyte.core.ProgramScriptService(programProvider, threadingStrategy);
@@ -644,7 +643,7 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
         AnnotationScanner scanner = new AnnotationScanner(programProvider,
             listingService, functionService, commentService, symbolLabelService,
             xrefCallGraphService, dataTypeService, analysisService,
-            documentationHashService, malwareSecurityService, programScriptService,
+            binaryComparisonService, malwareSecurityService, programScriptService,
             emulationService, debuggerService, promptPolicyService);
 
         for (EndpointDef ep : scanner.getEndpoints()) {
@@ -2159,7 +2158,7 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
     }
 
     // ====================================================================================
-    // FUNCTION HASH INDEX - Cross-binary documentation propagation
+    // LOCAL FUNCTION HASH / COMPARISON DELEGATES
     // ====================================================================================
 
     /**
@@ -2172,32 +2171,21 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
      * This allows matching identical functions that are located at different addresses.
      */
     private String getFunctionHash(String functionAddress, String programName) {
-        return documentationHashService.getFunctionHash(functionAddress, programName).toJson();
+        return binaryComparisonService.getFunctionHash(functionAddress, programName).toJson();
     }
 
     // Backward compatibility overload
     private String getFunctionHash(String functionAddress) {
-        return documentationHashService.getFunctionHash(functionAddress).toJson();
+        return binaryComparisonService.getFunctionHash(functionAddress, null).toJson();
     }
 
     private String getBulkFunctionHashes(int offset, int limit, String filter, String programName) {
-        return documentationHashService.getBulkFunctionHashes(offset, limit, filter, programName).toJson();
+        return binaryComparisonService.getBulkFunctionHashes(offset, limit, filter, programName).toJson();
     }
 
     // Backward compatibility overload
     private String getBulkFunctionHashes(int offset, int limit, String filter) {
-        return documentationHashService.getBulkFunctionHashes(offset, limit, filter).toJson();
-    }
-
-    /**
-     * Export all documentation for a function (for use in cross-binary propagation)
-     */
-    private String getFunctionDocumentation(String functionAddress, String programName) {
-        return documentationHashService.getFunctionDocumentation(functionAddress, programName).toJson();
-    }
-
-    private String applyFunctionDocumentation(String jsonBody, String programName) {
-        return documentationHashService.applyFunctionDocumentation(jsonBody, programName).toJson();
+        return binaryComparisonService.getBulkFunctionHashes(offset, limit, filter, null).toJson();
     }
 
     /**
@@ -3508,47 +3496,27 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
     }
 
     // ==================================================================================
-    // CROSS-VERSION MATCHING TOOLS
-    // ==================================================================================
-
-    /**
-     * Compare documentation status across all open programs.
-     * Returns documented/undocumented function counts for each program.
-     */
-    private String compareProgramsDocumentation() {
-        return documentationHashService.compareProgramsDocumentation().toJson();
-    }
-
-    private String findUndocumentedByString(String stringAddress, String programName) {
-        return documentationHashService.findUndocumentedByString(stringAddress, programName).toJson();
-    }
-
-    private String batchStringAnchorReport(String pattern, String programName) {
-        return documentationHashService.batchStringAnchorReport(pattern, programName).toJson();
-    }
-
-    // ==========================================================================
     // FUZZY MATCHING & DIFF HANDLERS
     // ==========================================================================
 
     private String handleGetFunctionSignature(String addressStr, String programName) {
-        return documentationHashService.handleGetFunctionSignature(addressStr, programName).toJson();
+        return binaryComparisonService.getFunctionSignature(addressStr, programName).toJson();
     }
 
     private String handleFindSimilarFunctionsFuzzy(String addressStr, String sourceProgramName,
             String targetProgramName, double threshold, int limit) {
-        return documentationHashService.handleFindSimilarFunctionsFuzzy(addressStr, sourceProgramName,
+        return binaryComparisonService.findSimilarFunctionsFuzzy(addressStr, sourceProgramName,
             targetProgramName, threshold, limit).toJson();
     }
 
     private String handleBulkFuzzyMatch(String sourceProgramName, String targetProgramName,
             double threshold, int offset, int limit, String filter) {
-        return documentationHashService.handleBulkFuzzyMatch(sourceProgramName, targetProgramName,
+        return binaryComparisonService.bulkFuzzyMatch(sourceProgramName, targetProgramName,
             threshold, offset, limit, filter).toJson();
     }
 
     private String handleDiffFunctions(String addressA, String addressB, String programAName, String programBName) {
-        return documentationHashService.handleDiffFunctions(addressA, addressB, programAName, programBName).toJson();
+        return binaryComparisonService.diffFunctions(addressA, addressB, programAName, programBName).toJson();
     }
 
     // ==========================================================================

@@ -36,7 +36,7 @@ public class EndpointRegistry {
     private final XrefCallGraphService xrefCallGraphService;
     private final DataTypeService dataTypeService;
     private final AnalysisService analysisService;
-    private final DocumentationHashService documentationHashService;
+    private final BinaryComparisonService binaryComparisonService;
     private final MalwareSecurityService malwareSecurityService;
     private final ProgramScriptService programScriptService;
 
@@ -47,7 +47,7 @@ public class EndpointRegistry {
                             XrefCallGraphService xrefCallGraphService,
                             DataTypeService dataTypeService,
                             AnalysisService analysisService,
-                            DocumentationHashService documentationHashService,
+                            BinaryComparisonService binaryComparisonService,
                             MalwareSecurityService malwareSecurityService,
                             ProgramScriptService programScriptService) {
         this.listingService = listingService;
@@ -57,7 +57,7 @@ public class EndpointRegistry {
         this.xrefCallGraphService = xrefCallGraphService;
         this.dataTypeService = dataTypeService;
         this.analysisService = analysisService;
-        this.documentationHashService = documentationHashService;
+        this.binaryComparisonService = binaryComparisonService;
         this.malwareSecurityService = malwareSecurityService;
         this.programScriptService = programScriptService;
         registerEndpoints();
@@ -357,7 +357,7 @@ public class EndpointRegistry {
         registerXrefCallGraphEndpoints();
         registerDataTypeEndpoints();
         registerAnalysisEndpoints();
-        registerDocumentationHashEndpoints();
+        registerComparisonEndpoints();
         registerMalwareSecurityEndpoints();
         registerProgramScriptEndpoints();
     }
@@ -1050,55 +1050,29 @@ public class EndpointRegistry {
     }
 
     // ======================================================================
-    // DOCUMENTATION / HASH ENDPOINTS
+    // COMPARISON ENDPOINTS
     // ======================================================================
 
-    private void registerDocumentationHashEndpoints() {
+    private void registerComparisonEndpoints() {
 
         get("/get_function_hash", "Compute normalized opcode hash for function",
             params(qStr("address", "Function address"), pProg()),
-            (q, b) -> documentationHashService.getFunctionHash(str(q, "address"), str(q, "program")));
+            (q, b) -> binaryComparisonService.getFunctionHash(str(q, "address"), str(q, "program")));
 
         get("/get_bulk_function_hashes", "Get hashes for multiple or all functions",
             params(qInt("offset", 0), qInt("limit", 100), qStr("filter", "Name filter"), pProg()),
-            (q, b) -> documentationHashService.getBulkFunctionHashes(num(q, "offset", 0), num(q, "limit", 100),
+            (q, b) -> binaryComparisonService.getBulkFunctionHashes(num(q, "offset", 0), num(q, "limit", 100),
                 str(q, "filter"), str(q, "program")));
-
-        get("/get_function_documentation", "Export all documentation for a function",
-            params(qStr("address", "Function address"), pProg()),
-            (q, b) -> documentationHashService.getFunctionDocumentation(str(q, "address"), str(q, "program")));
-
-        post("/apply_function_documentation", "Import documentation to a target function",
-            params(bStr("json_body"), pProg()),
-            (q, b) -> {
-            String jsonBody = bodyStr(b, "json_body");
-            if (jsonBody == null) {
-                jsonBody = JsonHelper.toJson(b);
-            }
-            return documentationHashService.applyFunctionDocumentation(jsonBody, str(q, "program"));
-        });
-
-        get("/compare_programs_documentation", "Compare documented vs undocumented counts",
-            params(pProg()),
-            (q, b) -> documentationHashService.compareProgramsDocumentation(str(q, "program")));
-
-        get("/find_undocumented_by_string", "Find FUN_* functions referencing a string",
-            params(qStr("address", "String address"), pProg()),
-            (q, b) -> documentationHashService.findUndocumentedByString(str(q, "address"), str(q, "program")));
-
-        get("/batch_string_anchor_report", "Report of source file strings and their FUN_* functions",
-            params(qStr("pattern", "File pattern (e.g. .cpp)"), pProg()),
-            (q, b) -> documentationHashService.batchStringAnchorReport(str(q, "pattern", ".cpp"), str(q, "program")));
 
         get("/get_function_signature", "Get function signature for cross-binary comparison",
             params(qStr("address", "Function address"), pProg()),
-            (q, b) -> documentationHashService.handleGetFunctionSignature(str(q, "address"), str(q, "program")));
+            (q, b) -> binaryComparisonService.getFunctionSignature(str(q, "address"), str(q, "program")));
 
         get("/find_similar_functions_fuzzy", "Cross-binary fuzzy function matching",
             params(qStr("address", "Function address"), qStr("source_program", "Source program name"),
                 qStr("target_program", "Target program name"), qDbl("threshold", 0.7, "Similarity threshold"),
                 qInt("limit", 20)),
-            (q, b) -> documentationHashService.handleFindSimilarFunctionsFuzzy(str(q, "address"),
+            (q, b) -> binaryComparisonService.findSimilarFunctionsFuzzy(str(q, "address"),
                 str(q, "source_program"), str(q, "target_program"),
                 dbl(q, "threshold", 0.7), num(q, "limit", 20)));
 
@@ -1106,13 +1080,13 @@ public class EndpointRegistry {
             params(qStr("source_program", "Source program name"), qStr("target_program", "Target program name"),
                 qDbl("threshold", 0.7, "Similarity threshold"), qInt("offset", 0), qInt("limit", 50),
                 qStr("filter", "Name filter")),
-            (q, b) -> documentationHashService.handleBulkFuzzyMatch(str(q, "source_program"), str(q, "target_program"),
+            (q, b) -> binaryComparisonService.bulkFuzzyMatch(str(q, "source_program"), str(q, "target_program"),
                 dbl(q, "threshold", 0.7), num(q, "offset", 0), num(q, "limit", 50), str(q, "filter")));
 
         get("/diff_functions", "Compute structured diff between two functions",
             params(qStr("address_a", "First function address"), qStr("address_b", "Second function address"),
                 qStr("program_a", "First program name"), qStr("program_b", "Second program name")),
-            (q, b) -> documentationHashService.handleDiffFunctions(str(q, "address_a"), str(q, "address_b"),
+            (q, b) -> binaryComparisonService.diffFunctions(str(q, "address_a"), str(q, "address_b"),
                 str(q, "program_a"), str(q, "program_b")));
     }
 

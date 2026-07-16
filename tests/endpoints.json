@@ -1,7 +1,7 @@
 {
   "version": "5.15.0",
   "description": "GhidraMCP REST API Endpoint Specification",
-  "total_endpoints": 257,
+  "total_endpoints": 249,
   "categories": {
     "listing": "List program data",
     "getter": "Get specific data",
@@ -202,41 +202,6 @@
       "description": "Apply data type"
     },
     {
-      "path": "/apply_function_documentation",
-      "method": "POST",
-      "category": "utility",
-      "params": [
-        "json_body",
-        "program"
-      ],
-      "description": "Apply function documentation"
-    },
-    {
-      "path": "/archive_ingest_function",
-      "method": "POST",
-      "category": "documentation",
-      "params": [
-        "address",
-        "program",
-        "version_override",
-        "dry_run"
-      ],
-      "description": "Ingest a single function's documentation into the cross-version archive (re_kb.functions on bsim Postgres). Idempotent; field-level merge resolution happens on the archive side. Use archive_ingest_program for bulk."
-    },
-    {
-      "path": "/archive_ingest_program",
-      "method": "POST",
-      "category": "documentation",
-      "params": [
-        "program",
-        "version_override",
-        "limit",
-        "skip_default_named",
-        "dry_run"
-      ],
-      "description": "Bulk-ingest every function in a program into the cross-version documentation archive. Posts each to /v1/doc_archive/upsert. Returns per-binary counts (created / updated / conflicts_enqueued / errors)."
-    },
-    {
       "path": "/archive_project",
       "method": "POST",
       "category": "headless",
@@ -385,16 +350,6 @@
       "description": "Set multiple variable types"
     },
     {
-      "path": "/batch_string_anchor_report",
-      "method": "GET",
-      "category": "documentation",
-      "params": [
-        "pattern",
-        "program"
-      ],
-      "description": "Report of source file strings and their FUN_* functions"
-    },
-    {
       "path": "/bulk_fuzzy_match",
       "method": "GET",
       "category": "documentation",
@@ -496,15 +451,6 @@
       "category": "headless",
       "params": [],
       "description": "Close the currently open project"
-    },
-    {
-      "path": "/compare_programs_documentation",
-      "method": "GET",
-      "category": "utility",
-      "params": [
-        "program"
-      ],
-      "description": "Compare documentation across programs"
     },
     {
       "path": "/configure_analyzer",
@@ -1127,16 +1073,6 @@
       "description": "Cross-binary fuzzy function matching. On programs with multiple address spaces (e.g., embedded targets), prefix addresses with the space name (mem:1000) to avoid ambiguous resolution."
     },
     {
-      "path": "/find_undocumented_by_string",
-      "method": "GET",
-      "category": "utility",
-      "params": [
-        "address",
-        "program"
-      ],
-      "description": "Find undocumented functions referencing string"
-    },
-    {
       "path": "/force_decompile",
       "method": "GET",
       "category": "decompile",
@@ -1339,16 +1275,6 @@
         "program"
       ],
       "description": "Return the number of functions in the loaded program"
-    },
-    {
-      "path": "/get_function_documentation",
-      "method": "GET",
-      "category": "utility",
-      "params": [
-        "address",
-        "program"
-      ],
-      "description": "Export function documentation"
     },
     {
       "path": "/get_function_hash",
@@ -1888,17 +1814,6 @@
       "category": "utility",
       "params": [],
       "description": "Machine-readable API schema with endpoint metadata"
-    },
-    {
-      "path": "/merge_program_documentation",
-      "method": "POST",
-      "category": "documentation",
-      "params": [
-        "source",
-        "target",
-        "dry_run"
-      ],
-      "description": "Bulk merge: copy all RE documentation (function names, signatures, plate comments, instruction comments at EOL/PRE/POST, non-default labels & global symbols) from one program to another at matching addresses. Server-side iteration in a single transaction. Designed for the orphan-rescue workflow: source is typically '<name>_recovered', target is the original '<name>.dll'. Set dry_run=true to count without writing."
     },
     {
       "path": "/modify_struct_field",
