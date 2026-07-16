@@ -74,40 +74,80 @@ BENCHMARK_DEPLOY_TEST_MODES = {
     "debugger-live",
     "multi-program",
 }
-SMOKE_REQUIRED_TOOLS = {
-    "decompile_function",
-    "get_function_variables",
-    "analyze_function_completeness",
-    "batch_set_comments",
-    "set_local_variable_type",
-    "rename_variables",
-    "prompt_policy",
-    "save_program",
-    "save_all_programs",
-    "set_function_prototype",
-    "rename_function_by_address",
-    "search_data_types",
-    "create_struct",
-    "get_struct_layout",
-    "list_open_programs",
-    "debugger/launch",
-}
-RELEASE_CONTRACT_TOOLS = SMOKE_REQUIRED_TOOLS | {
-    "analysis_status",
-    "create_folder",
-    "delete_file",
+FILEZILLA_CONTRACT_TOOLS = {
+    "create_project",
+    "open_project",
     "import_file",
-    "list_project_files",
-    "list_functions",
+    "list_open_programs",
+    "switch_program",
+    "save_program",
+    "search_strings",
     "search_functions",
-    "get_address_spaces",
-    "list_imports",
-    "list_exports",
-    "list_strings",
+    "search_byte_patterns",
+    "search_instructions",
+    "get_xrefs_to",
+    "get_xrefs_from",
+    "decompile_function",
+    "disassemble_bytes",
+    "clear_flow_and_repair",
+    "rename_function",
+    "rename_label",
+    "set_disassembly_comment",
+    "create_struct",
+    "add_struct_field",
+    "create_memory_block",
+    "run_ghidra_script",
+    "run_script_inline",
+}
+LOCAL_COMPARISON_CONTRACT_TOOLS = {
+    "get_function_hash",
+    "get_bulk_function_hashes",
+    "get_function_signature",
+    "find_similar_functions_fuzzy",
+    "bulk_fuzzy_match",
+    "diff_functions",
+}
+TRACE_RMI_CONTRACT_TOOLS = {
+    "debugger/launch_offers",
     "debugger/launch",
     "debugger/status",
+    "debugger/resume",
+    "debugger/interrupt",
+    "debugger/set_breakpoint",
+    "debugger/read_memory",
+    "debugger/registers",
+    "debugger/stack_trace",
     "debugger/modules",
+    "debugger/static_to_dynamic",
+    "debugger/dynamic_to_static",
 }
+RELEASE_CONTRACT_TOOLS = (
+    FILEZILLA_CONTRACT_TOOLS
+    | LOCAL_COMPARISON_CONTRACT_TOOLS
+    | TRACE_RMI_CONTRACT_TOOLS
+)
+GENERIC_SMOKE_TOOLS = {
+    "analysis_status",
+    "analyze_function_completeness",
+    "batch_set_comments",
+    "create_folder",
+    "delete_file",
+    "get_address_spaces",
+    "get_function_variables",
+    "get_struct_layout",
+    "list_exports",
+    "list_functions",
+    "list_imports",
+    "list_project_files",
+    "list_strings",
+    "rename_function_by_address",
+    "rename_variables",
+    "save_all_programs",
+    "search_data_types",
+    "set_function_prototype",
+    "set_local_variable_type",
+}
+SMOKE_REQUIRED_TOOLS = RELEASE_CONTRACT_TOOLS | GENERIC_SMOKE_TOOLS
 
 
 def ghidra_user_base_dir() -> Path:

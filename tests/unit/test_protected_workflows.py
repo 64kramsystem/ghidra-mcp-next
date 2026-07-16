@@ -1,0 +1,129 @@
+import json
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[2]
+CATALOG = ROOT / "tests" / "endpoints.json"
+
+FILEZILLA_ENDPOINTS = {
+    "/create_project", "/open_project", "/import_file",
+    "/list_open_programs", "/switch_program", "/save_program",
+    "/search_strings", "/search_functions", "/search_byte_patterns",
+    "/search_instructions", "/get_xrefs_to", "/get_xrefs_from",
+    "/decompile_function", "/disassemble_bytes", "/clear_flow_and_repair",
+    "/rename_function", "/rename_label", "/set_disassembly_comment",
+    "/create_struct", "/add_struct_field", "/create_memory_block",
+    "/run_ghidra_script", "/run_script_inline",
+}
+
+TRACE_RMI_ENDPOINTS = {
+    "/debugger/launch_offers", "/debugger/launch", "/debugger/status",
+    "/debugger/traces", "/debugger/resume", "/debugger/interrupt",
+    "/debugger/step_into", "/debugger/step_over", "/debugger/step_out",
+    "/debugger/set_breakpoint", "/debugger/remove_breakpoint",
+    "/debugger/list_breakpoints", "/debugger/registers",
+    "/debugger/read_memory", "/debugger/stack_trace", "/debugger/modules",
+    "/debugger/static_to_dynamic", "/debugger/dynamic_to_static",
+}
+
+LOCAL_COMPARISON_ENDPOINTS = {
+    "/get_function_hash", "/get_bulk_function_hashes",
+    "/get_function_signature", "/find_similar_functions_fuzzy",
+    "/bulk_fuzzy_match", "/diff_functions",
+}
+
+TRACE_RMI_CONTRACT_TOOLS = {
+    "debugger/launch_offers",
+    "debugger/launch",
+    "debugger/status",
+    "debugger/resume",
+    "debugger/interrupt",
+    "debugger/set_breakpoint",
+    "debugger/read_memory",
+    "debugger/registers",
+    "debugger/stack_trace",
+    "debugger/modules",
+    "debugger/static_to_dynamic",
+    "debugger/dynamic_to_static",
+}
+
+GENERIC_SMOKE_TOOLS = {
+    "analysis_status",
+    "analyze_function_completeness",
+    "batch_set_comments",
+    "create_folder",
+    "delete_file",
+    "get_address_spaces",
+    "get_function_variables",
+    "get_struct_layout",
+    "list_exports",
+    "list_functions",
+    "list_imports",
+    "list_project_files",
+    "list_strings",
+    "rename_function_by_address",
+    "rename_variables",
+    "save_all_programs",
+    "search_data_types",
+    "set_function_prototype",
+    "set_local_variable_type",
+}
+
+
+def _catalog_paths() -> set[str]:
+    payload = json.loads(CATALOG.read_text(encoding="utf-8"))
+    return {entry["path"] for entry in payload["endpoints"]}
+
+
+def test_filezilla_workflow_endpoints_are_cataloged():
+    assert FILEZILLA_ENDPOINTS <= _catalog_paths()
+
+
+def test_trace_rmi_workflow_endpoints_are_cataloged():
+    assert TRACE_RMI_ENDPOINTS <= _catalog_paths()
+
+
+def test_local_comparison_endpoints_are_cataloged():
+    assert LOCAL_COMPARISON_ENDPOINTS <= _catalog_paths()
+
+
+def test_debugger_service_owns_the_trace_rmi_group():
+    source = (ROOT / "src/main/java/com/xebyte/core/DebuggerService.java").read_text(
+        encoding="utf-8"
+    )
+    assert '@McpToolGroup(value = "debugger"' in source
+    for path in TRACE_RMI_ENDPOINTS:
+        assert f'path = "{path}"' in source
+
+
+def test_launch_offers_expose_all_offer_metadata_without_image_filtering():
+    source = (ROOT / "src/main/java/com/xebyte/core/DebuggerService.java").read_text(
+        encoding="utf-8"
+    )
+    method = source[source.index("public Response listLaunchOffers(") :]
+    assert "launcherSvc.getOffers(program)" in method
+    assert 'info.put("supports_image", offer.supportsImage())' in method
+    assert 'info.put("requires_image", offer.requiresImage())' in method
+    assert ".filter(" not in method.split("return Response.ok(result);", 1)[0]
+
+
+def test_live_release_contract_matches_the_protected_public_surface():
+    from tools.setup import ghidra
+
+    protected_tools = {
+        path.lstrip("/")
+        for path in FILEZILLA_ENDPOINTS | LOCAL_COMPARISON_ENDPOINTS
+    } | TRACE_RMI_CONTRACT_TOOLS
+
+    assert ghidra.TRACE_RMI_CONTRACT_TOOLS == TRACE_RMI_CONTRACT_TOOLS
+    assert ghidra.RELEASE_CONTRACT_TOOLS == protected_tools
+
+
+def test_live_smoke_contract_preserves_generic_non_policy_checks():
+    from tools.setup import ghidra
+
+    assert ghidra.SMOKE_REQUIRED_TOOLS == (
+        ghidra.RELEASE_CONTRACT_TOOLS | GENERIC_SMOKE_TOOLS
+    )
+    assert "prompt_policy" not in ghidra.SMOKE_REQUIRED_TOOLS
+    assert "prompt_policy" not in ghidra.RELEASE_CONTRACT_TOOLS
