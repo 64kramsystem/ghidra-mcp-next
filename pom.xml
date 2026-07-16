@@ -124,6 +124,13 @@
             <version>2.14.0</version>
             <scope>provided</scope>
         </dependency>
+        <!-- ProjectLocator uses this Ghidra-bundled library at runtime. -->
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-lang3</artifactId>
+            <version>3.20.0</version>
+            <scope>provided</scope>
+        </dependency>
         <!-- JUnit (test only) -->
         <dependency>
             <groupId>junit</groupId>
