@@ -8,6 +8,16 @@ Complete version history for the Ghidra MCP Server project.
 
 ### Added
 
+- **Create and connect a Ghidra project directly through MCP.** The always-
+  available `create_project(parent_dir, name, instance?)` management tool can
+  bootstrap a running GUI instance with no open project, make the new project
+  active, register its dynamic tools, emit `tools/list_changed`, and make
+  `import_file` callable immediately. Instance discovery now merges TCP and
+  UDS records with PID-safe deduplication and exact selectors. The GUI plugin
+  serves `/create_project` over both transports, and `/open_project` now has
+  matching UDS support. Failed GUI creation preserves the previous bridge
+  target; schema-refresh failures return explicit partial success while
+  keeping the new project active and clearing stale tools.
 - **Coverage gates and baselines across all test tiers.**
   - CI unit job now runs with coverage and a `--cov-fail-under=46` ratchet
     (baseline 53%); the offline fun-doc job adds `--cov=fun-doc` with a floor of

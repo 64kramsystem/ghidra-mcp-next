@@ -361,6 +361,33 @@ model **discover** the rest on demand instead of registering everything:
 `search_tools` works in both eager and `--lazy` modes, so agents that honor
 `tools/list_changed` get full discovery without the upfront context cost.
 
+#### Create a project before connecting
+
+The static bridge management tools remain available when a running Ghidra GUI
+has no open project. With one instance running, an MCP client can bootstrap the
+complete project and import flow without GUI interaction or `analyzeHeadless`:
+
+```text
+list_instances()
+create_project(parent_dir="/tmp/ghidra-projects", name="NTLite")
+import_file(file_path="/path/to/NTLite.exe", auto_analyze=true)
+```
+
+The parent directory must already exist. When `GHIDRA_MCP_FILE_ROOT` is set,
+the canonical `.gpr` and `.rep` destinations must both remain inside it, and
+an existing project is never overwritten.
+
+If more than one deduplicated GUI instance is running, pass `instance=` as an
+exact PID, socket path, TCP URL, or project name. Ambiguous and missing
+selectors return the available instances. A mutating request is never retried
+over another transport when its outcome is uncertain.
+
+Full success selects the new project, registers its schema, and emits
+`tools/list_changed`, so `import_file` can run immediately. If project creation
+succeeds but schema refresh fails, the result reports `created: true`,
+`active: true`, `connected: false`, and `refresh_error`; the new project stays
+active while stale or partially registered dynamic tools remain cleared.
+
 #### Optional: Start the standalone debugger server
 ```bash
 uv sync --group debugger
@@ -416,7 +443,7 @@ GhidraMCP is designed for **localhost-only development**. The default configurat
 |---|---|
 | `GHIDRA_MCP_AUTH_TOKEN` | When set, every HTTP request must carry `Authorization: Bearer <token>`. Timing-safe comparison. `/mcp/health`, `/health`, `/check_connection` are exempt. |
 | `GHIDRA_MCP_ALLOW_SCRIPTS` | Set to `1`, `true`, or `yes` to enable `/run_script_inline` and `/run_ghidra_script`. **Off by default as of v5.4.1** — these endpoints execute arbitrary Java against the Ghidra process. In headless mode this also triggers OSGi `BundleHost` initialization at server startup (Felix framework, ~hundreds of ms); leave it off if you don't need script execution. |
-| `GHIDRA_MCP_FILE_ROOT` | When set to a directory path, filesystem-path endpoints (`/load_program`, `/import_file`, `/open_project`, `/delete_file`, etc.) canonicalize the input and require it to fall under this root. Prevents path-traversal. |
+| `GHIDRA_MCP_FILE_ROOT` | When set to a directory path, filesystem-path endpoints (`/load_program`, `/import_file`, `/create_project`, `/open_project`, `/delete_file`, etc.) canonicalize the input and require it to fall under this root. Prevents path-traversal. |
 
 Name-quality enforcement is separate from security. By default,
 `rename_function_by_address` and global write endpoints reject names that fail
