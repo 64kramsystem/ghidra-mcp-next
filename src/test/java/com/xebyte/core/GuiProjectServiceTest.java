@@ -175,7 +175,22 @@ public class GuiProjectServiceTest {
         Project previous = mock(Project.class);
         Project created = mock(Project.class);
         AtomicReference<Project> active = new AtomicReference<>(previous);
+        AtomicReference<Project> toolProject = new AtomicReference<>(previous);
         List<String> events = new ArrayList<>();
+        GuiProjectService.ActiveProjectController controller =
+            new GuiProjectService.ActiveProjectController() {
+                @Override
+                public Project getActiveProject() {
+                    return toolProject.get();
+                }
+
+                @Override
+                public void setActiveProject(Project project) {
+                    events.add("tool:" + (project == null ? "null" : "created") + ":"
+                        + SwingUtilities.isEventDispatchThread());
+                    toolProject.set(project);
+                }
+            };
 
         when(manager.getActiveProject()).thenAnswer(invocation -> active.get());
         doAnswer(invocation -> {
@@ -198,16 +213,18 @@ public class GuiProjectServiceTest {
         when(created.getName()).thenReturn("NewProject");
 
         GuiProjectService service = new GuiProjectService(
-            () -> null, security, () -> manager);
+            () -> null, security, () -> manager, () -> controller);
         Map<String, Object> result = parse(service.createProject(
             parent.toString(), "NewProject"));
 
-        assertEquals(List.of("save:true", "close:true", "create:true"), events);
+        assertEquals(List.of("save:true", "close:true", "tool:null:true",
+            "create:true", "tool:created:true"), events);
         assertEquals(Boolean.TRUE, result.get("success"));
         assertEquals("NewProject", result.get("project"));
         assertEquals(parent.resolve("NewProject").toString(), result.get("path"));
         assertEquals(Boolean.TRUE, result.get("active"));
         assertSame(created, AppInfo.getActiveProject());
+        assertSame(created, controller.getActiveProject());
     }
 
     @Test
@@ -221,8 +238,10 @@ public class GuiProjectServiceTest {
                 return created;
             });
         when(created.getName()).thenReturn("NewProject");
+        AtomicReference<Project> toolProject = new AtomicReference<>();
         GuiProjectService service = new GuiProjectService(
-            () -> null, security, () -> manager);
+            () -> null, security, () -> manager,
+            () -> activeProjectController(toolProject));
 
         Map<String, Object> result = parse(service.createProject(
             parent.toString(), "NewProject.gpr"));
@@ -230,6 +249,104 @@ public class GuiProjectServiceTest {
         assertEquals(Boolean.TRUE, result.get("success"));
         assertEquals("NewProject", result.get("project"));
         assertEquals(parent.resolve("NewProject").toString(), result.get("path"));
+    }
+
+    @Test
+    public void openRunsLifecycleThroughFrontEndControllerOnEdt() throws Exception {
+        Path parent = temporaryFolder.newFolder("projects").toPath();
+        Path marker = Files.createFile(parent.resolve("NewProject.gpr"));
+        Files.createDirectory(parent.resolve("NewProject.rep"));
+        ProjectManager manager = mock(ProjectManager.class);
+        Project previous = mock(Project.class);
+        Project opened = mock(Project.class);
+        AtomicReference<Project> managerProject = new AtomicReference<>(previous);
+        AtomicReference<Project> toolProject = new AtomicReference<>(previous);
+        List<String> events = new ArrayList<>();
+        GuiProjectService.ActiveProjectController controller =
+            new GuiProjectService.ActiveProjectController() {
+                @Override
+                public Project getActiveProject() {
+                    return toolProject.get();
+                }
+
+                @Override
+                public void setActiveProject(Project project) {
+                    events.add("tool:" + (project == null ? "null" : "opened") + ":"
+                        + SwingUtilities.isEventDispatchThread());
+                    toolProject.set(project);
+                }
+            };
+
+        when(manager.getActiveProject()).thenAnswer(invocation -> managerProject.get());
+        doAnswer(invocation -> {
+            events.add("save:" + SwingUtilities.isEventDispatchThread());
+            return null;
+        }).when(previous).save();
+        doAnswer(invocation -> {
+            events.add("close:" + SwingUtilities.isEventDispatchThread());
+            managerProject.set(null);
+            AppInfo.setActiveProject(null);
+            return null;
+        }).when(previous).close();
+        when(manager.openProject(any(ProjectLocator.class), eq(true), eq(false)))
+            .thenAnswer(invocation -> {
+                events.add("open:" + SwingUtilities.isEventDispatchThread());
+                managerProject.set(opened);
+                AppInfo.setActiveProject(opened);
+                return opened;
+            });
+        when(opened.getName()).thenReturn("NewProject");
+
+        GuiProjectService service = new GuiProjectService(
+            () -> null, security, () -> manager, () -> controller);
+        Map<String, Object> result = JsonHelper.parseJson(
+            service.openProject(marker.toString(), true, null));
+
+        assertEquals(List.of("save:true", "close:true", "tool:null:true",
+            "open:true", "tool:opened:true"), events);
+        assertEquals(Boolean.TRUE, result.get("success"));
+        assertSame(opened, AppInfo.getActiveProject());
+        assertSame(opened, controller.getActiveProject());
+    }
+
+    @Test
+    public void openCleansManagerProjectWhenRestoreFailsBeforeReturn() throws Exception {
+        Path parent = temporaryFolder.newFolder("projects").toPath();
+        Path marker = Files.createFile(parent.resolve("NewProject.gpr"));
+        Files.createDirectory(parent.resolve("NewProject.rep"));
+        ProjectManager manager = mock(ProjectManager.class);
+        Project partiallyOpened = mock(Project.class);
+        ProjectLocator locator = new ProjectLocator(parent.toString(), "NewProject");
+        AtomicReference<Project> managerProject = new AtomicReference<>();
+        AtomicReference<Project> toolProject = new AtomicReference<>();
+
+        when(manager.getActiveProject()).thenAnswer(invocation -> managerProject.get());
+        when(manager.openProject(any(ProjectLocator.class), eq(true), eq(false)))
+            .thenAnswer(invocation -> {
+                assertTrue(SwingUtilities.isEventDispatchThread());
+                managerProject.set(partiallyOpened);
+                AppInfo.setActiveProject(partiallyOpened);
+                throw new IOException("restore failed after activation");
+            });
+        when(partiallyOpened.getProjectLocator()).thenReturn(locator);
+        doAnswer(invocation -> {
+            assertTrue(SwingUtilities.isEventDispatchThread());
+            managerProject.set(null);
+            AppInfo.setActiveProject(null);
+            return null;
+        }).when(partiallyOpened).close();
+
+        GuiProjectService service = new GuiProjectService(
+            () -> null, security, () -> manager,
+            () -> activeProjectController(toolProject));
+        Map<String, Object> result = JsonHelper.parseJson(
+            service.openProject(marker.toString(), true, null));
+
+        assertTrue(result.get("error").toString().contains("restore failed"));
+        verify(partiallyOpened).close();
+        assertNull(managerProject.get());
+        assertNull(toolProject.get());
+        assertNull(AppInfo.getActiveProject());
     }
 
     @Test
@@ -313,11 +430,24 @@ public class GuiProjectServiceTest {
         }).when(created).close();
 
         AtomicReference<Map<String, Object>> result = new AtomicReference<>();
+        AtomicReference<Project> assigned = new AtomicReference<>();
+        GuiProjectService.ActiveProjectController controller =
+            new GuiProjectService.ActiveProjectController() {
+                @Override
+                public Project getActiveProject() {
+                    return null;
+                }
+
+                @Override
+                public void setActiveProject(Project project) {
+                    assigned.set(project);
+                }
+            };
         SwingUtilities.invokeAndWait(() -> {
             try (MockedStatic<AppInfo> appInfo = mockStatic(AppInfo.class)) {
                 appInfo.when(AppInfo::getActiveProject).thenReturn(null);
                 GuiProjectService service = new GuiProjectService(
-                    () -> null, security, () -> manager);
+                    () -> null, security, () -> manager, () -> controller);
                 result.set(parse(service.createProject(parent.toString(), "NewProject")));
                 appInfo.verify(() -> AppInfo.setActiveProject(created));
                 appInfo.verify(() -> AppInfo.setActiveProject(null));
@@ -327,6 +457,7 @@ public class GuiProjectServiceTest {
         assertError(result.get(), "project_creation_failed");
         assertEquals(Boolean.TRUE, result.get().get("created"));
         verify(created).close();
+        assertNull(assigned.get());
     }
 
     @Test
@@ -344,8 +475,10 @@ public class GuiProjectServiceTest {
         }).when(previous).close();
         when(manager.createProject(any(ProjectLocator.class), isNull(), eq(true)))
             .thenThrow(new IOException("creation failed before artifacts"));
+        AtomicReference<Project> toolProject = new AtomicReference<>(previous);
         GuiProjectService service = new GuiProjectService(
-            () -> null, security, () -> manager);
+            () -> null, security, () -> manager,
+            () -> activeProjectController(toolProject));
 
         Map<String, Object> result = parse(service.createProject(
             parent.toString(), "NewProject"));
@@ -358,6 +491,7 @@ public class GuiProjectServiceTest {
         verify(manager, never()).openProject(
             any(ProjectLocator.class), anyBoolean(), anyBoolean());
         assertNull(AppInfo.getActiveProject());
+        assertNull(toolProject.get());
         assertFalse(Files.exists(parent.resolve("NewProject.gpr")));
         assertFalse(Files.exists(parent.resolve("NewProject.rep")));
     }
@@ -394,8 +528,10 @@ public class GuiProjectServiceTest {
             return null;
         }).when(created).close();
 
+        AtomicReference<Project> toolProject = new AtomicReference<>(previous);
         GuiProjectService service = new GuiProjectService(
-            () -> null, security, () -> manager);
+            () -> null, security, () -> manager,
+            () -> activeProjectController(toolProject));
         Map<String, Object> result = parse(service.createProject(
             parent.toString(), "NewProject"));
 
@@ -404,6 +540,7 @@ public class GuiProjectServiceTest {
         assertEquals(parent.resolve("NewProject").toString(), result.get("path"));
         verify(created).close();
         assertNull(AppInfo.getActiveProject());
+        assertNull(toolProject.get());
         assertTrue(Files.exists(marker));
     }
 
@@ -418,8 +555,10 @@ public class GuiProjectServiceTest {
                 return created;
             });
         when(created.getName()).thenReturn("NewProject");
+        AtomicReference<Project> toolProject = new AtomicReference<>();
         GuiProjectService service = new GuiProjectService(
-            () -> null, security, () -> manager);
+            () -> null, security, () -> manager,
+            () -> activeProjectController(toolProject));
         CapturingUdsHttpServer server = new CapturingUdsHttpServer();
 
         GuiProjectService.registerUdsEndpoints(server, service);
@@ -442,6 +581,21 @@ public class GuiProjectServiceTest {
 
     private Map<String, Object> parse(Response response) {
         return JsonHelper.parseJson(response.toJson());
+    }
+
+    private GuiProjectService.ActiveProjectController activeProjectController(
+            AtomicReference<Project> project) {
+        return new GuiProjectService.ActiveProjectController() {
+            @Override
+            public Project getActiveProject() {
+                return project.get();
+            }
+
+            @Override
+            public void setActiveProject(Project activeProject) {
+                project.set(activeProject);
+            }
+        };
     }
 
     private void assertError(Map<String, Object> result, String category) {
