@@ -14,18 +14,80 @@ from .server import Context, mcp
 from .validation import validate_server_url
 
 
+class InstanceSelectionError(ValueError):
+    """Instance selection failed before a mutating request was sent."""
+
+    def __init__(self, message: str, available: list[dict]):
+        super().__init__(message)
+        self.available = available
+
+
+def _matches_instance(record: dict, selector: str) -> bool:
+    pid = discovery._known_pid(record)
+    if pid is not None and str(pid) == selector:
+        return True
+    if record.get("project") == selector:
+        return True
+
+    record_socket = discovery._normalize_socket_path(record.get("socket"))
+    selector_socket = discovery._normalize_socket_path(selector)
+    if record_socket and record_socket == selector_socket:
+        return True
+
+    record_url = discovery._normalize_tcp_url(record.get("url"))
+    selector_url = discovery._normalize_tcp_url(selector)
+    return bool(record_url and record_url == selector_url)
+
+
+def _select_instance(
+    instances: list[dict], instance: str | None = None
+) -> tuple[dict, str, str]:
+    """Select exactly one record and its proven reachable transport."""
+    if not instances:
+        raise InstanceSelectionError(
+            "No running Ghidra instance found.", instances
+        )
+
+    if instance is None:
+        if len(instances) != 1:
+            raise InstanceSelectionError(
+                "Multiple Ghidra instances are available; specify instance.",
+                instances,
+            )
+        selected = instances[0]
+    else:
+        selector = str(instance)
+        matches = [
+            record for record in instances if _matches_instance(record, selector)
+        ]
+        if not matches:
+            raise InstanceSelectionError(
+                f"Requested instance '{selector}' was not found.", instances
+            )
+        if len(matches) != 1:
+            raise InstanceSelectionError(
+                f"Instance selector '{selector}' is ambiguous.", instances
+            )
+        selected = matches[0]
+
+    if selected.get("uds_reachable") and selected.get("socket"):
+        return selected, "uds", str(selected["socket"])
+    if selected.get("tcp_reachable") and selected.get("url"):
+        return selected, "tcp", str(selected["url"])
+    raise InstanceSelectionError(
+        "Selected Ghidra instance has no reachable transport.", instances
+    )
+
+
 @mcp.tool()
 def list_instances() -> str:
     """
-    List known Ghidra instances from UDS discovery and the active TCP fallback.
+    List running Ghidra instances merged across UDS and TCP discovery.
 
     Returns JSON with each instance's project name, PID, open programs, and
     socket path or TCP URL. Also shows which instance is currently connected.
     """
-    instances = discovery.discover_instances()
-    tcp_instance = discovery.discover_active_tcp_instance()
-    if tcp_instance:
-        instances.append(tcp_instance)
+    instances = discovery.discover_all_instances()
 
     if not instances:
         return json.dumps(
@@ -33,18 +95,15 @@ def list_instances() -> str:
         )
 
     for inst in instances:
-        if inst.get("transport") == "tcp":
-            inst["connected"] = (
-                state._transport_mode == "tcp" and inst.get("url") == state._active_tcp
-            )
-        else:
-            # UDS-discovered instances may carry a TCP url too (Windows
-            # enrichment) — either transport counts as connected.
-            inst["connected"] = inst["socket"] == state._active_socket or (
-                state._transport_mode == "tcp"
-                and bool(inst.get("url"))
-                and inst.get("url") == state._active_tcp
-            )
+        inst["connected"] = (
+            state._transport_mode == "uds"
+            and bool(inst.get("socket"))
+            and inst.get("socket") == state._active_socket
+        ) or (
+            state._transport_mode == "tcp"
+            and bool(inst.get("url"))
+            and inst.get("url") == state._active_tcp
+        )
 
     return json.dumps({"instances": instances}, indent=2)
 
