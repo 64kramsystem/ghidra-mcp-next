@@ -22,7 +22,7 @@ _connected_project: str | None = None  # Project name for auto-reconnect
 
 # Serialization lock for Ghidra HTTP calls — prevents stdout corruption when
 # multiple MCP tool calls arrive concurrently (see GitHub issue #91).
-_ghidra_lock = threading.Lock()
+_ghidra_lock = threading.RLock()
 
 # --------------------------------------------------------------------------
 # Strict program routing
