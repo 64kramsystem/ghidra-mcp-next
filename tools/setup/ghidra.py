@@ -505,29 +505,24 @@ def find_ghidra_executable(ghidra_path: Path) -> Path:
 
 def find_plugin_archive(repo_root: Path) -> Path:
     version = read_pom_versions(repo_root).project_version
-    # Prefer the freshest current-version output. Both backends may leave artifacts behind,
-    # so fixed backend priority can silently deploy a stale archive.
+    target_dir = repo_root / "target"
     candidates = [
-        repo_root / "build" / "distributions" / f"GhidraMCP-{version}.zip",
-        repo_root / "target" / f"GhidraMCP-{version}.zip",
-        repo_root / "target" / "GhidraMCP.zip",
+        target_dir / f"GhidraMCP-{version}.zip",
+        target_dir / "GhidraMCP.zip",
     ]
     existing_candidates = [candidate for candidate in candidates if candidate.is_file()]
     if existing_candidates:
         return max(existing_candidates, key=lambda path: path.stat().st_mtime)
 
-    for search_dir in [repo_root / "build" / "distributions", repo_root / "target"]:
-        archives = sorted(
-            search_dir.glob("GhidraMCP*.zip"),
-            key=lambda path: path.stat().st_mtime,
-            reverse=True,
-        )
-        if archives:
-            return archives[0]
-
-    raise FileNotFoundError(
-        "No GhidraMCP plugin archive found in build/distributions/ or target/"
+    archives = sorted(
+        target_dir.glob("GhidraMCP*.zip"),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
     )
+    if archives:
+        return archives[0]
+
+    raise FileNotFoundError("No GhidraMCP plugin archive found in target/")
 
 
 def print_command(command: list[str]) -> None:

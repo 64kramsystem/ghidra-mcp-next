@@ -131,12 +131,8 @@ jobs:
         uv run --python 3.12 --group test python -m pytest tests/unit/ --no-cov -q
         echo "✅ Offline test gate passed"
 
-    - name: Build with Maven
-      run: |
-        echo "Building GhidraMCP with Maven..."
-        mvn clean package assembly:single -DskipTests
-        echo "Build complete. Artifacts:"
-        ls -la target/
+    - name: Build extension
+      run: mvn clean package assembly:single -DskipTests
 
     - name: Build Python bridge wheel
       run: |

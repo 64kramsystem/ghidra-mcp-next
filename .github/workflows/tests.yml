@@ -98,8 +98,8 @@ jobs:
 
         echo "✅ Installed Ghidra JARs to Maven local repository"
 
-    - name: Build with Maven
-      run: mvn clean package assembly:single -q -DskipTests
+    - name: Build extension
+      run: mvn clean package assembly:single -DskipTests
 
     - name: Run offline Java tests
       run: |
@@ -195,15 +195,6 @@ jobs:
       uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
       with:
         enable-cache: true
-
-    - name: Set up JDK 21
-      # A unit test shells out to `gradlew deploy --dry-run`, which needs a Java
-      # 21 toolchain; windows-latest doesn't provide one Gradle can auto-detect
-      # (the ubuntu runner ships JAVA_HOME_21 by default, Windows does not).
-      uses: actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a  # v5.5.0
-      with:
-        java-version: '21'
-        distribution: 'temurin'
 
     - name: Set up Python
       run: uv python install 3.12

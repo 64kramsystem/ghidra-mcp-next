@@ -82,7 +82,7 @@ jobs:
 
       - name: Build extension
         shell: powershell
-        run: uv run python -m tools.setup build
+        run: mvn clean package assembly:single -DskipTests
 
       - name: Deploy and run release regression
         shell: powershell
