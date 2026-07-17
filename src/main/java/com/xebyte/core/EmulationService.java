@@ -1,16 +1,16 @@
 package com.xebyte.core;
 
-import ghidra.app.emulator.EmulatorHelper;
+import ghidra.pcode.emu.EmulatorUtilities;
+import ghidra.pcode.emu.PcodeEmulator;
+import ghidra.pcode.emu.PcodeThread;
 import ghidra.program.model.address.Address;
-import ghidra.program.model.address.AddressFactory;
+import ghidra.program.model.lang.Register;
+import ghidra.program.model.lang.RegisterValue;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.Program;
-import ghidra.program.model.lang.Register;
-import ghidra.util.Msg;
 
 import java.math.BigInteger;
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 
 /**
@@ -47,13 +47,11 @@ import java.util.*;
                 "and controlled execution of isolated code paths")
 public class EmulationService {
 
-    private static final int DEFAULT_TIMEOUT_MS = 10_000;
     private static final int DEFAULT_MAX_STEPS = 10_000;
     private static final int MAX_STEPS = 100_000;
     private static final int MAX_CANDIDATES = 10_000;
     // Scratch memory for writing candidate strings during emulation
     private static final long SCRATCH_BASE = 0x7FFE0000L;
-    private static final int SCRATCH_SIZE = 0x10000;
 
     private final ProgramProvider programProvider;
     private final ThreadingStrategy threadingStrategy;
@@ -62,6 +60,57 @@ public class EmulationService {
                             ThreadingStrategy threadingStrategy) {
         this.programProvider = programProvider;
         this.threadingStrategy = threadingStrategy;
+    }
+
+    /** Thin typed facade over Ghidra's concrete 12.1 P-code machine and one execution thread. */
+    private static final class EmulationSession {
+        private final Program program;
+        private final PcodeEmulator emulator;
+        private final PcodeThread<byte[]> thread;
+
+        EmulationSession(Program program, Address entry) throws Exception {
+            this.program = program;
+            emulator = new PcodeEmulator(program.getLanguage());
+            EmulatorUtilities.loadProgram(emulator, program);
+            thread = emulator.newThread();
+            EmulatorUtilities.initializeRegisters(thread, program, entry);
+        }
+
+        void writeRegister(String name, long value) {
+            Register register = program.getRegister(name);
+            if (register == null) {
+                throw new IllegalArgumentException("Unknown register: " + name);
+            }
+            writeRegister(register, value);
+        }
+
+        void writeRegister(Register register, long value) {
+            thread.getState().setRegisterValue(new RegisterValue(register, BigInteger.valueOf(value)));
+        }
+
+        BigInteger readRegister(String name) {
+            Register register = program.getRegister(name);
+            if (register == null) {
+                throw new IllegalArgumentException("Unknown register: " + name);
+            }
+            return thread.getState().inspectRegisterValue(register).getUnsignedValue();
+        }
+
+        void writeMemory(Address address, byte[] bytes) {
+            emulator.getSharedState().setConcrete(address, bytes);
+        }
+
+        Address counter() {
+            return thread.getCounter();
+        }
+
+        void stepInstruction() {
+            thread.stepInstruction();
+        }
+    }
+
+    private record ExecutionResult(
+            int steps, boolean success, boolean hitReturn, String stopReason, String error) {
     }
 
     // ========================================================================
@@ -105,154 +154,93 @@ public class EmulationService {
         if (func == null) return Response.err("No function at address: " + addressStr);
 
         try {
-            EmulatorHelper emu = new EmulatorHelper(program);
-            try {
-                // Set up stack pointer
-                Address stackAddr = program.getAddressFactory()
-                        .getDefaultAddressSpace().getAddress(0x7FFF0000L);
-                emu.writeRegister("ESP", stackAddr.getOffset());
-                emu.writeRegister("EBP", stackAddr.getOffset());
+            EmulationSession session = new EmulationSession(program, entryAddr);
+            long returnOffset = 0xDEADBEEFL;
+            Address returnSentinel = program.getAddressFactory()
+                .getDefaultAddressSpace().getAddress(returnOffset);
+            configureStack(session, program, 0x7FFF0000L, returnOffset);
 
-                // Write a return address to the stack (so RET has somewhere to go)
-                long returnSentinel = 0xDEADBEEFL;
-                byte[] retAddrBytes = ByteBuffer.allocate(4)
-                        .order(ByteOrder.LITTLE_ENDIAN)
-                        .putInt((int) returnSentinel).array();
-                emu.writeMemory(stackAddr, retAddrBytes);
-
-                // Apply user-specified register values
-                if (registersJson != null && !registersJson.isEmpty()) {
-                    Map<String, Object> regs = JsonHelper.parseJson(registersJson);
-                    for (Map.Entry<String, Object> entry : regs.entrySet()) {
-                        String regName = entry.getKey();
-                        long value = parseLongValue(String.valueOf(entry.getValue()));
-                        emu.writeRegister(regName, value);
-                    }
+            if (registersJson != null && !registersJson.isEmpty()) {
+                Map<String, Object> regs = JsonHelper.parseJson(registersJson);
+                for (Map.Entry<String, Object> entry : regs.entrySet()) {
+                    session.writeRegister(
+                        entry.getKey(), parseLongValue(String.valueOf(entry.getValue())));
                 }
-
-                // Apply user-specified memory contents
-                if (memoryJson != null && !memoryJson.isEmpty()) {
-                    List<Map<String, String>> regions = ServiceUtils.convertToMapList(
-                            JsonHelper.parseJson(memoryJson).get("regions"));
-                    if (regions == null) {
-                        // Try parsing as a direct array
-                        regions = ServiceUtils.convertToMapList(memoryJson);
-                    }
-                    if (regions != null) {
-                        for (Map<String, String> region : regions) {
-                            String addrStr = String.valueOf(region.get("address"));
-                            Address memAddr = ServiceUtils.parseAddress(program, addrStr);
-                            if (memAddr == null) continue;
-
-                            if (region.containsKey("string")) {
-                                // Write a null-terminated string
-                                String str = String.valueOf(region.get("string"));
-                                byte[] strBytes = (str + "\0").getBytes("UTF-8");
-                                emu.writeMemory(memAddr, strBytes);
-                            } else if (region.containsKey("data")) {
-                                // Write base64-encoded bytes
-                                String b64 = String.valueOf(region.get("data"));
-                                byte[] data = Base64.getDecoder().decode(b64);
-                                emu.writeMemory(memAddr, data);
-                            } else if (region.containsKey("hex")) {
-                                // Write hex-encoded bytes
-                                String hex = String.valueOf(region.get("hex"));
-                                byte[] data = hexToBytes(hex);
-                                emu.writeMemory(memAddr, data);
-                            }
-                        }
-                    }
-                }
-
-                // Run emulation with a hard step bound. emu.run(...) is
-                // unbounded — it loops until a breakpoint or fault — so a
-                // target with an infinite loop (or one that never executes
-                // RET to hit the returnSentinel) would hang the HTTP
-                // handler thread forever. Step explicitly so the advertised
-                // max_steps parameter is actually honored.
-                int effectiveMaxSteps = Math.min(
-                        maxSteps > 0 ? maxSteps : DEFAULT_MAX_STEPS, MAX_STEPS);
-                ghidra.util.task.TaskMonitor monitor =
-                        new ghidra.util.task.ConsoleTaskMonitor();
-
-                // Position PC at the entry point, then step.
-                emu.writeRegister(emu.getPCRegister(), entryAddr.getOffset());
-
-                int steps = 0;
-                boolean success = true;
-                boolean hitReturn = false;
-                String stopReason = "max_steps_exceeded";
-                Address pc = null;
-                while (steps < effectiveMaxSteps) {
-                    steps++;
-                    if (!emu.step(monitor)) {
-                        success = false;
-                        stopReason = "fault: " + emu.getLastError();
-                        break;
-                    }
-                    pc = emu.getExecutionAddress();
-                    if (pc != null && pc.getOffset() == returnSentinel) {
-                        hitReturn = true;
-                        stopReason = "return";
-                        break;
-                    }
-                }
-                if (steps >= effectiveMaxSteps && !hitReturn && success) {
-                    // Step cap reached without RET or fault — likely an
-                    // infinite loop or a path that never returns.
-                    success = false;
-                }
-
-                // Collect results
-                Map<String, Object> result = new LinkedHashMap<>();
-                result.put("success", success);
-                result.put("function", func.getName());
-                result.put("entry_address", entryAddr.toString());
-                result.put("steps_executed", steps);
-                result.put("max_steps", effectiveMaxSteps);
-                result.put("stop_reason", stopReason);
-
-                pc = emu.getExecutionAddress();
-                result.put("final_pc", pc != null ? pc.toString() : "unknown");
-                result.put("hit_return", hitReturn);
-
-                // Read registers
-                Map<String, String> regValues = new LinkedHashMap<>();
-                if (returnRegisters != null && !returnRegisters.isEmpty()) {
-                    for (String rn : returnRegisters.split(",")) {
-                        rn = rn.trim();
-                        try {
-                            BigInteger val = emu.readRegister(rn);
-                            regValues.put(rn, "0x" + val.toString(16));
-                        } catch (Exception e) {
-                            regValues.put(rn, "error: " + e.getMessage());
-                        }
-                    }
-                } else {
-                    // Return common general-purpose registers
-                    for (String rn : new String[]{"EAX", "EBX", "ECX", "EDX",
-                            "ESI", "EDI", "ESP", "EBP", "EIP"}) {
-                        try {
-                            BigInteger val = emu.readRegister(rn);
-                            regValues.put(rn, "0x" + val.toString(16));
-                        } catch (Exception ignored) {
-                            // Register may not exist for this architecture
-                        }
-                    }
-                }
-                result.put("registers", regValues);
-
-                String lastError = emu.getLastError();
-                if (lastError != null && !lastError.isEmpty()) {
-                    result.put("emulation_error", lastError);
-                }
-
-                return Response.ok(result);
-            } finally {
-                emu.dispose();
             }
+
+            if (memoryJson != null && !memoryJson.isEmpty()) {
+                List<Map<String, String>> regions = ServiceUtils.convertToMapList(
+                    JsonHelper.parseJson(memoryJson).get("regions"));
+                if (regions == null) {
+                    regions = ServiceUtils.convertToMapList(memoryJson);
+                }
+                if (regions != null) {
+                    for (Map<String, String> region : regions) {
+                        Address memoryAddress = ServiceUtils.parseAddress(
+                            program, String.valueOf(region.get("address")));
+                        if (memoryAddress == null) {
+                            continue;
+                        }
+                        if (region.containsKey("string")) {
+                            session.writeMemory(memoryAddress,
+                                (String.valueOf(region.get("string")) + "\0")
+                                    .getBytes(StandardCharsets.UTF_8));
+                        } else if (region.containsKey("data")) {
+                            session.writeMemory(memoryAddress,
+                                Base64.getDecoder().decode(String.valueOf(region.get("data"))));
+                        } else if (region.containsKey("hex")) {
+                            session.writeMemory(memoryAddress,
+                                hexToBytes(String.valueOf(region.get("hex"))));
+                        }
+                    }
+                }
+            }
+
+            int effectiveMaxSteps = Math.min(
+                maxSteps > 0 ? maxSteps : DEFAULT_MAX_STEPS, MAX_STEPS);
+            ExecutionResult execution = executeUntilReturn(
+                session, returnSentinel, effectiveMaxSteps);
+
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("success", execution.success());
+            result.put("function", func.getName());
+            result.put("entry_address", entryAddr.toString());
+            result.put("steps_executed", execution.steps());
+            result.put("max_steps", effectiveMaxSteps);
+            result.put("stop_reason", execution.stopReason());
+            Address finalPc = session.counter();
+            result.put("final_pc", finalPc != null ? finalPc.toString() : "unknown");
+            result.put("hit_return", execution.hitReturn());
+
+            Map<String, String> regValues = new LinkedHashMap<>();
+            if (returnRegisters != null && !returnRegisters.isEmpty()) {
+                for (String registerName : returnRegisters.split(",")) {
+                    registerName = registerName.trim();
+                    try {
+                        BigInteger value = session.readRegister(registerName);
+                        regValues.put(registerName, "0x" + value.toString(16));
+                    } catch (Exception e) {
+                        regValues.put(registerName, "error: " + exceptionMessage(e));
+                    }
+                }
+            } else {
+                for (String registerName : new String[]{"EAX", "EBX", "ECX", "EDX",
+                        "ESI", "EDI", "ESP", "EBP", "EIP"}) {
+                    try {
+                        BigInteger value = session.readRegister(registerName);
+                        regValues.put(registerName, "0x" + value.toString(16));
+                    } catch (Exception ignored) {
+                        // Register may not exist for this architecture.
+                    }
+                }
+            }
+            result.put("registers", regValues);
+            if (execution.error() != null) {
+                result.put("emulation_error", execution.error());
+            }
+            return Response.ok(result);
         } catch (Exception e) {
-            return Response.err("Emulation failed: " + e.getMessage());
+            return Response.err("Emulation failed: " + exceptionMessage(e));
         }
     }
 
@@ -345,68 +333,60 @@ public class EmulationService {
             result.put("total_candidates", candidates.size());
 
             Address scratchAddr = program.getAddressFactory()
-                    .getDefaultAddressSpace().getAddress(SCRATCH_BASE);
-            Address stackAddr = program.getAddressFactory()
-                    .getDefaultAddressSpace().getAddress(0x7FFF0000L);
-            long returnSentinel = 0xDEADBEEFL;
+                .getDefaultAddressSpace().getAddress(SCRATCH_BASE);
+            long returnOffset = 0xDEADBEEFL;
+            Address returnSentinel = program.getAddressFactory()
+                .getDefaultAddressSpace().getAddress(returnOffset);
 
             List<Map<String, String>> matches = new ArrayList<>();
+            List<Map<String, String>> failures = new ArrayList<>();
             int tested = 0;
+            int failed = 0;
 
             for (String candidate : candidates) {
                 tested++;
-                EmulatorHelper emu = new EmulatorHelper(program);
-                try {
-                    // Set up stack
-                    emu.writeRegister("ESP", stackAddr.getOffset());
-                    emu.writeRegister("EBP", stackAddr.getOffset());
-                    byte[] retBytes = ByteBuffer.allocate(4)
-                            .order(ByteOrder.LITTLE_ENDIAN)
-                            .putInt((int) returnSentinel).array();
-                    emu.writeMemory(stackAddr, retBytes);
+                EmulationSession session = new EmulationSession(program, entryAddr);
+                configureStack(session, program, 0x7FFF0000L, returnOffset);
 
-                    // Write candidate string to scratch memory
-                    byte[] strBytes;
-                    if (wideString) {
-                        strBytes = (candidate + "\0").getBytes("UTF-16LE");
-                    } else {
-                        strBytes = (candidate + "\0").getBytes("US-ASCII");
+                byte[] stringBytes = (candidate + "\0").getBytes(
+                    wideString ? StandardCharsets.UTF_16LE : StandardCharsets.US_ASCII);
+                session.writeMemory(scratchAddr, stringBytes);
+                session.writeRegister(stringRegister, SCRATCH_BASE);
+                for (Map.Entry<String, Long> entry : extraRegs.entrySet()) {
+                    session.writeRegister(entry.getKey(), entry.getValue());
+                }
+
+                ExecutionResult execution = executeUntilReturn(
+                    session, returnSentinel, DEFAULT_MAX_STEPS);
+                if (!execution.success()) {
+                    failed++;
+                    if (failures.size() < 10) {
+                        Map<String, String> failure = new LinkedHashMap<>();
+                        failure.put("api_name", candidate);
+                        failure.put("iteration", String.valueOf(tested));
+                        failure.put("stop_reason", execution.stopReason());
+                        failures.add(failure);
                     }
-                    emu.writeMemory(scratchAddr, strBytes);
+                    continue;
+                }
 
-                    // Set string pointer register
-                    emu.writeRegister(stringRegister, SCRATCH_BASE);
-
-                    // Set additional registers
-                    for (Map.Entry<String, Long> entry : extraRegs.entrySet()) {
-                        emu.writeRegister(entry.getKey(), entry.getValue());
-                    }
-
-                    // Set breakpoint at return sentinel
-                    emu.setBreakpoint(program.getAddressFactory()
-                            .getDefaultAddressSpace().getAddress(returnSentinel));
-
-                    // Run
-                    emu.run(entryAddr, null, new ghidra.util.task.ConsoleTaskMonitor());
-
-                    // Read result register
-                    BigInteger hashResult = emu.readRegister(resultRegister);
-                    long computedHash = hashResult.longValue() & 0xFFFFFFFFL; // mask to 32-bit
-
-                    if (computedHash == (targetHash & 0xFFFFFFFFL)) {
-                        Map<String, String> match = new LinkedHashMap<>();
-                        match.put("api_name", candidate);
-                        match.put("computed_hash", "0x" + Long.toHexString(computedHash));
-                        match.put("iteration", String.valueOf(tested));
-                        matches.add(match);
-                        // Continue to find ALL matches (some hash functions have collisions)
-                    }
-                } finally {
-                    emu.dispose();
+                BigInteger hashResult = session.readRegister(resultRegister);
+                long computedHash = hashResult.longValue() & 0xFFFFFFFFL;
+                if (computedHash == (targetHash & 0xFFFFFFFFL)) {
+                    Map<String, String> match = new LinkedHashMap<>();
+                    match.put("api_name", candidate);
+                    match.put("computed_hash", "0x" + Long.toHexString(computedHash));
+                    match.put("iteration", String.valueOf(tested));
+                    matches.add(match);
                 }
             }
 
             result.put("tested", tested);
+            result.put("failed", failed);
+            result.put("max_steps_per_candidate", DEFAULT_MAX_STEPS);
+            if (!failures.isEmpty()) {
+                result.put("failure_samples", failures);
+            }
             result.put("matches", matches);
             result.put("resolved", !matches.isEmpty());
             if (!matches.isEmpty()) {
@@ -415,13 +395,74 @@ public class EmulationService {
 
             return Response.ok(result);
         } catch (Exception e) {
-            return Response.err("Batch emulation failed: " + e.getMessage());
+            return Response.err("Batch emulation failed: " + exceptionMessage(e));
         }
     }
 
     // ========================================================================
     // Helpers
     // ========================================================================
+
+    private static ExecutionResult executeUntilReturn(
+            EmulationSession session, Address returnSentinel, int maxSteps) {
+        for (int steps = 1; steps <= maxSteps; steps++) {
+            try {
+                session.stepInstruction();
+            } catch (RuntimeException e) {
+                String error = exceptionMessage(e);
+                return new ExecutionResult(
+                    steps, false, false, "fault: " + error, error);
+            }
+            if (returnSentinel.equals(session.counter())) {
+                return new ExecutionResult(steps, true, true, "return", null);
+            }
+        }
+        return new ExecutionResult(
+            maxSteps, false, false, "max_steps_exceeded", null);
+    }
+
+    private static Address configureStack(
+            EmulationSession session, Program program, long stackOffset, long returnOffset) {
+        Address stackAddress = program.getAddressFactory()
+            .getDefaultAddressSpace().getAddress(stackOffset);
+        Register stackPointer = program.getCompilerSpec().getStackPointer();
+        if (stackPointer == null) {
+            throw new IllegalStateException("Program compiler spec does not define a stack pointer");
+        }
+        session.writeRegister(stackPointer, stackAddress.getOffset());
+
+        // Preserve the legacy x86 frame setup where a frame-pointer register is available.
+        for (String framePointerName : new String[]{"RBP", "EBP"}) {
+            Register framePointer = program.getRegister(framePointerName);
+            if (framePointer != null) {
+                session.writeRegister(framePointer, stackAddress.getOffset());
+                break;
+            }
+        }
+
+        session.writeMemory(stackAddress, encodePointer(program, returnOffset));
+        return stackAddress;
+    }
+
+    private static byte[] encodePointer(Program program, long value) {
+        int size = Math.max(1, program.getDefaultPointerSize());
+        byte[] bytes = new byte[size];
+        int encodedBytes = Math.min(size, Long.BYTES);
+        boolean bigEndian = program.getLanguage().isBigEndian();
+        for (int i = 0; i < encodedBytes; i++) {
+            int index = bigEndian ? size - 1 - i : i;
+            bytes[index] = (byte) (value >>> (Byte.SIZE * i));
+        }
+        return bytes;
+    }
+
+    private static String exceptionMessage(Throwable error) {
+        String message = error.getMessage();
+        if (message != null && !message.isBlank()) {
+            return message;
+        }
+        return error.getClass().getSimpleName();
+    }
 
     private static long parseLongValue(String s) {
         if (s == null || s.isEmpty()) return 0;
