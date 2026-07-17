@@ -1,54 +1,40 @@
-# Ghidra MCP — Roadmap & Project Direction
+# Roadmap
 
-This document exists to make the project's direction legible. It is intentionally
-short and is updated as priorities shift. For the full tool inventory see
-[`tests/endpoints.json`](tests/endpoints.json); for architecture see
-[`CLAUDE.md`](CLAUDE.md).
+The roadmap focuses on deepening the maintained local-analysis and TraceRMI
+stack. Items are not promises until they have implementation, catalog, and test
+coverage.
 
-_Last updated: 2026-06-14._
+## Near-term priorities
 
-## Guiding principles
+- Maintain GUI/headless parity for local project and program operations.
+- Keep `tests/endpoints.json` synchronized with Java registrations.
+- Improve multi-program routing and failure reporting without relying on a
+  mutable active tab.
+- Expand offline tests for Ghidra transaction, address-space, and TraceRMI
+  mapping semantics.
+- Keep generic local comparison and optional BSim useful for recognizing
+  open-source library boundaries.
 
-- **Thin bridge, fat plugin.** Tool logic lives in the Java service layer and is
-  auto-discovered from `@McpTool` annotations. The Python bridge is a generic
-  HTTP multiplexer that registers tools dynamically from `/mcp/schema` — there
-  is no hand-maintained tool list to keep in sync.
-- **Conventions enforced in the tool layer**, not in prompts, so documentation
-  output stays consistent across large-scale runs.
-- **Bug reports from real users are first-class.** Issues are triaged with a
-  reproduction or a clear "can't reproduce / need info" — not closed silently.
+## Planned TraceRMI additions
 
-## Now (in progress)
+- [ ] Generic TraceRMI attach using a selected launch offer and PID.
+- [ ] `debugger_wait_for_stop(timeout_ms)`.
+- [ ] Process memory-map enumeration.
+- [ ] `copy_debugger_memory_to_program`, creating and populating a block from a
+  trace range.
 
-- **Tool-context overhead (#267, #153).** The catalog is large. The levers
-  already exist — tool groups (`load_tool_group` / `unload_tool_group`),
-  `--lazy` startup, and as of v5.x a `search_tools` catalog-search meta-tool so
-  agents can run lazy and discover unloaded tools by keyword. Next step:
-  evaluate making `--lazy + search_tools` the recommended default once the
-  `tools/list_changed` story is solid across common clients.
-- **Transport modernization.** `streamable-http` is supported and recommended;
-  `sse` is deprecated and retained only for backward compatibility. Tracking a
-  reported MCP Inspector preflight/`OPTIONS` issue on the HTTP transport.
-- **API parameter-name consistency (#210).** Normalize `address` vs
-  `function_address`, `new_name` vs `newName` across endpoints.
+There is no generic TraceRMI attach endpoint in the current release. Until the
+items above land, use `debugger_launch_offers` plus `debugger_launch`, then the
+existing status, mapping, breakpoint, stepping, register, stack, module, and
+memory-read tools.
 
-## Next
+## Quality bar
 
-- **Reference write tools (#298).** `add_memory_reference` / `remove_reference`
-  to complement the read-side xref tools (community PR #299 under review).
-- **Reduce surface area further.** Audit for redundant/overlapping tools that
-  can be merged now that `search_tools` exists.
-- **Single-process option.** Investigate serving MCP-over-streamable-HTTP
-  directly from the Ghidra Java extension to make the Python bridge optional.
-  Larger architectural change — scoped as a future direction, not a quick fix.
+A roadmap feature is complete only when it includes:
 
-## Process commitments
-
-- A pinned issue tracks current direction; this file is the canonical source.
-- Issues are not auto-closed by templated messages without a human decision.
-- Dependency bumps flow through Dependabot and are batched after CI is green.
-
-## How to influence the roadmap
-
-Open an issue describing the problem (not just the solution) with a concrete
-repro or use case. Feature requests with a PR attached move fastest.
+- Java GUI registration and deliberate headless behavior;
+- endpoint-catalog parity;
+- bridge name and schema coverage;
+- offline tests for pure semantics where possible;
+- live-test instructions for behavior that requires Ghidra; and
+- maintained user and developer documentation.
