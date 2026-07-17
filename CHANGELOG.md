@@ -19,6 +19,10 @@ Complete version history for the Ghidra MCP Server project.
   `debugger_*` tools and `debugger_resume`.
 - Restricted MCP script execution to a reviewed generic allowlist and made
   BSim scripts require an explicit local database URL.
+- Targeted the Java extension at Ghidra 12.1.x and removed compatibility with
+  older comment, datatype, script, loader, and emulator APIs.
+- Made all Java compiler warnings build failures and configured Mockito as a
+  static test agent so clean builds no longer rely on dynamic agent loading.
 
 ### Fixed
 
@@ -29,6 +33,9 @@ Complete version history for the Ghidra MCP Server project.
 - Mirrored Ghidra's FrontEnd project-close notification when MCP switches local
   projects, preventing stale listeners from treating the replacement as a
   second active project.
+- Bounded both P-code emulation paths by instruction count; batch hash
+  candidates now report sampled faults or step-limit failures instead of
+  leaving a request in an unbounded emulator run.
 
 ### Removed
 
