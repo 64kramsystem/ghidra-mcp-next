@@ -1,7 +1,7 @@
 {
   "version": "5.15.0",
   "description": "GhidraMCP REST API Endpoint Specification",
-  "total_endpoints": 230,
+  "total_endpoints": 229,
   "categories": {
     "listing": "List program data",
     "getter": "Get specific data",
@@ -1888,17 +1888,6 @@
       "description": "Get detailed project info including running tools and open programs"
     },
     {
-      "path": "/prompt_policy",
-      "method": "POST",
-      "category": "system",
-      "params": [
-        "action",
-        "reason",
-        "seconds"
-      ],
-      "description": "Temporarily enable, disable, or query scoped automation prompt handling"
-    },
-    {
       "path": "/read_memory",
       "method": "GET",
       "category": "analysis",
@@ -2354,7 +2343,7 @@
         "program",
         "strict_mode"
       ],
-      "description": "Atomically apply name + type + plate-comment + array length to a global variable. Single-transaction; rejects on validation failure with no partial write. Replaces the 4-tool chain (apply_data_type → rename_data → batch_set_comments → create_label)."
+      "description": "Atomically apply name + type + plate-comment + array length to a global variable. Caller-supplied names and comments are passed to Ghidra unchanged; structural type and array validation remains. Replaces the 4-tool chain (apply_data_type → rename_data → batch_set_comments → create_label)."
     },
     {
       "path": "/set_image_base",
@@ -2422,7 +2411,7 @@
         "variables",
         "program"
       ],
-      "description": "Set types and names for multiple variables atomically. Types are applied first, then renames, in a single transaction. Hungarian prefix validation is enforced: the new name's prefix must match the type. On programs with multiple address spaces, prefix addresses with the space name."
+      "description": "Set types and names for multiple variables atomically. Types are applied first, then renames, in a single transaction. Caller-supplied names are passed to Ghidra unchanged. On programs with multiple address spaces, prefix addresses with the space name."
     },
     {
       "path": "/suggest_field_names",

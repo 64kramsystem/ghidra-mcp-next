@@ -125,6 +125,10 @@ def test_documentation_propagation_endpoints_are_absent():
     assert REMOVED_DOCUMENTATION_ENDPOINTS.isdisjoint(_catalog_paths())
 
 
+def test_prompt_policy_endpoint_is_absent():
+    assert "/prompt_policy" not in _catalog_paths()
+
+
 def test_debugger_service_owns_the_trace_rmi_group():
     source = (ROOT / "src/main/java/com/xebyte/core/DebuggerService.java").read_text(
         encoding="utf-8"

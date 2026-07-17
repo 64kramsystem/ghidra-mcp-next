@@ -46,4 +46,14 @@ public class ArchitectureBoundaryTest extends TestCase {
         assertFalse(source.contains("parseIntOrDefault"));
         assertFalse(source.contains("parseDoubleOrDefault"));
     }
+
+    public void testNamingPolicyDependenciesAreAbsent() throws Exception {
+        String source = maintainedJava();
+        for (String forbidden : List.of(
+                "NamingConventions", "NamingPolicy", "ConventionConfig",
+                "ConventionConfigLoader", "PromptPolicyService")) {
+            assertFalse("forbidden naming-policy dependency: " + forbidden,
+                    source.contains(forbidden));
+        }
+    }
 }

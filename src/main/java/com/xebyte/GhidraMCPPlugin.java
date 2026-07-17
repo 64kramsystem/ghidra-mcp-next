@@ -66,7 +66,6 @@ import com.xebyte.core.EndpointDef;
 import com.xebyte.core.FrontEndProgramProvider;
 import com.xebyte.core.GuiProjectService;
 import com.xebyte.core.JsonHelper;
-import com.xebyte.core.NamingPolicy;
 import com.xebyte.core.ServerManager;
 
 import ghidra.framework.main.ApplicationLevelPlugin;
@@ -204,8 +203,6 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
     private static final int DEFAULT_PORT = 8089;
     private static final String UDS_ENABLED_OPTION = "Enable UDS Transport";
     private static final String TCP_ENABLED_OPTION = "Enable TCP Transport";
-    private static final String STRICT_NAMING_ENFORCEMENT_OPTION = "Strict Naming Enforcement";
-    private static final String LEGACY_STRICT_FUNCTION_NAMES_OPTION = "Strict Function Name Enforcement";
     // Both transports default ON. UDS gives per-PID socket files so multi-
     // instance setups don't race for the same TCP port (issue #175 primary
     // fix). TCP stays on by default because many users have HTTP-only
@@ -270,7 +267,6 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
     private final com.xebyte.core.ProgramScriptService programScriptService;
     private final com.xebyte.core.EmulationService emulationService;
     private final com.xebyte.core.DebuggerService debuggerService;
-    private final com.xebyte.core.PromptPolicyService promptPolicyService;
 
     public GhidraMCPPlugin(PluginTool tool) {
         super(tool);
@@ -293,7 +289,6 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
         this.programScriptService = new com.xebyte.core.ProgramScriptService(programProvider, threadingStrategy);
         this.emulationService = new com.xebyte.core.EmulationService(programProvider, threadingStrategy);
         this.debuggerService = new com.xebyte.core.DebuggerService(programProvider, threadingStrategy, tool);
-        this.promptPolicyService = new com.xebyte.core.PromptPolicyService();
         Msg.info(this, "============================================");
         Msg.info(this, "GhidraMCP " + VersionInfo.getFullVersion());
         Msg.info(this, "Endpoints: " + VersionInfo.getEndpointCount());
@@ -309,17 +304,6 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
             "Enable Unix Domain Socket transport for local multi-instance support.");
         options.registerOption(TCP_ENABLED_OPTION, DEFAULT_TCP_ENABLED, null,
             "Enable TCP transport for remote/network access.");
-        options.registerOption(STRICT_NAMING_ENFORCEMENT_OPTION,
-            NamingPolicy.defaultStrictNamingEnforcement(), null,
-            "Reject function/global names that fail the built-in name-quality checks " +
-            "on rename_function_by_address, rename_data, rename_global_variable, " +
-            "set_global, and related write guards. Also controls struct-field " +
-            "Hungarian prefix auto-fixes. Disable when your naming convention " +
-            "does not match the built-in heuristic; function/global convention warnings are still returned. " +
-            "Takes effect when the MCP server starts or restarts.");
-        migrateLegacyNamingOption(options);
-        refreshNamingPolicyFromOptions();
-
         boolean udsEnabled = options.getBoolean(UDS_ENABLED_OPTION, DEFAULT_UDS_ENABLED);
         boolean tcpEnabled = options.getBoolean(TCP_ENABLED_OPTION, DEFAULT_TCP_ENABLED);
 
@@ -378,67 +362,6 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
         return server != null;
     }
 
-    private void refreshNamingPolicyFromOptions() {
-        Options options = tool.getOptions(OPTION_CATEGORY_NAME);
-        boolean strict = options.getBoolean(STRICT_NAMING_ENFORCEMENT_OPTION,
-            NamingPolicy.defaultStrictNamingEnforcement());
-
-        // v5.11.2: load .ghidra-mcp/conventions.json from the active
-        // project root before applying the Tool Option boolean override.
-        // Order matters: the JSON sets all sections (including mode), then
-        // the GUI toggle overrides JUST the mode bit. That keeps the GUI
-        // checkbox as the user's most-recent intent without forcing them
-        // to also delete the JSON file.
-        java.nio.file.Path projectDir = resolveProjectRootDir();
-        com.xebyte.core.ConventionConfigLoader.LoadResult loadResult =
-                NamingPolicy.getInstance().refreshFromProjectRoot(projectDir);
-        if (loadResult.loaded()) {
-            Msg.info(this, "Loaded convention config from " + loadResult.resolvedFrom());
-        } else if (loadResult.error() != null) {
-            Msg.warn(this, "Convention config not loaded: " + loadResult.error()
-                    + " — using built-in defaults");
-        }
-        for (String warning : loadResult.warnings()) {
-            Msg.warn(this, "Convention config: " + warning);
-        }
-
-        // Apply the Tool Option toggle on top. setStrictNamingEnforcement()
-        // preserves all other config sections — only the mode flips.
-        NamingPolicy.getInstance().setStrictNamingEnforcement(strict, "tool_options");
-        Msg.info(this, "GhidraMCP strict naming enforcement: " + strict);
-    }
-
-    /** Best-effort resolution of the active Ghidra project directory.
-     * Returns null if no project is currently open. */
-    private java.nio.file.Path resolveProjectRootDir() {
-        try {
-            Project project = tool.getProject();
-            if (project == null) return null;
-            ghidra.framework.model.ProjectLocator locator = project.getProjectLocator();
-            if (locator == null) return null;
-            java.io.File dir = locator.getProjectDir();
-            return dir != null ? dir.toPath() : null;
-        } catch (Exception e) {
-            // Any reflection / API surprise here is non-fatal — fall back
-            // to defaults. The active config is still usable, just without
-            // the per-project overrides.
-            return null;
-        }
-    }
-
-    private void migrateLegacyNamingOption(Options options) {
-        if (!options.contains(LEGACY_STRICT_FUNCTION_NAMES_OPTION)
-                || !options.isDefaultValue(STRICT_NAMING_ENFORCEMENT_OPTION)) {
-            return;
-        }
-
-        boolean legacyStrict = options.getBoolean(LEGACY_STRICT_FUNCTION_NAMES_OPTION,
-                NamingPolicy.defaultStrictNamingEnforcement());
-        options.setBoolean(STRICT_NAMING_ENFORCEMENT_OPTION, legacyStrict);
-        options.removeOption(LEGACY_STRICT_FUNCTION_NAMES_OPTION);
-        Msg.info(this, "Migrated GhidraMCP naming enforcement option from legacy function-name setting");
-    }
-
     private void stopServer() {
         if (server != null) {
             Msg.info(this, "Stopping GhidraMCP HTTP server...");
@@ -469,7 +392,6 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
             @Override
             public void actionPerformed(ActionContext context) {
                 Options opts = tool.getOptions(OPTION_CATEGORY_NAME);
-                refreshNamingPolicyFromOptions();
                 boolean uds = opts.getBoolean(UDS_ENABLED_OPTION, DEFAULT_UDS_ENABLED);
                 boolean tcp = opts.getBoolean(TCP_ENABLED_OPTION, DEFAULT_TCP_ENABLED);
                 StringBuilder started = new StringBuilder();
@@ -538,7 +460,6 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
                 String message = "GhidraMCP Server Status\n\n" +
                     "UDS: " + udsStatus + "\n" +
                     "TCP: " + tcpStatus + "\n" +
-                    "Strict naming enforcement: " + NamingPolicy.getInstance().isStrictNamingEnforcement() + "\n" +
                     "Version: " + VersionInfo.getFullVersion() + "\n" +
                     "Endpoints: " + VersionInfo.getEndpointCount();
                 Msg.showInfo(getClass(), null, "GhidraMCP", message);
@@ -557,7 +478,6 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
     private void startServer() throws IOException {
         // Read the configured port
         Options options = tool.getOptions(OPTION_CATEGORY_NAME);
-        refreshNamingPolicyFromOptions();
         int port = options.getInt(PORT_OPTION_NAME, DEFAULT_PORT);
 
         // Stop existing server if running (e.g., if plugin is reloaded)
@@ -621,7 +541,7 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
             listingService, functionService, commentService, symbolLabelService,
             xrefCallGraphService, dataTypeService, analysisService,
             binaryComparisonService, malwareSecurityService, programScriptService,
-            emulationService, debuggerService, promptPolicyService);
+            emulationService, debuggerService);
 
         for (EndpointDef ep : scanner.getEndpoints()) {
             server.createContext(ep.path(), safeHandler(exchange -> {
@@ -852,7 +772,6 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
 
         server.createContext("/exit_ghidra", safeHandler(exchange -> {
             try {
-                promptPolicyService.enableFor("exit_ghidra", 30);
                 Map<String, Object> saveResult = saveEverythingBeforeExit();
                 sendResponse(exchange, JsonHelper.toJson(JsonHelper.mapOf(
                     "success", true,
