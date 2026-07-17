@@ -24,11 +24,8 @@ def _args(**kwargs) -> argparse.Namespace:
         dry_run=False,
         ghidra_path=None,
         strict=False,
-        use_debugger_toggle=False,
-        with_debugger=False,
         force=False,
         test=[],
-        env_file=None,
         new=None,
         old=None,
         tag=False,
@@ -432,59 +429,6 @@ def test_require_ghidra_path_returns_path_when_set(tmp_path, monkeypatch):
 
 
 # ===========================================================================
-# _should_install_debugger
-# ===========================================================================
-
-
-def test_should_install_debugger_with_flag():
-    from tools.setup import cli
-
-    assert (
-        cli._should_install_debugger(
-            {}, _args(with_debugger=True, use_debugger_toggle=False)
-        )
-        is True
-    )
-
-
-def test_should_install_debugger_from_env_toggle():
-    from tools.setup import cli
-
-    assert (
-        cli._should_install_debugger(
-            {"INSTALL_DEBUGGER_DEPS": "true"},
-            _args(with_debugger=False, use_debugger_toggle=True),
-        )
-        is True
-    )
-
-
-def test_should_install_debugger_env_disabled():
-    from tools.setup import cli
-
-    assert (
-        cli._should_install_debugger(
-            {"INSTALL_DEBUGGER_DEPS": "false"},
-            _args(with_debugger=False, use_debugger_toggle=True),
-        )
-        is False
-    )
-
-
-def test_should_install_debugger_toggle_off():
-    from tools.setup import cli
-
-    # INSTALL_DEBUGGER_DEPS=true in env, but toggle not passed — should NOT install
-    assert (
-        cli._should_install_debugger(
-            {"INSTALL_DEBUGGER_DEPS": "true"},
-            _args(with_debugger=False, use_debugger_toggle=False),
-        )
-        is False
-    )
-
-
-# ===========================================================================
 # cmd_preflight
 # ===========================================================================
 
@@ -555,7 +499,6 @@ def test_cmd_ensure_prereqs_dry_run_prints_plan(tmp_path, monkeypatch, capsys):
     fake_plan = InstallPlan(
         repo_root=tmp_path,
         groups=("dev",),
-        install_debugger=False,
     )
 
     monkeypatch.setattr(cli, "detect_repo_root", lambda: tmp_path)
@@ -617,15 +560,21 @@ def test_parser_install_python_deps_rejects_obsolete_flags():
         assert exc_info.value.code != 0
 
 
-def test_parser_install_python_deps_accepts_supported_flags():
+def test_parser_install_python_deps_rejects_removed_debugger_flags():
     from tools.setup.cli import build_parser
 
-    args = build_parser().parse_args(
-        ["install-python-deps", "--with-debugger", "--env-file", ".env.local"]
-    )
+    parser = build_parser()
+    for flag in ("--with-debugger", "--use-debugger-toggle"):
+        with pytest.raises(SystemExit) as exc_info:
+            parser.parse_args(["install-python-deps", flag])
+        assert exc_info.value.code != 0
+
+
+def test_parser_install_python_deps_accepts_no_flags():
+    from tools.setup.cli import build_parser
+
+    args = build_parser().parse_args(["install-python-deps"])
     assert args.command == "install-python-deps"
-    assert args.with_debugger is True
-    assert args.env_file == Path(".env.local")
 
 
 def test_parser_bump_version_parses_new_flag():

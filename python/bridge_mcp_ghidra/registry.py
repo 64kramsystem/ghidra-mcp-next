@@ -7,15 +7,13 @@ import sys
 from . import dispatch
 from . import state
 from . import transport
-from .config import STATIC_TOOL_NAMES, _ALL_STATIC_TOOL_NAMES, logger
+from .config import STATIC_TOOL_NAMES, logger
 from .schema import _TYPE_MAP, _normalize_tool_def_names, _parse_schema
 from .server import Context, mcp
 from .validation import sanitize_address, validate_tool_name
 
-# Fail fast at import time if any static tool name is not CAPI-safe. Validates
-# every structurally-possible name (including debugger tools), not just the
-# ones active on this platform.
-for _static_tool_name in _ALL_STATIC_TOOL_NAMES:
+# Fail fast at import time if any bridge-defined static tool name is not CAPI-safe.
+for _static_tool_name in STATIC_TOOL_NAMES:
     validate_tool_name(_static_tool_name)
 
 

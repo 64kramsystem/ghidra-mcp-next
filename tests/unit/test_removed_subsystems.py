@@ -27,3 +27,14 @@ def test_generic_ghidra_fixture_replaces_fun_doc_fixture():
 def test_fun_doc_dependency_group_is_absent():
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert "fun-doc = [" not in pyproject
+
+
+def test_standalone_debugger_proxy_is_absent():
+    assert not (ROOT / "debugger").exists()
+    assert not (ROOT / "python/bridge_mcp_ghidra/debugger.py").exists()
+    maintained = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (ROOT / "python/bridge_mcp_ghidra").glob("*.py")
+    )
+    assert "GHIDRA_DEBUGGER_URL" not in maintained
+    assert "DEBUGGER_TOOL_NAMES" not in maintained

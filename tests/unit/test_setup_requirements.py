@@ -73,25 +73,23 @@ def test_ensure_uv_available_raises_when_not_executable(monkeypatch):
 
 
 def test_make_install_plan_dev_group_by_default():
-    plan = req.make_install_plan(Path("/repo"), install_debugger=False)
+    plan = req.make_install_plan(Path("/repo"))
     assert plan.groups == ("dev",)
-    assert plan.install_debugger is False
 
 
-def test_make_install_plan_adds_debugger_group():
-    plan = req.make_install_plan(Path("/repo"), install_debugger=True)
-    assert "debugger" in plan.groups
-    assert plan.install_debugger is True
+def test_make_install_plan_accepts_explicit_base_groups():
+    plan = req.make_install_plan(Path("/repo"), base_groups=("test",))
+    assert plan.groups == ("test",)
 
 
 def test_uv_sync_command_includes_each_group(monkeypatch):
     monkeypatch.setattr(req, "uv_executable", lambda: "uv")
-    plan = req.make_install_plan(Path("/repo"), install_debugger=True)
+    plan = req.make_install_plan(Path("/repo"), base_groups=("dev", "test"))
     cmd = req.uv_sync_command(plan)
     assert cmd[:2] == ["uv", "sync"]
     assert "--group" in cmd
     assert "dev" in cmd
-    assert "debugger" in cmd
+    assert "test" in cmd
 
 
 def test_execute_install_plan_runs_uv_sync(monkeypatch, tmp_path):
@@ -105,7 +103,7 @@ def test_execute_install_plan_runs_uv_sync(monkeypatch, tmp_path):
     monkeypatch.setattr(req, "uv_executable", lambda: "uv")
     monkeypatch.setattr(subprocess, "run", fake_run)
 
-    plan = req.make_install_plan(tmp_path, install_debugger=False)
+    plan = req.make_install_plan(tmp_path)
     req.execute_install_plan(plan)
 
     assert captured["cmd"][:2] == ["uv", "sync"]
@@ -130,7 +128,7 @@ def test_execute_install_plan_validates_uv_before_sync(monkeypatch, tmp_path):
 
     monkeypatch.setattr(subprocess, "run", fake_run)
 
-    plan = req.make_install_plan(tmp_path, install_debugger=False)
+    plan = req.make_install_plan(tmp_path)
     with pytest.raises(FileNotFoundError) as exc:
         req.execute_install_plan(plan)
 

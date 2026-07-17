@@ -1518,8 +1518,7 @@ def run_debugger_live_test(repo_root: Path, mcp_url: str) -> None:
                     f"Debugger backend unavailable on this machine: "
                     f"{launch_err}. Install the Windows Debugger Toolkit "
                     "(WDK) and ensure the matching ghidratrace wheel is "
-                    "installed against the active Python (see the "
-                    "`debugger` dependency group: `uv sync --group debugger`) "
+                    "installed into the selected Ghidra debugger Python "
                     "to enable this test."
                 ) from launch_err
             raise
@@ -2047,8 +2046,7 @@ def install_ghidratrace_for_debugger(
     pip-installed in the launcher's Python, TraceRmi negotiation fails
     with ``VersionMismatchError: Front-end: 12.1, back-end: 12.0`` —
     observed twice in this release cycle. The wheel lives inside the
-    Ghidra install (not on PyPI), so a plain ``uv sync --group debugger``
-    can't cover it.
+    Ghidra install (not on PyPI), so the bridge environment cannot provide it.
 
     Returns 0 on success / no-op, nonzero on installer failure.
     """
@@ -2159,60 +2157,10 @@ def test_write_access(path_to_test: Path) -> bool:
         return False
 
 
-def _has_dependency_group(pyproject: Path, group: str) -> bool:
-    """Return True if ``pyproject.toml`` defines ``group`` under
-    ``[dependency-groups]``.
-
-    A plain substring scan is too loose — the word could appear in a comment or
-    an unrelated section — and too strict, since it wouldn't confirm the entry
-    is one ``uv sync --group <group>`` can actually resolve. Parse the TOML and
-    look for the real key.
-    """
-    if not pyproject.is_file():
-        return False
-
-    try:
-        import tomllib  # Python 3.11+
-    except ModuleNotFoundError:
-        try:
-            import tomli as tomllib  # type: ignore[no-redef]
-        except ModuleNotFoundError:
-            tomllib = None  # type: ignore[assignment]
-
-    if tomllib is not None:
-        try:
-            with pyproject.open("rb") as handle:
-                data = tomllib.load(handle)
-        except (OSError, ValueError):
-            return False
-        groups = data.get("dependency-groups")
-        return isinstance(groups, dict) and group in groups
-
-    # Python 3.10 without tomli: fall back to a section-scoped scan so the word
-    # only counts when it's a key inside [dependency-groups].
-    try:
-        text = pyproject.read_text(encoding="utf-8")
-    except OSError:
-        return False
-    in_section = False
-    key_re = re.compile(rf"^\s*(?:{re.escape(group)}|[\"']{re.escape(group)}[\"'])\s*=")
-    for raw in text.splitlines():
-        line = raw.split("#", 1)[0]
-        stripped = line.strip()
-        if stripped.startswith("[") and stripped.endswith("]"):
-            in_section = stripped == "[dependency-groups]"
-            continue
-        if in_section and key_re.match(line):
-            return True
-    return False
-
-
 def collect_preflight_issues(
     repo_root: Path,
     ghidra_path: Path,
-    python_executable: Path,
     *,
-    install_debugger: bool,
     strict: bool = False,
     user_base_dir: Path | None = None,
 ) -> list[str]:
@@ -2238,14 +2186,6 @@ def collect_preflight_issues(
         jar_path = ghidra_path / relative_path
         if not jar_path.is_file():
             issues.append(f"Missing required Ghidra dependency: {jar_path}")
-
-    if install_debugger:
-        pyproject = repo_root / "pyproject.toml"
-        if not _has_dependency_group(pyproject, "debugger"):
-            issues.append(
-                "Debugger dependency group not found in pyproject.toml "
-                "(expected a [dependency-groups] 'debugger' entry)"
-            )
 
     extensions_dir = ghidra_path / "Extensions" / "Ghidra"
     if not test_write_access(extensions_dir):

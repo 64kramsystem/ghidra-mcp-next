@@ -175,12 +175,6 @@ if (Test-Path $envFile) {
     }
 }
 
-$installDebuggerDepsValue = [System.Environment]::GetEnvironmentVariable("INSTALL_DEBUGGER_DEPS", "Process")
-if (-not $installDebuggerDepsValue) {
-    $installDebuggerDepsValue = ""
-}
-$InstallDebuggerDeps = @("1", "true", "yes", "on") -contains $installDebuggerDepsValue.Trim().ToLowerInvariant()
-
 $pomGhidraVersion = Get-PomGhidraVersion
 if (-not $GhidraVersion) {
     $envGhidraVersion = [System.Environment]::GetEnvironmentVariable("GHIDRA_VERSION", "Process")
@@ -553,45 +547,9 @@ function Test-TruthyValue {
     return @("1", "true", "yes", "on") -contains $Value.Trim().ToLowerInvariant()
 }
 
-function Test-DependencyGroup {
-    # Return $true only when $Group is a real key under [dependency-groups] in the
-    # given pyproject.toml. A plain substring scan is too loose (the word could
-    # appear in a comment or another section) and too strict (it wouldn't confirm
-    # the entry is one `uv sync --group <group>` can resolve). PowerShell has no
-    # TOML parser, so do the same section-scoped scan as the Python fallback.
-    param(
-        [Parameter(Mandatory = $true)][string]$PyprojectPath,
-        [Parameter(Mandatory = $true)][string]$Group
-    )
-
-    if (-not (Test-Path -LiteralPath $PyprojectPath)) { return $false }
-
-    try {
-        $lines = Get-Content -LiteralPath $PyprojectPath -ErrorAction Stop
-    } catch {
-        return $false
-    }
-
-    $escaped = [regex]::Escape($Group)
-    $keyPattern = "^\s*(?:$escaped|[`"']$escaped[`"'])\s*="
-    $inSection = $false
-    foreach ($raw in $lines) {
-        $line = ($raw -split '#', 2)[0]
-        $stripped = $line.Trim()
-        if ($stripped.StartsWith('[') -and $stripped.EndsWith(']')) {
-            $inSection = $stripped -eq '[dependency-groups]'
-            continue
-        }
-        if ($inSection -and ($line -match $keyPattern)) {
-            return $true
-        }
-    }
-    return $false
-}
-
 function Install-PythonPackages {
     # Dependencies are managed by uv via the root pyproject.toml / uv.lock
-    # (PEP 735 dependency groups). Sync the dev group, plus debugger if requested.
+    # (PEP 735 dependency groups). Sync the dev group.
     $pyprojectPath = Join-Path $PSScriptRoot "pyproject.toml"
     if (-not (Test-Path $pyprojectPath)) {
         Write-LogWarning "pyproject.toml not found, skipping Python dependency installation."
@@ -599,17 +557,11 @@ function Install-PythonPackages {
     }
 
     $syncArgs = @("sync", "--group", "dev")
-    if ($InstallDebuggerDeps) {
-        $syncArgs += @("--group", "debugger")
-    }
     Push-Location $PSScriptRoot
     try {
         Invoke-CommandChecked -Command "uv" -Arguments $syncArgs -Description "Ensuring Python dependencies (uv sync)"
     } finally {
         Pop-Location
-    }
-    if ($InstallDebuggerDeps) {
-        Write-LogSuccess "Debugger Python dependencies are ready."
     }
     Write-LogSuccess "Python dependencies are ready."
 }
@@ -697,15 +649,6 @@ function Invoke-PreflightChecks {
             if (-not (Test-Path $full)) {
                 $issues.Add("Missing required Ghidra dependency: $full")
             }
-        }
-    }
-
-    if ($InstallDebuggerDeps) {
-        $pyprojectPath = Join-Path $PSScriptRoot "pyproject.toml"
-        if (-not (Test-DependencyGroup -PyprojectPath $pyprojectPath -Group "debugger")) {
-            $issues.Add("Debugger dependency group not found in pyproject.toml (expected a [dependency-groups] 'debugger' entry)")
-        } else {
-            Write-LogSuccess "Debugger dependency group found in pyproject.toml."
         }
     }
 
@@ -1185,14 +1128,8 @@ Write-Host ""
 Write-LogInfo "Next Steps:"
 if ($NoAutoPrereqs) {
     Write-Host "1. If needed (first time only), install Python dependencies: uv sync"
-    if ($InstallDebuggerDeps) {
-        Write-Host "   Debugger deps enabled: uv sync --group debugger"
-    }
 } else {
     Write-Host "1. Python dependencies were auto-checked/installed."
-    if ($InstallDebuggerDeps) {
-        Write-Host "   Optional debugger dependencies were auto-checked/installed."
-    }
 }
 Write-Host "2. Start Ghidra (plugin is auto-activated in CodeBrowser)"
 Write-Host "3. If plugin isn't loaded after a fresh Ghidra install:"
@@ -1204,9 +1141,6 @@ Write-Host ""
 Write-LogInfo "Usage:"
 Write-Host "   Ghidra: Tools > GhidraMCP > Start MCP Server"
 Write-Host "   Python: uv run bridge-mcp-ghidra (from the project root), or 'python -m bridge_mcp_ghidra'"
-if ($InstallDebuggerDeps) {
-    Write-Host "   Debugger: python -m debugger (from project root)"
-}
 Write-Host ""
 Write-LogInfo "Default Server: http://127.0.0.1:8089/"
 Write-Host ""
