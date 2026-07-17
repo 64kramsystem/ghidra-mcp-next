@@ -1,14 +1,14 @@
 // Query BSim database for matches to a specific function, returning results as JSON.
-// Designed for use in the RE loop PROPAGATE phase to find cross-version matches.
+// Reports local similarity results without applying names, comments, or other metadata.
 //
 // Script args: [0] = function address (hex, e.g. "0x10001000")
-//              [1] = BSim URL (default: postgresql://10.0.10.30:5432/bsim)
+//              [1] = required BSim URL supported by the installed Ghidra client
 //              [2] = max matches per function (default: 10)
 //              [3] = similarity threshold 0.0-1.0 (default: 0.7)
 //              [4] = confidence/significance threshold (default: 0.0)
 //
-// Usage from MCP: run_script("BSimQueryAndPropagate", args=["0x10001000"])
-// Usage from MCP: run_script("BSimQueryAndPropagate", args=["0x10001000", "postgresql://10.0.10.30:5432/bsim", "10", "0.7", "0.0"])
+// Usage from MCP: run_script("BSimQueryFunction", args=["0x10001000", "file:/absolute/path/to/local-bsim"])
+// Usage from MCP: run_script("BSimQueryFunction", args=["0x10001000", "file:/absolute/path/to/local-bsim", "10", "0.7", "0.0"])
 //@category BSim
 //@keybinding
 //@menupath
@@ -31,9 +31,7 @@ import ghidra.features.bsim.query.protocol.SimilarityResult;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.listing.Function;
 
-public class BSimQueryAndPropagate extends GhidraScript {
-
-    private static final String DEFAULT_BSIM_URL = "postgresql://10.0.10.30:5432/bsim";
+public class BSimQueryFunction extends GhidraScript {
     private static final int DEFAULT_MAX_MATCHES = 10;
     private static final double DEFAULT_SIMILARITY = 0.7;
     private static final double DEFAULT_CONFIDENCE = 0.0;
@@ -48,16 +46,19 @@ public class BSimQueryAndPropagate extends GhidraScript {
         // Parse arguments
         String[] args = getScriptArgs();
         String addressStr = null;
-        String bsimUrl = DEFAULT_BSIM_URL;
+        String bsimUrl;
+        try {
+            bsimUrl = requireBsimUrl(args, 1, "BSim Query");
+        } catch (IllegalArgumentException e) {
+            println("{\"status\": \"error\", \"error\": \"" + escapeJson(e.getMessage()) + "\"}");
+            return;
+        }
         int maxMatches = DEFAULT_MAX_MATCHES;
         double similarityThresh = DEFAULT_SIMILARITY;
         double confidenceThresh = DEFAULT_CONFIDENCE;
 
         if (args != null && args.length > 0 && args[0] != null && !args[0].isEmpty()) {
             addressStr = args[0].trim();
-        }
-        if (args != null && args.length > 1 && args[1] != null && !args[1].isEmpty()) {
-            bsimUrl = args[1].trim();
         }
         if (args != null && args.length > 2 && args[2] != null && !args[2].isEmpty()) {
             maxMatches = Integer.parseInt(args[2].trim());
@@ -217,6 +218,19 @@ public class BSimQueryAndPropagate extends GhidraScript {
                 }
             }
         }
+    }
+
+    private String requireBsimUrl(String[] args, int index, String dialogTitle)
+            throws Exception {
+        if (args != null && args.length > index && args[index] != null
+                && !args[index].isBlank()) {
+            return args[index].trim();
+        }
+        if (!isRunningHeadless()) {
+            String value = askString(dialogTitle, "Enter BSim database URL:");
+            if (value != null && !value.isBlank()) return value.trim();
+        }
+        throw new IllegalArgumentException("BSim URL is required");
     }
 
     private String escapeJson(String s) {

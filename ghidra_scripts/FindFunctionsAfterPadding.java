@@ -18,7 +18,7 @@
 // Searches for sequences of padding bytes (INT3, NOP, etc.) and creates functions at the next valid address
 // Optionally requires a RET instruction before the padding for stronger validation
 //@author Ben Ethington
-//@category Diablo 2
+//@category Analysis
 
 import ghidra.app.script.GhidraScript;
 import ghidra.program.model.address.Address;

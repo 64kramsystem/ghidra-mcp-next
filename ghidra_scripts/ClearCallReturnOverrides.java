@@ -6,7 +6,7 @@
 // Use when decompilation shows incomplete code after CALL instructions.
 //
 // @author Ben Ethington
-// @category Diablo 2
+// @category Analysis
 // @keybinding
 // @menupath Tools.Clear CALL_RETURN Overrides
 // @toolbar
