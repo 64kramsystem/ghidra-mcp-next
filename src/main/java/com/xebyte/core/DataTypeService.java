@@ -1260,7 +1260,7 @@ public class DataTypeService {
                 // Check if type is in use (simplified check)
                 // Note: Ghidra will prevent deletion if type is in use during remove operation
 
-                boolean deleted = dtm.remove(dataType, null);
+                boolean deleted = dtm.remove(dataType);
                 if (deleted) {
                     result.append("Data type '").append(typeName).append("' deleted successfully");
                     success.set(true);
@@ -1564,7 +1564,7 @@ public class DataTypeService {
                 StringBuilder delMsg = new StringBuilder();
                 try {
                     threadingStrategy.executeWrite(program, "Recreate struct delete", () -> {
-                        deleted.set(dtm.remove(existing, null));
+                        deleted.set(dtm.remove(existing));
                         if (deleted.get()) {
                             delMsg.append("Removed existing type before recreate");
                         } else {
@@ -1784,7 +1784,7 @@ public class DataTypeService {
         try {
             threadingStrategy.executeWrite(program, "Delete placeholder type " + logicalName, () -> {
                 DataTypeManager dtm = program.getDataTypeManager();
-                boolean deleted = dtm.remove(dataType, null);
+                boolean deleted = dtm.remove(dataType);
                 if (deleted) {
                     result.append("Removed placeholder '").append(dataType.getPathName()).append("'");
                     success.set(true);
@@ -2866,7 +2866,7 @@ public class DataTypeService {
                         String unescapedComment = finalComment.replace("\\n", "\n")
                                                              .replace("\\t", "\t")
                                                              .replace("\\r", "\r");
-                        listing.setComment(addr, CodeUnit.PRE_COMMENT, unescapedComment);
+                        listing.setComment(addr, CommentType.PRE, unescapedComment);
                         operations.add("commented");
                     }
 
@@ -3283,7 +3283,7 @@ public class DataTypeService {
                 if (declared > 0 && length != declared) lengthMismatch = true;
             }
         }
-        String plateComment = listing.getComment(ghidra.program.model.listing.CodeUnit.PLATE_COMMENT, addr);
+        String plateComment = listing.getComment(CommentType.PLATE, addr);
         if (plateComment == null) plateComment = "";
 
         ReferenceManager refMgr = program.getReferenceManager();
@@ -3810,7 +3810,7 @@ public class DataTypeService {
                 }
 
                 if (plateComment != null && !plateComment.trim().isEmpty()) {
-                    listing.setComment(addr, ghidra.program.model.listing.CodeUnit.PLATE_COMMENT, plateComment);
+                    listing.setComment(addr, CommentType.PLATE, plateComment);
                     applied.add("plate_comment");
                 }
 

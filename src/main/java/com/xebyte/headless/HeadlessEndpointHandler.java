@@ -826,12 +826,8 @@ public class HeadlessEndpointHandler {
     /**
      * Set multiple comments in a single batch operation.
      *
-     * Suppresses the deprecated-API warning for Ghidra 12's Listing.setComment(Address, int, String)
-     * and CodeUnit.PLATE_COMMENT / PRE_COMMENT / EOL_COMMENT int constants. The replacement
-     * ghidra.program.model.listing.CommentType enum API will be adopted when this handler is
-     * refactored to delegate to CommentService (the GUI-side path already uses the enum).
+     * Uses Ghidra 12.1's typed comment API for plate, pre-instruction, and end-of-line comments.
      */
-    @SuppressWarnings("deprecation")
     public String batchSetComments(String functionAddress, String decompilerCommentsJson,
                                    String disassemblyCommentsJson, String plateComment, String programName) {
         Program program = getProgram(programName);
@@ -866,11 +862,11 @@ public class HeadlessEndpointHandler {
 
                 // Set plate comment if provided
                 if (plateComment != null && !plateComment.isEmpty()) {
-                    String existingPlate = listing.getComment(CodeUnit.PLATE_COMMENT, func.getEntryPoint());
+                    String existingPlate = listing.getComment(CommentType.PLATE, func.getEntryPoint());
                     if (existingPlate != null && !existingPlate.isEmpty()) {
                         overwritten++;
                     }
-                    listing.setComment(func.getEntryPoint(), CodeUnit.PLATE_COMMENT, plateComment);
+                    listing.setComment(func.getEntryPoint(), CommentType.PLATE, plateComment);
                     plateSet = 1;
                 }
 
@@ -883,11 +879,11 @@ public class HeadlessEndpointHandler {
                         if (addrStr != null && text != null) {
                             Address commentAddr = ServiceUtils.parseAddress(program, addrStr);
                             if (commentAddr != null) {
-                                String existing = listing.getComment(CodeUnit.PRE_COMMENT, commentAddr);
+                                String existing = listing.getComment(CommentType.PRE, commentAddr);
                                 if (existing != null && !existing.isEmpty()) {
                                     overwritten++;
                                 }
-                                listing.setComment(commentAddr, CodeUnit.PRE_COMMENT, text);
+                                listing.setComment(commentAddr, CommentType.PRE, text);
                                 decompilerSet++;
                             }
                         }
@@ -903,11 +899,11 @@ public class HeadlessEndpointHandler {
                         if (addrStr != null && text != null) {
                             Address commentAddr = ServiceUtils.parseAddress(program, addrStr);
                             if (commentAddr != null) {
-                                String existing = listing.getComment(CodeUnit.EOL_COMMENT, commentAddr);
+                                String existing = listing.getComment(CommentType.EOL, commentAddr);
                                 if (existing != null && !existing.isEmpty()) {
                                     overwritten++;
                                 }
-                                listing.setComment(commentAddr, CodeUnit.EOL_COMMENT, text);
+                                listing.setComment(commentAddr, CommentType.EOL, text);
                                 disassemblySet++;
                             }
                         }

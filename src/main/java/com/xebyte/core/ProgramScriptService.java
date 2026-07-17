@@ -1,6 +1,7 @@
 package com.xebyte.core;
 
 import ghidra.app.services.ProgramManager;
+import ghidra.app.script.ScriptControls;
 import ghidra.framework.plugintool.PluginTool;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressSpace;
@@ -1391,7 +1392,8 @@ public class ProgramScriptService {
 
                     ghidra.util.task.TaskMonitor scriptMonitor = new ghidra.util.task.ConsoleTaskMonitor();
 
-                    script.set(scriptState, scriptMonitor, scriptPrintWriter);
+                    script.set(scriptState,
+                        new ScriptControls(scriptPrintWriter, scriptPrintWriter, scriptMonitor));
 
                     // Issue #1 + #5 fix: Parse and set script args BEFORE execution,
                     // so getScriptArgs() returns them instead of falling through to askString()
