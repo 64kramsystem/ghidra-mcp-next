@@ -3,9 +3,11 @@ package com.xebyte.core;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonElement;
+import com.google.gson.reflect.TypeToken;
 
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -21,6 +23,8 @@ public final class JsonHelper {
     private static final Gson GSON = new GsonBuilder()
             .disableHtmlEscaping()
             .create();
+    private static final Type STRING_OBJECT_MAP_TYPE =
+            new TypeToken<LinkedHashMap<String, Object>>() { }.getType();
 
     private JsonHelper() {}
 
@@ -47,10 +51,9 @@ public final class JsonHelper {
     }
 
     /** Parse JSON from an InputStream (for HTTP request bodies). */
-    @SuppressWarnings("unchecked")
     public static Map<String, Object> parseBody(InputStream input) {
         try (InputStreamReader reader = new InputStreamReader(input, StandardCharsets.UTF_8)) {
-            Map<String, Object> result = GSON.fromJson(reader, LinkedHashMap.class);
+            Map<String, Object> result = GSON.fromJson(reader, STRING_OBJECT_MAP_TYPE);
             return result != null ? result : new LinkedHashMap<>();
         } catch (Exception e) {
             return new LinkedHashMap<>();
@@ -58,10 +61,9 @@ public final class JsonHelper {
     }
 
     /** Parse a JSON string into a Map. */
-    @SuppressWarnings("unchecked")
     public static Map<String, Object> parseJson(String json) {
         try {
-            Map<String, Object> result = GSON.fromJson(json, LinkedHashMap.class);
+            Map<String, Object> result = GSON.fromJson(json, STRING_OBJECT_MAP_TYPE);
             return result != null ? result : new LinkedHashMap<>();
         } catch (Exception e) {
             return new LinkedHashMap<>();
@@ -105,7 +107,7 @@ public final class JsonHelper {
         List<Map<String, String>> result = new ArrayList<>();
         for (JsonElement item : jsonElement.getAsJsonArray()) {
             if (item != null && item.isJsonObject()) {
-                Map<String, Object> rawMap = GSON.fromJson(item, LinkedHashMap.class);
+                Map<String, Object> rawMap = GSON.fromJson(item, STRING_OBJECT_MAP_TYPE);
                 Map<String, String> strMap = new LinkedHashMap<>();
                 rawMap.forEach((k, v) -> strMap.put(String.valueOf(k), v != null ? String.valueOf(v) : null));
                 result.add(strMap);

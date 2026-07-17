@@ -316,15 +316,13 @@ public class EndpointRegistry {
         Object obj = b.get(key);
         if (obj == null) return null;
         if (obj instanceof String s) return s;
-        if (obj instanceof List<?> list) return ServiceUtils.serializeListToJson(list);
-        if (obj instanceof Map<?, ?> map) return ServiceUtils.serializeMapToJson(map);
+        if (obj instanceof List<?> || obj instanceof Map<?, ?>) return JsonHelper.toJson(obj);
         return obj.toString();
     }
 
     /**
      * Convert body object to a List of Map for batch label/comment operations.
      */
-    @SuppressWarnings("unchecked")
     private static List<Map<String, String>> bodyMapList(Map<String, Object> b, String key) {
         return ServiceUtils.convertToMapList(b.get(key));
     }
