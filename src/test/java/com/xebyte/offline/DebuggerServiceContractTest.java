@@ -22,10 +22,17 @@ public class DebuggerServiceContractTest extends TestCase {
         assertTrue(source.contains("offer.requiresImage()"));
     }
 
-    public void testFutureEndpointsAreNotFalselyAdvertised() throws Exception {
+    public void testPidAttachEndpointUsesTraceRmiSelectionSeams() throws Exception {
         String source = Files.readString(Path.of(System.getProperty("user.dir"),
                 "src/main/java/com/xebyte/core/DebuggerService.java"));
-        assertFalse(source.contains("/debugger/attach"));
+        assertTrue(source.contains("path = \"/debugger/attach\""));
+        assertTrue(source.contains("DebuggerAttachSemantics.selectOffer"));
+        assertTrue(source.contains("DebuggerAttachSemantics.selectAttachMethod"));
+    }
+
+    public void testRemainingFutureEndpointsAreNotFalselyAdvertised() throws Exception {
+        String source = Files.readString(Path.of(System.getProperty("user.dir"),
+                "src/main/java/com/xebyte/core/DebuggerService.java"));
         assertFalse(source.contains("/debugger/wait_for_stop"));
         assertFalse(source.contains("/debugger/memory_maps"));
         assertFalse(source.contains("/debugger/copy_memory_to_program"));

@@ -111,6 +111,7 @@ LOCAL_COMPARISON_CONTRACT_TOOLS = {
 TRACE_RMI_CONTRACT_TOOLS = {
     "debugger/launch_offers",
     "debugger/launch",
+    "debugger/attach",
     "debugger/status",
     "debugger/resume",
     "debugger/interrupt",
