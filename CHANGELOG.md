@@ -9,6 +9,7 @@ Complete version history for the Ghidra MCP Server project.
 ### Added
 
 - Added `debugger_attach` for exact-offer, typed TraceRMI PID attachment. The attach-only flow supports native local GDB without synthesizing debugger commands; required-image Wine launchers remain on the existing launch path.
+- Added `debugger_wait_for_stop` for event-driven, bounded waits with explicit stopped, terminated, and timeout results.
 
 ### Changed
 
@@ -62,12 +63,11 @@ Complete version history for the Ghidra MCP Server project.
 
 ### Planned
 
-- `debugger_wait_for_stop(timeout_ms)`.
 - Process memory-map enumeration.
 - `copy_debugger_memory_to_program`, creating and populating a block from
   a trace range.
 
-These three debugger additions are not implemented in this release.
+These two debugger additions are not implemented in this release.
 
 ### Testing
 

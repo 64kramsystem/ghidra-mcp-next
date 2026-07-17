@@ -786,6 +786,15 @@
       "description": "List all open debug traces"
     },
     {
+      "path": "/debugger/wait_for_stop",
+      "method": "POST",
+      "category": "debugger",
+      "params": [
+        "timeout_ms"
+      ],
+      "description": "Wait until the active debugger target stops or a timeout expires"
+    },
+    {
       "path": "/decompile_function",
       "method": "GET",
       "category": "decompile",
