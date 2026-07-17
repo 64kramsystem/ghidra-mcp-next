@@ -20,16 +20,11 @@ import static org.mockito.Mockito.when;
 
 import java.io.File;
 import java.io.IOException;
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
-import java.io.OutputStream;
-import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
@@ -43,8 +38,6 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 import org.mockito.MockedStatic;
-
-import com.sun.net.httpserver.Headers;
 
 import ghidra.framework.main.AppInfo;
 import ghidra.framework.model.Project;
@@ -190,6 +183,11 @@ public class GuiProjectServiceTest {
                         + SwingUtilities.isEventDispatchThread());
                     toolProject.set(project);
                 }
+
+                @Override
+                public void projectClosed(Project project) {
+                    events.add("notify-closed:" + SwingUtilities.isEventDispatchThread());
+                }
             };
 
         when(manager.getActiveProject()).thenAnswer(invocation -> active.get());
@@ -217,7 +215,7 @@ public class GuiProjectServiceTest {
         Map<String, Object> result = parse(service.createProject(
             parent.toString(), "NewProject"));
 
-        assertEquals(List.of("save:true", "close:true", "tool:null:true",
+        assertEquals(List.of("save:true", "close:true", "notify-closed:true", "tool:null:true",
             "create:true", "tool:created:true"), events);
         assertEquals(Boolean.TRUE, result.get("success"));
         assertEquals("NewProject", result.get("project"));
@@ -275,6 +273,11 @@ public class GuiProjectServiceTest {
                         + SwingUtilities.isEventDispatchThread());
                     toolProject.set(project);
                 }
+
+                @Override
+                public void projectClosed(Project project) {
+                    events.add("notify-closed:" + SwingUtilities.isEventDispatchThread());
+                }
             };
 
         when(manager.getActiveProject()).thenAnswer(invocation -> managerProject.get());
@@ -302,8 +305,8 @@ public class GuiProjectServiceTest {
         Map<String, Object> result = JsonHelper.parseJson(
             service.openProject(marker.toString(), true, null));
 
-        assertEquals(List.of("save:true", "close:true", "tool:null:true",
-            "open:true", "tool:opened:true"), events);
+        assertEquals(List.of("save:true", "close:true", "notify-closed:true",
+            "tool:null:true", "open:true", "tool:opened:true"), events);
         assertEquals(Boolean.TRUE, result.get("success"));
         assertSame(opened, AppInfo.getActiveProject());
         assertSame(opened, controller.getActiveProject());
@@ -559,19 +562,32 @@ public class GuiProjectServiceTest {
         GuiProjectService service = new GuiProjectService(
             () -> null, security, () -> manager,
             () -> activeProjectController(toolProject));
-        CapturingUdsHttpServer server = new CapturingUdsHttpServer();
+        EndpointDef endpoint = new AnnotationScanner(service).getEndpoints().stream()
+            .filter(candidate -> "/create_project".equals(candidate.path()))
+            .findFirst()
+            .orElseThrow();
+        Response response = endpoint.handler().handle(Map.of(), Map.of(
+            "parentDir", parent.toString(), "name", "NewProject"));
+        Map<String, Object> result = JsonHelper.parseJson(response.toJson());
 
-        GuiProjectService.registerUdsEndpoints(server, service);
-        TestHttpExchange exchange = new TestHttpExchange(
-            "{\"parentDir\":\"" + escapeJson(parent.toString())
-                + "\",\"name\":\"NewProject\"}");
-        server.handler("/create_project").handle(exchange);
-        Map<String, Object> result = JsonHelper.parseJson(exchange.responseBody());
-
-        assertEquals(200, exchange.statusCode);
         assertEquals(Boolean.TRUE, result.get("success"));
         assertEquals("NewProject", result.get("project"));
         assertEquals(parent.resolve("NewProject").toString(), result.get("path"));
+    }
+
+    @Test
+    public void bundledGhidraExposesFrontEndProjectListenerContract() throws Exception {
+        try (InputStream classFile = getClass().getClassLoader().getResourceAsStream(
+                "ghidra/framework/main/FrontEndTool.class")) {
+            assertTrue("Bundled FrontEndTool.class must be on the test classpath",
+                classFile != null);
+            String constantPool = new String(classFile.readAllBytes(),
+                StandardCharsets.ISO_8859_1);
+            assertTrue("Ghidra FrontEndTool must declare getListeners",
+                constantPool.contains("getListeners"));
+            assertTrue("FrontEndTool.getListeners must retain its Iterable return type",
+                constantPool.contains("()Ljava/lang/Iterable;"));
+        }
     }
 
     private Map<String, Object> createWithNoTool(Path parent, String name) {
@@ -613,80 +629,4 @@ public class GuiProjectServiceTest {
         }
     }
 
-    private String escapeJson(String value) {
-        return value.replace("\\", "\\\\").replace("\"", "\\\"");
-    }
-
-    private static final class CapturingUdsHttpServer extends UdsHttpServer {
-        private final Map<String, Handler> handlers = new HashMap<>();
-
-        CapturingUdsHttpServer() {
-            super(Path.of("unused.sock"));
-        }
-
-        @Override
-        public void createContext(String path, Handler handler) {
-            handlers.put(path, handler);
-        }
-
-        Handler handler(String path) {
-            return handlers.get(path);
-        }
-    }
-
-    private static final class TestHttpExchange implements HttpExchange {
-        private final InputStream requestBody;
-        private final Headers requestHeaders = new Headers();
-        private final Headers responseHeaders = new Headers();
-        private final ByteArrayOutputStream responseBody = new ByteArrayOutputStream();
-        private int statusCode;
-
-        TestHttpExchange(String requestBody) {
-            this.requestBody = new ByteArrayInputStream(
-                requestBody.getBytes(StandardCharsets.UTF_8));
-        }
-
-        @Override
-        public String getRequestMethod() {
-            return "POST";
-        }
-
-        @Override
-        public URI getRequestURI() {
-            return URI.create("/create_project");
-        }
-
-        @Override
-        public Headers getRequestHeaders() {
-            return requestHeaders;
-        }
-
-        @Override
-        public InputStream getRequestBody() {
-            return requestBody;
-        }
-
-        @Override
-        public Headers getResponseHeaders() {
-            return responseHeaders;
-        }
-
-        @Override
-        public void sendResponseHeaders(int code, long length) {
-            statusCode = code;
-        }
-
-        @Override
-        public OutputStream getResponseBody() {
-            return responseBody;
-        }
-
-        @Override
-        public void close() {
-        }
-
-        String responseBody() {
-            return responseBody.toString(StandardCharsets.UTF_8);
-        }
-    }
 }
