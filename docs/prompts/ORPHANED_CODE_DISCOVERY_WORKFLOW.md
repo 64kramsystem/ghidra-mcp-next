@@ -6,7 +6,7 @@ You are scanning Ghidra binaries for orphaned code — valid instructions that e
 
 1. **Never auto-create without review**: The scanner finds candidates. You classify and confirm each one before calling `create_function`.
 2. **Iterative**: After creating functions, re-run the scanner — new gaps appear as existing function boundaries shift.
-3. **Minimal intervention**: Create functions and set a triage plate comment. Full documentation is a separate task (use FUNCTION_DOC_WORKFLOW_V5.md later).
+3. **Minimal intervention**: Create functions and set a triage plate comment. Full evidence-based naming and typing is a separate task.
 4. **Multi-binary safe**: Always confirm program context before writing. Use `get_current_program_info()` to verify.
 
 ## Step 0: Select Scope
@@ -350,7 +350,7 @@ Type: <A|B|C|D|E|F|G> — <type description>
 Confidence: <HIGH|MEDIUM|LOW>
 Size: ~N bytes / N instructions
 Neighboring: <prev_function> .. <next_function>
-Status: Awaiting full documentation (FUNCTION_DOC_WORKFLOW_V5)
+Status: Awaiting full analysis and documentation
 ```
 
 For **Type A thunks**, use a shorter comment:
@@ -421,5 +421,5 @@ Re-run the scanner once after batch creation. If new candidates appear, triage a
 ```
 SCAN COMPLETE: <program_name>
 Created: N functions (Type breakdown)
-Ready for documentation via FUNCTION_DOC_WORKFLOW_V5
+Ready for focused analysis and documentation
 ```

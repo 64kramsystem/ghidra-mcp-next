@@ -1,50 +1,36 @@
-# Ghidra MCP AI Workflow Prompts
+# Workflow Prompts
 
-Battle-tested prompts for reverse engineering binary code in Ghidra using MCP tools. Refined across thousands of functions.
+These guides help an agent use the maintained Ghidra MCP surface. They are
+operator aids, not policy engines. The caller chooses project naming and
+comment style; Ghidra validates model constraints.
 
-## Start Here
+## Start here
 
-| Goal | Prompt | Description |
-|------|--------|-------------|
-| **Document a function** | [FUNCTION_DOC_WORKFLOW_V5.md](FUNCTION_DOC_WORKFLOW_V5.md) | Primary workflow. 7-step process with Hungarian notation, type auditing, and verification scoring. |
-| **Find undiscovered code** | [ORPHANED_CODE_DISCOVERY_WORKFLOW.md](ORPHANED_CODE_DISCOVERY_WORKFLOW.md) | Automated scanner for functions hiding in gaps between known code. |
-| **Investigate data types** | [DATA_TYPE_INVESTIGATION_WORKFLOW.md](DATA_TYPE_INVESTIGATION_WORKFLOW.md) | Systematic structure discovery and field analysis. |
+- [`TOOL_USAGE_GUIDE.md`](TOOL_USAGE_GUIDE.md) — tool discovery, load-once
+  discipline, safe mutations, local projects, and TraceRMI.
+- [`DATA_TYPE_INVESTIGATION_WORKFLOW.md`](DATA_TYPE_INVESTIGATION_WORKFLOW.md)
+  — systematic structure and datatype investigation.
+- [`DATA_TYPE_INVESTIGATION_QUICK.md`](DATA_TYPE_INVESTIGATION_QUICK.md) —
+  abbreviated datatype workflow.
+- [`DATA_SECTION_WORKFLOW.md`](DATA_SECTION_WORKFLOW.md) — `.data`/`.rdata`
+  analysis.
+- [`GLOBAL_DATA_ANALYSIS_WORKFLOW.md`](GLOBAL_DATA_ANALYSIS_WORKFLOW.md) —
+  type, xref, value, and comment analysis for globals.
+- [`ORPHANED_CODE_DISCOVERY_WORKFLOW.md`](ORPHANED_CODE_DISCOVERY_WORKFLOW.md)
+  — find and validate missed functions.
+- [`CROSS_VERSION_FUNCTION_MATCHING.md`](CROSS_VERSION_FUNCTION_MATCHING.md)
+  — compare open programs without applying annotations.
 
-## Function Documentation (V5 Workflow)
+## Operating principles
 
-The V5 workflow is the current standard. It addresses every failure mode encountered in V1-V4.
+1. Select the local instance and program explicitly.
+2. Load a needed tool group once and call tools by their exposed MCP names.
+3. Gather strings, xrefs, bytes, listing, and decompiler evidence before a
+   mutation.
+4. Make small reversible changes and verify the affected program.
+5. Treat local comparison and BSim results as evidence, not automatic truth.
+6. Save the explicitly selected program after verification.
 
-**Key features:**
-- Strict ordering (naming/typing BEFORE comments)
-- Batch operations (`rename_variables` dict, `batch_set_comments`)
-- Type audit checking actual storage types, not decompiler display types
-- Built-in Hungarian notation reference
-- Verification scoring via `analyze_function_completeness`
-
-### Supporting References
-
-| File | Purpose |
-|------|---------|
-| [STRING_LABELING_CONVENTION.md](STRING_LABELING_CONVENTION.md) | Hungarian notation for string labels |
-| [TOOL_USAGE_GUIDE.md](TOOL_USAGE_GUIDE.md) | MCP tool reference and usage patterns |
-
-## Data Analysis Workflows
-
-| File | Purpose |
-|------|---------|
-| [DATA_TYPE_INVESTIGATION_WORKFLOW.md](DATA_TYPE_INVESTIGATION_WORKFLOW.md) | Full structure discovery workflow |
-| [DATA_TYPE_INVESTIGATION_QUICK.md](DATA_TYPE_INVESTIGATION_QUICK.md) | Abbreviated version for simple types |
-| [DATA_SECTION_WORKFLOW.md](DATA_SECTION_WORKFLOW.md) | Workflow for .data/.rdata section analysis |
-| [GLOBAL_DATA_ANALYSIS_WORKFLOW.md](GLOBAL_DATA_ANALYSIS_WORKFLOW.md) | Global data naming and analysis |
-
-## Cross-Binary Workflows
-
-| File | Purpose |
-|------|---------|
-| [CROSS_VERSION_MATCHING_COMPREHENSIVE.md](CROSS_VERSION_MATCHING_COMPREHENSIVE.md) | Full hash-based function matching workflow |
-| [CROSS_VERSION_FUNCTION_MATCHING.md](CROSS_VERSION_FUNCTION_MATCHING.md) | Quick cross-version matching guide |
-| [BINARY_DOCUMENTATION_ORDER.md](BINARY_DOCUMENTATION_ORDER.md) | Optimal order for documenting binary families |
-
-## Archive
-
-Earlier workflow versions (V1-V4), compact/subagent variants, and superseded reference docs are in [archive/](archive/). Use V5 for all new work.
+For dynamic work, load `load_tool_group("debugger")` once and use the retained
+TraceRMI launch, status, mapping, breakpoint, stepping, register, stack, module,
+and read-memory tools. There is no generic TraceRMI attach endpoint.

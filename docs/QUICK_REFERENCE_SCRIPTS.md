@@ -1,226 +1,144 @@
-# Quick Reference: Running Documentation Propagation Scripts
+# Quick Reference
 
-## Files Location
-All scripts are copied to: `C:\Users\benam\ghidra_scripts\`
+## Build and deploy
 
-```
-✓ BuildHashIndex_ProjectFolder.java           (39.6 KB)
-✓ BatchPropagateToAllVersions_ProjectFolder.java  (44.1 KB)
-✓ FixSymbolConflicts_ProjectFolder.java       (5.0 KB)
-```
-
-## How to Run Scripts in Ghidra
-
-### Method 1: Script Manager GUI (Easiest)
-1. Open a DLL in Ghidra (any version from the project)
-2. Click **Window → Script Manager**
-3. In "Personal" folder, find the script name
-4. Double-click or right-click → Run
-5. Follow dialog prompts
-
-### Method 2: Headless Mode (Batch)
-```batch
-cd "C:\Program Files\Ghidra\bin"
-analyzeHeadless PROJECT_PATH PROJECT_NAME ^
-  -process /LoD/1.07/Storm.dll ^
-  -scriptPath C:\Users\benam\ghidra_scripts ^
-  -preScript BuildHashIndex_ProjectFolder.java
+```bash
+uv sync
+python -m tools.setup preflight --ghidra-path /path/to/ghidra
+python -m tools.setup ensure-prereqs --ghidra-path /path/to/ghidra
+python -m tools.setup build
+python -m tools.setup deploy --ghidra-path /path/to/ghidra
 ```
 
-### Method 3: Visual Studio Code (if GhidraMCP is running)
-Can invoke scripts through MCP server (requires custom bridge development)
+Manual Java package:
 
-## Recommended Script Order
-
-### For Fresh Start:
-```
-1. BuildHashIndex_ProjectFolder.java
-   ├─ Choose: "Start Fresh" (for first run)
-   └─ Output: ~/ghidra_function_hash_index.json
-
-2. FixSymbolConflicts_ProjectFolder.java (optional)
-   ├─ Choose: "Fix Conflicts Only" (if conflicts found)
-   └─ Or "Cancel" (if no conflicts)
-
-3. BatchPropagateToAllVersions_ProjectFolder.java
-   ├─ Choose: "All Binaries in Project"
-   └─ Propagates to all versions
+```bash
+mvn clean package assembly:single -DskipTests
 ```
 
-### For Updates (after documentation improvements):
-```
-1. BuildHashIndex_ProjectFolder.java
-   ├─ Choose: "Merge with Existing"
-   └─ Updates index with new documentation
+## Run the bridge
 
-2. BatchPropagateToAllVersions_ProjectFolder.java
-   ├─ Choose: "Current Program Only"
-   └─ Updates all other versions from current
+```bash
+uv run bridge-mcp-ghidra
+uv run bridge-mcp-ghidra --transport streamable-http --mcp-host 127.0.0.1 --mcp-port 8081
 ```
 
-## What Each Script Does
+## Tool discovery
 
-### BuildHashIndex_ProjectFolder.java
-**Purpose**: Extract function documentation from all DLL versions in project
+```text
+search_tools("memory block")
+list_tool_groups()
+load_tool_group("datatype")
+check_tools("create_memory_block,apply_data_type")
+```
 
-**Dialog Options**:
-- **"Start Fresh"**: Delete old index, rebuild from scratch
-- **"Merge with Existing"**: Keep old data, add new functions
-- **"Cancel"**: Exit without changes
+Load each group once and call tools by name. Do not loop on
+`load_tool_group(...)` after an operation failure.
 
-**Extracts**:
-- Function signatures (name, return type, parameters)
-- Local variable names and types
-- Global variable references (offset-based)
-- Comments (plate, inline, PRE, POST, EOL, repeatable)
-- Function tags
-- Opcode hash (for matching across versions)
+## Local project bootstrap
 
-**Output**: `~/ghidra_function_hash_index.json` (~2-5 MB)
+```text
+list_instances()
+create_project(parent_dir="/tmp/projects", name="analysis")
+import_file(file_path="/path/to/main.exe", auto_analyze=true)
+import_file(file_path="/path/to/library.dll", auto_analyze=true)
+list_open_programs()
+switch_program(program="main.exe")
+save_program(program="main.exe")
+```
 
----
+Set `GHIDRA_MCP_REQUIRE_PROGRAM_SELECTORS=1` for multi-program or multi-client
+work and pass `program=` on every scoped call.
 
-### FixSymbolConflicts_ProjectFolder.java
-**Purpose**: Detect and fix symbol naming conflicts
+## Static analysis loop
 
-**Dialog Options**:
-- **"Fix Conflicts Only"**: Remove duplicate symbol names
-- **"Propagate Names Only"**: Copy called function names from index
-- **"Both"**: Do both operations
-- **"Cancel"**: Exit
+```text
+search_strings(...)
+get_xrefs_to(...)
+get_function_by_address(...)
+decompile_function(...)
+clear_flow_and_repair(...)
+rename_function_by_address(...)
+set_function_prototype(...)
+batch_set_comments(...)
+save_program(...)
+```
 
-**Actions**:
-- Finds addresses with multiple symbols
-- Keeps primary symbol, removes secondary
-- Reports all changes made
+Names and comments are caller-owned. Ghidra reports invalid syntax,
+duplicates, bad datatypes, and transaction errors.
 
-**Output**: Console output with conflicts found
+## Local comparison
 
----
+```text
+get_function_hash(...)
+get_bulk_function_hashes(...)
+get_function_signature(...)
+find_similar_functions_fuzzy(...)
+bulk_fuzzy_match(...)
+diff_functions(...)
+```
 
-### BatchPropagateToAllVersions_ProjectFolder.java
-**Purpose**: Apply documented functions to all matching versions
+These tools return evidence only. They do not copy names, types, comments, or
+other annotations between programs.
 
-**Dialog Options**:
-- **"Current Program Only"**: Use current as source, update all others
-- **"All Binaries in Project"**: Cross-propagate between all versions
-- **"Cancel"**: Exit
+## TraceRMI
 
-**Propagates**:
-- Function names and signatures
-- Local variable names and types
-- **Global variable names** (using offset-based matching!)
-- Comments and documentation
-- Function tags
+```text
+load_tool_group("debugger")
+debugger_launch_offers()
+debugger_launch(...)
+debugger_status()
+debugger_traces()
+debugger_modules()
+debugger_static_to_dynamic(...)
+debugger_set_breakpoint(...)
+debugger_resume()
+debugger_interrupt()
+debugger_registers(...)
+debugger_stack_trace(...)
+debugger_read_memory(...)
+```
 
-**Output**: Console output with propagation results
+Use `debugger_resume` for continuing execution. There is no generic TraceRMI
+attach endpoint. Planned gaps are generic selected-offer/PID attach,
+`debugger_wait_for_stop(timeout_ms)`, process memory-map enumeration, and
+`copy_debugger_memory_to_program`.
 
----
+## Optional local BSim scripts
 
-## Key Concepts
+Enable scripts only for a trusted local client:
 
-### Hash-Based Matching
-- Functions with same opcode hash = same logic (even at different addresses)
-- Hash ignores absolute addresses, preserves logic
-- Allows matching functions across version changes
+```bash
+export GHIDRA_MCP_ALLOW_SCRIPTS=1
+```
 
-### Offset-Based Globals
-- Global references stored as: instruction_offset + operand_index + address
-- At runtime: function_start + offset = instruction address
-- Extract memory reference from instruction operand
-- Rename symbol at extracted address
-- Works even when function addresses change!
+```text
+run_ghidra_script(
+  script_name="BSimTestConnection.java",
+  args=["file:/absolute/path/to/local-bsim"]
+)
+run_ghidra_script(
+  script_name="BSimIngestProgram.java",
+  args=["file:/absolute/path/to/local-bsim"]
+)
+run_ghidra_script(
+  script_name="BSimQueryFunction.java",
+  args=["0x401000", "file:/absolute/path/to/local-bsim"]
+)
+run_ghidra_script(
+  script_name="BSimBulkQuery.java",
+  args=["file:/absolute/path/to/local-bsim"]
+)
+```
 
-### Propagation Strategy
-1. Hash index identifies matching functions across versions
-2. For each matched function, copy documentation
-3. For globals, use offset-based matching to find correct address
-4. Merge new documentation with existing (doesn't overwrite)
+The URL is illustrative and must be supported by the installed Ghidra BSim
+client. No database address is implied.
 
-## Troubleshooting
+## Test
 
-### Script Doesn't Appear in Script Manager
-**Fix**: Copy script to `C:\Users\benam\ghidra_scripts\` manually
-- **Verify**: Window → Script Manager → Personal folder should show it
-
-### Script Runs But Produces No Output
-**Check**:
-1. Ensure DLL is open in Ghidra
-2. Check "Analyst" window for error messages
-3. Try running simpler script first (FixSymbolConflicts)
-
-### "Too Many 500 Error Responses"
-**Fix**: 
-1. Close Ghidra
-2. Restart Ghidra
-3. Try again with smaller batch (process fewer functions)
-
-### Hash Index File Not Created
-**Check**:
-1. Verify home directory location: `echo %USERPROFILE%`
-2. Should be: `C:\Users\benam\ghidra_function_hash_index.json`
-3. Check file permissions on home directory
-
-### Globals Not Propagating
-**Verify**:
-1. Run BuildHashIndex first (creates offset-based index)
-2. Check index has "instruction_offset" in global references
-3. Verify global variable names exist in source version
-4. Check target version has matching function (by hash)
-
-## Performance Tips
-
-### Speed Up Propagation
-- Use "Current Program Only" mode (faster than all-binaries)
-- Process one DLL type at a time
-- Increase Java heap: set `_JAVA_OPTIONS=-Xmx4G`
-
-### Reduce Memory Usage
-- Process functions in batches
-- Clear index if too large (>10 MB)
-- Use "Start Fresh" to rebuild cleaner index
-
-## Success Indicators
-
-✅ **BuildHashIndex Complete**:
-- Index file created at `~/ghidra_function_hash_index.json`
-- Console shows: "Functions indexed: X"
-
-✅ **FixSymbolConflicts Complete**:
-- Console shows: "Conflicts fixed: X"
-- Or "Found 0 conflicts" if none exist
-
-✅ **Propagation Complete**:
-- Console shows function names updated
-- Check a function in target version - should have source's documentation
-
-## Next Steps
-
-1. **Run BuildHashIndex on Storm.dll**:
-   - Open Storm.dll 1.07 in Ghidra
-   - Run BuildHashIndex_ProjectFolder
-   - Choose "Start Fresh"
-   - Wait 2-3 minutes
-   - Verify index created
-
-2. **Check Symbol Conflicts** (optional):
-   - Run FixSymbolConflicts on any version
-   - Should report "Found 0 conflicts" for Storm.dll
-   - (It will be useful for other DLL families)
-
-3. **Run Full Propagation**:
-   - Run BatchPropagateToAllVersions
-   - Choose "All Binaries in Project"
-   - Wait 5-10 minutes
-   - Verify functions have consistent names
-
-4. **Validate Results**:
-   - Open Storm.dll 1.08
-   - Search for a well-documented function
-   - Verify documentation matches 1.07 (where applicable)
-
----
-
-**Scripts Ready**: ✅ All three scripts are in place and ready to use
-**Documentation**: ✅ Complete with examples and troubleshooting
-**Next Action**: Run BuildHashIndex_ProjectFolder on Storm.dll
+```bash
+uv run pytest tests/unit/ -v --no-cov
+mvn test
+mvn clean compile -q
+git diff --check
+```
