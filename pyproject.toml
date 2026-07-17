@@ -75,12 +75,6 @@ test = [
     "clang>=18.1.8,<22",
     "libclang>=18.1.1,<19",
 ]
-# Standalone debugger server + Ghidra TraceRmi backend (Windows-only bits).
-debugger = [
-    "pybag==2.2.16 ; sys_platform == 'win32'",
-    "comtypes==1.4.16 ; sys_platform == 'win32'",
-    "protobuf>=7.35.1",
-]
 dev = [
     { include-group = "test" },
     "flake8>=6.0.0",
@@ -100,7 +94,6 @@ addopts = """
 --tb=short
 --cov=bridge_mcp_ghidra
 --cov=tools
---cov=debugger
 --cov-report=term-missing:skip-covered
 --cov-report=html:tests/coverage
 --cov-report=xml:tests/coverage.xml

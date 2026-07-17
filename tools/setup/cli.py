@@ -6,7 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from .envfile import get_env_flag, load_env_file
+from .envfile import load_env_file
 from .ghidra import (
     clean_all,
     collect_preflight_issues,
@@ -37,21 +37,6 @@ def build_parser() -> argparse.ArgumentParser:
         "install-python-deps",
         help="Install the repo's Python dependency groups via uv sync",
     )
-    install_parser.add_argument(
-        "--use-debugger-toggle",
-        action="store_true",
-        help="Read INSTALL_DEBUGGER_DEPS from .env and install debugger requirements when enabled.",
-    )
-    install_parser.add_argument(
-        "--with-debugger",
-        action="store_true",
-        help="Force-install debugger requirements regardless of .env.",
-    )
-    install_parser.add_argument(
-        "--env-file",
-        type=Path,
-        help="Path to an env file. Defaults to .env in the repo root.",
-    )
     install_parser.set_defaults(func=cmd_install_python_deps)
 
     verify_parser = subparsers.add_parser(
@@ -78,16 +63,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--strict",
         action="store_true",
         help="Also check network reachability for Maven Central and PyPI.",
-    )
-    preflight_parser.add_argument(
-        "--use-debugger-toggle",
-        action="store_true",
-        help="Read INSTALL_DEBUGGER_DEPS from .env and validate debugger requirements when enabled.",
-    )
-    preflight_parser.add_argument(
-        "--with-debugger",
-        action="store_true",
-        help="Force debugger requirement validation regardless of .env.",
     )
     preflight_parser.set_defaults(func=cmd_preflight)
 
@@ -216,16 +191,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional Ghidra installation path. Defaults to GHIDRA_PATH from .env when set.",
     )
     ensure_prereqs_parser.add_argument(
-        "--use-debugger-toggle",
-        action="store_true",
-        help="Read INSTALL_DEBUGGER_DEPS from .env and install debugger requirements when enabled.",
-    )
-    ensure_prereqs_parser.add_argument(
-        "--with-debugger",
-        action="store_true",
-        help="Force-install debugger requirements regardless of .env.",
-    )
-    ensure_prereqs_parser.add_argument(
         "--force",
         action="store_true",
         help="Reinstall Ghidra jars even if present in ~/.m2.",
@@ -264,37 +229,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 def cmd_install_python_deps(args: argparse.Namespace) -> int:
     repo_root = detect_repo_root()
-    env_file = args.env_file or repo_root / ".env"
-    env_values = load_env_file(env_file)
-    install_debugger = args.with_debugger or (
-        args.use_debugger_toggle and get_env_flag(env_values, "INSTALL_DEBUGGER_DEPS")
-    )
-
-    plan = make_install_plan(repo_root, install_debugger)
+    plan = make_install_plan(repo_root)
     execute_install_plan(plan)
-
-    if install_debugger:
-        print("Debugger dependencies installed.")
-    elif args.use_debugger_toggle:
-        print("Debugger dependencies skipped (INSTALL_DEBUGGER_DEPS not enabled).")
-
     return 0
 
 
 def _load_repo_env(repo_root: Path) -> dict[str, str]:
     return load_env_file(repo_root / ".env")
-
-
-def _should_install_debugger(
-    env_values: dict[str, str], args: argparse.Namespace
-) -> bool:
-    return bool(
-        getattr(args, "with_debugger", False)
-        or (
-            getattr(args, "use_debugger_toggle", False)
-            and get_env_flag(env_values, "INSTALL_DEBUGGER_DEPS")
-        )
-    )
 
 
 def _resolve_ghidra_path(repo_root: Path, ghidra_path: Path | None) -> Path | None:
@@ -351,7 +292,6 @@ def cmd_verify_version(args: argparse.Namespace) -> int:
 
 def cmd_preflight(args: argparse.Namespace) -> int:
     repo_root = detect_repo_root()
-    env_values = _load_repo_env(repo_root)
     python_executable = find_repo_python(repo_root)
 
     try:
@@ -398,8 +338,6 @@ def cmd_preflight(args: argparse.Namespace) -> int:
     issues = collect_preflight_issues(
         repo_root,
         ghidra_path,
-        python_executable,
-        install_debugger=_should_install_debugger(env_values, args),
         strict=args.strict,
     )
     if issues:
@@ -456,17 +394,13 @@ def cmd_clean_all(args: argparse.Namespace) -> int:
 
 def cmd_ensure_prereqs(args: argparse.Namespace) -> int:
     repo_root = detect_repo_root()
-    env_values = _load_repo_env(repo_root)
-    install_debugger = _should_install_debugger(env_values, args)
-    plan = make_install_plan(repo_root, install_debugger)
+    plan = make_install_plan(repo_root)
 
     if args.dry_run:
         print(f"DRY RUN: {' '.join(uv_sync_command(plan))}")
     else:
         execute_install_plan(plan)
         print("Python dependencies are ready.")
-        if plan.install_debugger:
-            print("Debugger Python dependencies are ready.")
 
     ghidra_path = _require_ghidra_path(repo_root, args.ghidra_path)
     return install_ghidra_dependencies(

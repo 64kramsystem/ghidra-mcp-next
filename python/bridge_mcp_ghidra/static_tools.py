@@ -265,8 +265,8 @@ async def connect_instance(project: str, ctx: Context | None = None) -> str:
     Switch the MCP bridge to a different Ghidra instance by project name.
 
     IMPORTANT: Before calling this function only the static bridge tools are
-    exposed (list_instances, connect_instance, tool-group management,
-    debugger proxy). After a successful connect the bridge fetches the
+    exposed (list_instances, connect_instance, tool-group management).
+    After a successful connect the bridge fetches the
     instance's /mcp/schema and registers Ghidra analysis tools dynamically.
     By default all tool groups are loaded on connect. When started with
     --lazy, only the default groups are loaded initially and clients may need

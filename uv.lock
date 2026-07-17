@@ -96,15 +96,6 @@ wheels = [
 ]
 
 [[package]]
-name = "capstone"
-version = "5.0.9"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/39/01/6516910f546fbb996068207b9dd0229b14bc8dae223114d5e0e27d3cad11/capstone-5.0.9.tar.gz", hash = "sha256:0429af292ddc604d3c9344696807e281d5e728db029f00e6a4ea9e3bff1aac9e", size = 2947300, upload-time = "2026-05-28T16:05:57.968Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/50/e6/6f06fdb6a9ed32b2f7cd9c036b92d5324112c3ef7080f2c71efc367d40dd/capstone-5.0.9-py3-none-win_amd64.whl", hash = "sha256:732cedbbb56d42e723f14d7af6387f1454194a820b4b96b56d1e53f865ef85d0", size = 1273459, upload-time = "2026-05-28T16:05:56.73Z" },
-]
-
-[[package]]
 name = "certifi"
 version = "2026.6.17"
 source = { registry = "https://pypi.org/simple" }
@@ -331,15 +322,6 @@ wheels = [
 ]
 
 [[package]]
-name = "comtypes"
-version = "1.4.16"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/c6/2a/65274c13327f637ec13af8d39f2cf579d9ebe7a0e683696b5f05236d2805/comtypes-1.4.16.tar.gz", hash = "sha256:cd66d1add01265cface4df51ba1e31cd1657e04463c281c802e737e79e1ba93c", size = 260252, upload-time = "2026-03-02T23:11:42.413Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/5f/7c/0eb685107290b6221c03c46d39214a4e42a124189691cb83ae3228257f46/comtypes-1.4.16-py3-none-any.whl", hash = "sha256:e18d85179ff12955524c5a8c3bc09cb3c0d890f1da4d7123d14244c7b78f84c8", size = 296230, upload-time = "2026-03-02T23:11:41.049Z" },
-]
-
-[[package]]
 name = "coverage"
 version = "7.15.0"
 source = { registry = "https://pypi.org/simple" }
@@ -543,11 +525,6 @@ dependencies = [
 ]
 
 [package.dev-dependencies]
-debugger = [
-    { name = "comtypes", marker = "sys_platform == 'win32'" },
-    { name = "protobuf" },
-    { name = "pybag", marker = "sys_platform == 'win32'" },
-]
 dev = [
     { name = "black" },
     { name = "clang" },
@@ -587,11 +564,6 @@ test = [
 requires-dist = [{ name = "mcp", specifier = ">=1.28.1,<2.0.0" }]
 
 [package.metadata.requires-dev]
-debugger = [
-    { name = "comtypes", marker = "sys_platform == 'win32'", specifier = "==1.4.16" },
-    { name = "protobuf", specifier = ">=7.35.1" },
-    { name = "pybag", marker = "sys_platform == 'win32'", specifier = "==2.2.16" },
-]
 dev = [
     { name = "black", specifier = ">=24.0.0" },
     { name = "clang", specifier = ">=18.1.8,<22" },
@@ -813,36 +785,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/f9/e2/3e91f31a7d2b083fe6ef3fa267035b518369d9511ffab804f839851d2779/pluggy-1.6.0.tar.gz", hash = "sha256:7dcc130b76258d33b90f61b658791dede3486c3e6bfb003ee5c9bfb396dd22f3", size = 69412, upload-time = "2025-05-15T12:30:07.975Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/54/20/4d324d65cc6d9205fabedc306948156824eb9f0ee1633355a8f7ec5c66bf/pluggy-1.6.0-py3-none-any.whl", hash = "sha256:e920276dd6813095e9377c0bc5566d94c932c33b27a3e3945d8389c374dd4746", size = 20538, upload-time = "2025-05-15T12:30:06.134Z" },
-]
-
-[[package]]
-name = "protobuf"
-version = "7.35.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/da/01/9ef0afd7999eb9badb3a768b4aedd78c86d4c65cfaf1958ab276199e76b4/protobuf-7.35.1.tar.gz", hash = "sha256:ce115a26fe0c39a2c29973d914d327e516a6455464489fe3cd1e51a1b354f81a", size = 458717, upload-time = "2026-06-11T21:55:40.257Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/10/03/8aeeb7458d22546bf64b5250ca1daeb5ff757d900e8e4a7476c6f0db843e/protobuf-7.35.1-cp310-abi3-macosx_10_9_universal2.whl", hash = "sha256:24f857477359a85c0c235261b8ba905fd51b2562f4a64ca1df5473f29850cbf6", size = 433226, upload-time = "2026-06-11T21:55:31.719Z" },
-    { url = "https://files.pythonhosted.org/packages/37/4b/dfb89eb0e652a1ff073c39a59fb5e3a83cfe9b57a2c83fa6d78270101767/protobuf-7.35.1-cp310-abi3-manylinux2014_aarch64.whl", hash = "sha256:11d6b0ec246892d85215b0a13ca6e0233cf5284b68f0ac02646427f4ff88a799", size = 328847, upload-time = "2026-06-11T21:55:34.035Z" },
-    { url = "https://files.pythonhosted.org/packages/0f/58/dc12f2cd484951524af6e3382c785869b9b3fb5e52ee95ae23add53ee8f9/protobuf-7.35.1-cp310-abi3-manylinux2014_s390x.whl", hash = "sha256:b73f9489a4b8b1c9cb1f8ed951c736392592edb24b9d6819f36d2e10b171d5b4", size = 344030, upload-time = "2026-06-11T21:55:34.941Z" },
-    { url = "https://files.pythonhosted.org/packages/e4/be/5b3cfe508bfab6761414ff944e3366eb13be4fd71efcd69450f89ba39f43/protobuf-7.35.1-cp310-abi3-manylinux2014_x86_64.whl", hash = "sha256:74758715c53d7158fb76caf4f0cfdacc5329a4b1bb994f865d6cf302d413a1c4", size = 327130, upload-time = "2026-06-11T21:55:35.921Z" },
-    { url = "https://files.pythonhosted.org/packages/d8/bc/6d6c7ba8709c85f8f2c390b2b118d6fb08a783676a572271851bf45a7d22/protobuf-7.35.1-cp310-abi3-win32.whl", hash = "sha256:353652e4efd0bca5b5fc2656abf8307ef351f0cf938c9eba09f0e09c20a25c30", size = 428945, upload-time = "2026-06-11T21:55:37.034Z" },
-    { url = "https://files.pythonhosted.org/packages/0a/19/8d0cb6f20a1ef7b18f1c8986ad5783f22f84cce39c6ce9a6e645ea55192e/protobuf-7.35.1-cp310-abi3-win_amd64.whl", hash = "sha256:230a75ddfc2de4806e56696ce9640c1cdfdb6543b7cfce98d42a4c0a0e7bdb87", size = 439996, upload-time = "2026-06-11T21:55:38.123Z" },
-    { url = "https://files.pythonhosted.org/packages/19/c7/5f7c636ec43e0c545e28d1f1db71990108306f7bdcb89f069ba97e428e7f/protobuf-7.35.1-py3-none-any.whl", hash = "sha256:4bc97768d8fe4ad6743c8a19403e314511ed9f6d13205b687e52421c023ac1b9", size = 171659, upload-time = "2026-06-11T21:55:39.155Z" },
-]
-
-[[package]]
-name = "pybag"
-version = "2.2.16"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "capstone", marker = "sys_platform == 'win32'" },
-    { name = "comtypes", marker = "sys_platform == 'win32'" },
-    { name = "pywin32", marker = "sys_platform == 'win32'" },
-    { name = "win32more", marker = "sys_platform == 'win32'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/e1/84/1053510186c0f9a37daad1287194c1b57167590fb065f33ed2d481db58e3/pybag-2.2.16.tar.gz", hash = "sha256:64066f4e5c6581fa9cf778d8e6cf5ce33d3f431961557365c465905ca79b2966", size = 152913, upload-time = "2025-06-26T02:24:59.073Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/5e/a2/52084698c0a3c7e7a94ddfff26f83df09a50781b8436f6f203f5de0a457c/pybag-2.2.16-py3-none-any.whl", hash = "sha256:cef631e87d0bb12163c8cb11ca756ddfa8924a6eacdbd746683ed58948a2bfdf", size = 158949, upload-time = "2025-06-26T02:24:58.091Z" },
 ]
 
 [[package]]
@@ -1744,123 +1686,4 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/c4/1f/fa18009dea8469069cca78a4e877a008ab78f08b064bfc9ab891579077ff/uvicorn-0.49.0.tar.gz", hash = "sha256:ebf4271aa580d9de97f93192d4595176df6e91f9aae919ca73e4fc07df1e66a3", size = 91284, upload-time = "2026-06-03T22:01:30.448Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/88/fa/e1388bbcf24ef3274f45c0c1c7b501fd14971037c1b6ee23610553307497/uvicorn-0.49.0-py3-none-any.whl", hash = "sha256:ba3d14c3ee7e41c6c654c46c9eb489d33213cdd30aa1696eab1374337c13f68f", size = 71376, upload-time = "2026-06-03T22:01:29.037Z" },
-]
-
-[[package]]
-name = "win32more"
-version = "0.8.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "win32more-appsdk", marker = "sys_platform == 'win32'" },
-    { name = "win32more-core", marker = "sys_platform == 'win32'" },
-    { name = "win32more-microsoft-graphics-win2d", marker = "sys_platform == 'win32'" },
-    { name = "win32more-microsoft-web-webview2", marker = "sys_platform == 'win32'" },
-    { name = "win32more-microsoft-windows-sdk-contracts", marker = "sys_platform == 'win32'" },
-    { name = "win32more-microsoft-windows-sdk-win32metadata", marker = "sys_platform == 'win32'" },
-    { name = "win32more-microsoft-windows-wdk-win32metadata", marker = "sys_platform == 'win32'" },
-    { name = "win32more-microsoft-windowsappsdk", marker = "sys_platform == 'win32'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/54/b2/296ede14cdd2bd0bfb90fef262e945918480f43e0211744427c6d7e9f721/win32more-0.8.1.tar.gz", hash = "sha256:07cea83d8b1b27cb807448a8683428e17865827059bd5c844d07e89c68367dda", size = 4845, upload-time = "2026-05-20T12:15:46.246Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/0e/58/3e6522eb9d77650e58df059051cd92900328b5096111cfead8ff7f789bd7/win32more-0.8.1-py3-none-any.whl", hash = "sha256:13066e92ac818be7746a3f1bb41ca2990d38cdb3273dda2c707b52658cbeef40", size = 3675, upload-time = "2026-05-20T12:15:45.048Z" },
-]
-
-[[package]]
-name = "win32more-appsdk"
-version = "0.8.3"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "win32more-core", marker = "sys_platform == 'win32'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/4b/ab/cced60a7a2041f4c8a416e65de4aef1246ac241b88447e024e511cb22fa9/win32more_appsdk-0.8.3.tar.gz", hash = "sha256:c0aac4e383c9aa4e8eb20196ad7771bb92e91b1aab0abbf215d443d3adba8c71", size = 11308, upload-time = "2026-05-15T15:01:34.936Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/84/52/e7e79475d31d93c4bf17a29a80787ab46202d39c3156a555dd4c97028ca0/win32more_appsdk-0.8.3-py2.py3-none-any.whl", hash = "sha256:3fb9d6e7ae3e9299713a17e3753258999b09759c95a20887a192560f5c17d82d", size = 12912, upload-time = "2026-05-15T15:01:36.03Z" },
-]
-
-[[package]]
-name = "win32more-core"
-version = "0.8.4"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/3f/2b/afbfeaacc579fea1061565ebe040304488d1d3638a15c225591ef4da0319/win32more_core-0.8.4.tar.gz", hash = "sha256:b52332c1fcd82585c494867cefe14c002395d6a658d7a43f18603e0f97e9032c", size = 24566, upload-time = "2026-06-14T02:57:09.44Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/30/24/5d7d638c36a01d66fe1a5dfedb6a2e22d4578f19327a3cfbf9a11ea0feac/win32more_core-0.8.4-py2.py3-none-any.whl", hash = "sha256:466850717062095c6eac6b30b744573ea719aeb8bf713e02411151877b32ce4a", size = 29110, upload-time = "2026-06-14T02:57:08.437Z" },
-]
-
-[[package]]
-name = "win32more-microsoft-graphics-win2d"
-version = "0.8.1.4.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "win32more-core", marker = "sys_platform == 'win32'" },
-    { name = "win32more-microsoft-windowsappsdk", marker = "sys_platform == 'win32'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/44/c1/d9b7c0cfd9292efb45fbdf23aa758c4c0727469dd7a3cc77e50536cb914f/win32more_microsoft_graphics_win2d-0.8.1.4.0.tar.gz", hash = "sha256:d95197936a8ba96014b26f496b983b47b450bf365dd3ca5bf624867ac5be27b5", size = 1911025, upload-time = "2026-03-20T06:59:49.349Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/ff/5d/31cce00a5194204852dd429d319219cd27adf625cd5bef6d963fdd87d4bd/win32more_microsoft_graphics_win2d-0.8.1.4.0-py2.py3-none-any.whl", hash = "sha256:959f725bff94f3e76d4aee78d76e7d462f0e90ed763332e1320f597068e3eab3", size = 1968416, upload-time = "2026-03-20T06:59:47.359Z" },
-]
-
-[[package]]
-name = "win32more-microsoft-web-webview2"
-version = "0.8.1.0.4022.49"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "win32more-core", marker = "sys_platform == 'win32'" },
-    { name = "win32more-microsoft-windows-sdk-contracts", marker = "sys_platform == 'win32'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/8c/8b/5b05095e9c988ef6eeb4bb42b0942a9b99d852f9e07a25071091063b1f30/win32more_microsoft_web_webview2-0.8.1.0.4022.49.tar.gz", hash = "sha256:398d1903a70e254bf41414c99e5f3b874b637b58b22e6f3bb730600dbae90b9d", size = 889538, upload-time = "2026-06-11T10:19:25.087Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/74/7f/64fbd659cd1a1dd27e3c2b86034d6e4843cccde2705d04274b26175dda8a/win32more_microsoft_web_webview2-0.8.1.0.4022.49-py2.py3-none-any.whl", hash = "sha256:ca036f7d5bb858b5db7d742af38605b09c11746a3dd505b9c2d80f13f0975b93", size = 911036, upload-time = "2026-06-11T10:19:27.165Z" },
-]
-
-[[package]]
-name = "win32more-microsoft-windows-sdk-contracts"
-version = "0.8.10.0.28000.1839"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "win32more-core", marker = "sys_platform == 'win32'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/6b/74/5ec1e63d52693ab1e0de39b085862282ef624aaee66443a5ec6c95c8f0da/win32more_microsoft_windows_sdk_contracts-0.8.10.0.28000.1839.tar.gz", hash = "sha256:6409b5c7592e0f3a405c4295c77e5717eb77fd57ed7c20baaf2f2da6baa2f1b1", size = 1644791, upload-time = "2026-05-01T09:42:17.892Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/f1/1e/13a73856cc70e666966af7ed0dd2168b976bee012d1f9802f4e91a53c514/win32more_microsoft_windows_sdk_contracts-0.8.10.0.28000.1839-py2.py3-none-any.whl", hash = "sha256:72666799e8e2b90a12809495bc4865406b25ef26954d73f3d8f5a08b733f3229", size = 1815148, upload-time = "2026-05-01T09:42:15.516Z" },
-]
-
-[[package]]
-name = "win32more-microsoft-windows-sdk-win32metadata"
-version = "0.8.70.0.11"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "win32more-core", marker = "sys_platform == 'win32'" },
-    { name = "win32more-microsoft-windows-sdk-contracts", marker = "sys_platform == 'win32'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/a9/be/5638282bc091de1574c04f3ab9d07e47e09d6bc92166c5299c274bbad023/win32more_microsoft_windows_sdk_win32metadata-0.8.70.0.11.tar.gz", hash = "sha256:83313195f796aa8de66d4e5b7fb654b3df320f483aabdcacf3bf9e3b3dd734c5", size = 3894843, upload-time = "2026-03-23T09:15:17.913Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/a1/9c/beb63a50cb8aa7ee81422202c8128308d234dcce1cd924e5f64424aecc07/win32more_microsoft_windows_sdk_win32metadata-0.8.70.0.11-py2.py3-none-any.whl", hash = "sha256:9f7c6cc698a17b2447216269c46277a2cdbe4ce0adaa38bfa69345ce9ffc0e7e", size = 4039194, upload-time = "2026-03-23T09:15:20.081Z" },
-]
-
-[[package]]
-name = "win32more-microsoft-windows-wdk-win32metadata"
-version = "0.8.0.13.25"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "win32more-core", marker = "sys_platform == 'win32'" },
-    { name = "win32more-microsoft-windows-sdk-win32metadata", marker = "sys_platform == 'win32'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/34/98/c1900d0393c757d39bcf4db4e74e1b80b19b71f16a57e3b090dec9dfd66a/win32more_microsoft_windows_wdk_win32metadata-0.8.0.13.25.tar.gz", hash = "sha256:4b42783c57caaabcd731535ab31039f84f08af6d5dbd8e86a097e70953253df6", size = 259270, upload-time = "2026-05-20T12:12:28.273Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/21/f2/8f2305ec575e8c1b4ca8a70a67bcf6ce39590d1c0e2b19f0d023a3da6e8d/win32more_microsoft_windows_wdk_win32metadata-0.8.0.13.25-py2.py3-none-any.whl", hash = "sha256:07f5b4ed77f7958825971d0450a93730d9f0e73f092ea9875b862219d7308f0b", size = 264813, upload-time = "2026-05-20T12:12:26.313Z" },
-]
-
-[[package]]
-name = "win32more-microsoft-windowsappsdk"
-version = "0.8.2.2.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "win32more-appsdk", marker = "sys_platform == 'win32'" },
-    { name = "win32more-core", marker = "sys_platform == 'win32'" },
-    { name = "win32more-microsoft-web-webview2", marker = "sys_platform == 'win32'" },
-    { name = "win32more-microsoft-windows-sdk-contracts", marker = "sys_platform == 'win32'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/f1/ea/4146ecc309460b9ad8fe4b5a5022ef8fab457f7380e493931a0329e83a73/win32more_microsoft_windowsappsdk-0.8.2.2.0.tar.gz", hash = "sha256:97ec03987a167c10761d50cf289922076cb6b05ef6486219d1a46eccf2891989", size = 1169604, upload-time = "2026-06-10T11:38:55.283Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/e7/dc/8774c04e0741158e87e3a15057fa08cdfa269f028e5afa59391b7e64732a/win32more_microsoft_windowsappsdk-0.8.2.2.0-py2.py3-none-any.whl", hash = "sha256:4390d1833034c2db609c3d672d5024e81c6ae610391b78284b2c151ef4ff6f0c", size = 1229061, upload-time = "2026-06-10T11:38:56.809Z" },
 ]

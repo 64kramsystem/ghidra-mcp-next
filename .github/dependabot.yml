@@ -4,7 +4,7 @@
 #
 # Covers every package ecosystem in the repo:
 #   * GitHub Actions used by the workflows under .github/workflows/
-#   * Python requirements at the repo root (bridge runtime + test + debugger)
+#   * Python requirements at the repo root (bridge runtime + tests)
 #   * Maven (pom.xml) for the Java plugin
 #
 # Schedule: weekly per ecosystem to keep noise manageable but stay

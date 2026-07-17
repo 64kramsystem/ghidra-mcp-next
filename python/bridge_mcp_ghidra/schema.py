@@ -1,6 +1,6 @@
 """Schema parsing — converts the upstream /mcp/schema to internal tool defs."""
 
-from .config import STATIC_TOOL_NAMES, _ALL_STATIC_TOOL_NAMES
+from .config import STATIC_TOOL_NAMES
 from .validation import sanitize_tool_name, _allocate_tool_name
 
 # JSON type → Python type mapping
@@ -29,14 +29,11 @@ def _normalize_tool_def_names(schema: list[dict]) -> list[dict]:
             or tool_def["endpoint"].lstrip("/")
         )
         sanitized_name = sanitize_tool_name(raw_name)
-
-        # Collision detection uses the ACTIVE static set: when the WinDbg debugger
-        # proxies are suppressed on this host, their names are free, so Ghidra's own
-        # TraceRmi /debugger/* endpoints (System B) keep clean names instead of _2.
-        #
-        # Preserve the existing behavior for valid dynamic names that exactly
-        # overlap a static bridge tool: _register_tool_def will skip them.
-        if sanitized_name in _ALL_STATIC_TOOL_NAMES and sanitized_name == raw_name:
+        # Preserve an exact overlap with an active bridge-defined tool so the
+        # registration layer can de-duplicate it. All other collisions receive
+        # a stable suffix; TraceRMI debugger names are not bridge-defined and
+        # therefore remain unsuffixed.
+        if sanitized_name in STATIC_TOOL_NAMES and sanitized_name == raw_name:
             name = sanitized_name
         else:
             name = _allocate_tool_name(sanitized_name, used_names)
