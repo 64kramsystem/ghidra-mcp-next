@@ -34,8 +34,8 @@ Complete version history for the Ghidra MCP Server project.
   projects, preventing stale listeners from treating the replacement as a
   second active project.
 - Bounded both P-code emulation paths by instruction count; batch hash
-  candidates now report sampled faults or step-limit failures instead of
-  leaving a request in an unbounded emulator run.
+  requests now return on faults or step-limit exhaustion instead of leaving a
+  request in an unbounded emulator run.
 
 ### Removed
 

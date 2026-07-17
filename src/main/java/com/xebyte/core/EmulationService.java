@@ -339,9 +339,7 @@ public class EmulationService {
                 .getDefaultAddressSpace().getAddress(returnOffset);
 
             List<Map<String, String>> matches = new ArrayList<>();
-            List<Map<String, String>> failures = new ArrayList<>();
             int tested = 0;
-            int failed = 0;
 
             for (String candidate : candidates) {
                 tested++;
@@ -359,15 +357,8 @@ public class EmulationService {
                 ExecutionResult execution = executeUntilReturn(
                     session, returnSentinel, DEFAULT_MAX_STEPS);
                 if (!execution.success()) {
-                    failed++;
-                    if (failures.size() < 10) {
-                        Map<String, String> failure = new LinkedHashMap<>();
-                        failure.put("api_name", candidate);
-                        failure.put("iteration", String.valueOf(tested));
-                        failure.put("stop_reason", execution.stopReason());
-                        failures.add(failure);
-                    }
-                    continue;
+                    return Response.err("Batch emulation failed for candidate " + tested
+                        + " ('" + candidate + "'): " + execution.stopReason());
                 }
 
                 BigInteger hashResult = session.readRegister(resultRegister);
@@ -382,11 +373,6 @@ public class EmulationService {
             }
 
             result.put("tested", tested);
-            result.put("failed", failed);
-            result.put("max_steps_per_candidate", DEFAULT_MAX_STEPS);
-            if (!failures.isEmpty()) {
-                result.put("failure_samples", failures);
-            }
             result.put("matches", matches);
             result.put("resolved", !matches.isEmpty());
             if (!matches.isEmpty()) {
