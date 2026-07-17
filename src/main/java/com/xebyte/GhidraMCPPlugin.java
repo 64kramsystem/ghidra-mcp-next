@@ -198,6 +198,7 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
     private static final java.util.List<GhidraMCPPlugin> liveInstances =
         new java.util.concurrent.CopyOnWriteArrayList<>();
     private boolean ownsServer = false; // true if this instance started the server
+    private boolean registeredInstance = false;
     private static final String OPTION_CATEGORY_NAME = "GhidraMCP HTTP Server";
     private static final String PORT_OPTION_NAME = "Server Port";
     private static final int DEFAULT_PORT = 8089;
@@ -251,6 +252,7 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
     );
 
     // Program provider for on-demand program access (FrontEnd mode)
+    private final Object programConsumer = new Object();
     private final FrontEndProgramProvider programProvider;
     private final GuiProjectService guiProjectService;
 
@@ -270,12 +272,10 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
 
     public GhidraMCPPlugin(PluginTool tool) {
         super(tool);
-        instanceCount++;
-        liveInstances.add(this);
 
         // Initialize service layer — FrontEnd mode: opens programs on-demand from project
-        this.programProvider = new FrontEndProgramProvider(tool, this);
-        this.guiProjectService = new GuiProjectService(() -> this.tool);
+        this.programProvider = new FrontEndProgramProvider(tool, programConsumer);
+        this.guiProjectService = new GuiProjectService(() -> tool);
         com.xebyte.core.ThreadingStrategy threadingStrategy = new com.xebyte.headless.DirectThreadingStrategy();
         this.listingService = new com.xebyte.core.ListingService(programProvider);
         this.commentService = new com.xebyte.core.CommentService(programProvider, threadingStrategy);
@@ -289,10 +289,10 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
         this.programScriptService = new com.xebyte.core.ProgramScriptService(programProvider, threadingStrategy);
         this.emulationService = new com.xebyte.core.EmulationService(programProvider, threadingStrategy);
         this.debuggerService = new com.xebyte.core.DebuggerService(programProvider, threadingStrategy, tool);
-        Msg.info(this, "============================================");
-        Msg.info(this, "GhidraMCP " + VersionInfo.getFullVersion());
-        Msg.info(this, "Endpoints: " + VersionInfo.getEndpointCount());
-        Msg.info(this, "============================================");
+        Msg.info(GhidraMCPPlugin.class, "============================================");
+        Msg.info(GhidraMCPPlugin.class, "GhidraMCP " + VersionInfo.getFullVersion());
+        Msg.info(GhidraMCPPlugin.class, "Endpoints: " + VersionInfo.getEndpointCount());
+        Msg.info(GhidraMCPPlugin.class, "============================================");
 
         // Register configuration options
         Options options = tool.getOptions(OPTION_CATEGORY_NAME);
@@ -304,57 +304,66 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
             "Enable Unix Domain Socket transport for local multi-instance support.");
         options.registerOption(TCP_ENABLED_OPTION, DEFAULT_TCP_ENABLED, null,
             "Enable TCP transport for remote/network access.");
+    }
+
+    @Override
+    protected void init() {
+        super.init();
+        instanceCount++;
+        liveInstances.add(this);
+        registeredInstance = true;
+        startConfiguredTransports();
+        createMenuActions();
+    }
+
+    private void startConfiguredTransports() {
+        Options options = tool.getOptions(OPTION_CATEGORY_NAME);
         boolean udsEnabled = options.getBoolean(UDS_ENABLED_OPTION, DEFAULT_UDS_ENABLED);
         boolean tcpEnabled = options.getBoolean(TCP_ENABLED_OPTION, DEFAULT_TCP_ENABLED);
 
-        // Start UDS if enabled
         boolean udsOk = false;
         if (udsEnabled) {
             try {
                 ServerManager.getInstance().registerTool(tool);
                 udsOk = true;
-                Msg.info(this, "GhidraMCP UDS server active at " + ServerManager.getInstance().getSocketPath());
+                Msg.info(this,
+                    "GhidraMCP UDS server active at " + ServerManager.getInstance().getSocketPath());
             } catch (IOException e) {
                 Msg.warn(this, "Failed to start UDS server: " + e.getMessage());
             }
         }
 
-        // Start TCP if enabled, or as safety net if nothing else is running
+        // Start TCP if enabled, or as a safety net if nothing else is running.
         if (tcpEnabled || (!udsOk && !tcpEnabled)) {
             if (server != null && isServerRunning()) {
                 Msg.info(this, "GhidraMCP TCP server already running — sharing with this tool window.");
-            } else {
-                try {
-                    startServer();
-                    ownsServer = true;
-                    // Surface the ACTUAL bound port (may differ from the
-                    // configured port when port-range fallback fired -- see
-                    // Copilot review on #175). Falls back to configured port
-                    // if for some reason the bound-port wasn't recorded.
-                    int actualPort = ServerManager.getInstance().getBoundTcpPort();
-                    int configuredPort = options.getInt(PORT_OPTION_NAME, DEFAULT_PORT);
-                    int displayedPort = actualPort > 0 ? actualPort : configuredPort;
-                    String portStr = displayedPort == configuredPort
-                        ? String.valueOf(displayedPort)
-                        : (displayedPort + " (fallback; configured " + configuredPort + " was in use)");
-                    if (!tcpEnabled) {
-                        Msg.warn(this, "GhidraMCP: UDS failed or disabled — started TCP on port " + portStr + " as safety net.");
-                    } else {
-                        Msg.info(this, "GhidraMCP TCP server active on port " + portStr);
-                    }
-                } catch (IOException e) {
-                    Msg.error(this, "Failed to start TCP server: " + e.getMessage(), e);
-                    if (!udsOk) {
-                        Msg.showError(this, null, "GhidraMCP Server Error",
-                            "Failed to start MCP server.\n\n" +
-                            "No transports are running.\n\n" +
-                            "Error: " + e.getMessage());
-                    }
+                return;
+            }
+            try {
+                startServer();
+                ownsServer = true;
+                int actualPort = ServerManager.getInstance().getBoundTcpPort();
+                int configuredPort = options.getInt(PORT_OPTION_NAME, DEFAULT_PORT);
+                int displayedPort = actualPort > 0 ? actualPort : configuredPort;
+                String portStr = displayedPort == configuredPort
+                    ? String.valueOf(displayedPort)
+                    : (displayedPort + " (fallback; configured " + configuredPort + " was in use)");
+                if (!tcpEnabled) {
+                    Msg.warn(this,
+                        "GhidraMCP: UDS failed or disabled — started TCP on port " + portStr + " as safety net.");
+                } else {
+                    Msg.info(this, "GhidraMCP TCP server active on port " + portStr);
+                }
+            } catch (IOException e) {
+                Msg.error(this, "Failed to start TCP server: " + e.getMessage(), e);
+                if (!udsOk) {
+                    Msg.showError(this, null, "GhidraMCP Server Error",
+                        "Failed to start MCP server.\n\n" +
+                        "No transports are running.\n\n" +
+                        "Error: " + e.getMessage());
                 }
             }
         }
-
-        createMenuActions();
     }
 
     private boolean isServerRunning() {
@@ -1125,11 +1134,8 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
         return functionService.disassembleFunction(addressStr).toJson();
     }
 
-    /**
-     * Set a comment using the specified comment type (PRE_COMMENT or EOL_COMMENT)
-     */
-    @SuppressWarnings("deprecation")
-    private String setCommentAtAddress(String addressStr, String comment, int commentType, String transactionName) {
+    /** Set a comment using the specified comment type. */
+    private String setCommentAtAddress(String addressStr, String comment, CommentType commentType, String transactionName) {
         return commentService.setCommentAtAddress(addressStr, comment, commentType, transactionName).toJson();
     }
 
@@ -2751,7 +2757,7 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
         }
 
         StringBuilder sb = new StringBuilder();
-        sb.append("{\"address\": \"").append(com.xebyte.core.ServiceUtils.escapeJson(address)).append("\", \"steps\": {");
+        sb.append("{\"address\": ").append(JsonHelper.toJson(address)).append(", \"steps\": {");
         java.util.List<String> errors = new java.util.ArrayList<>();
         boolean firstStep = true;
 
@@ -2766,7 +2772,8 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
                 boolean gotoOk = gotoResult != null && !gotoResult.contains("\"error\"");
                 sb.append("\"goto\": {\"success\": ").append(gotoOk).append("}");
             } catch (Exception e) {
-                sb.append("\"goto\": {\"success\": false, \"error\": \"").append(com.xebyte.core.ServiceUtils.escapeJson(e.getMessage())).append("\"}");
+                sb.append("\"goto\": {\"success\": false, \"error\": ")
+                    .append(JsonHelper.toJson(e.getMessage())).append("}");
                 errors.add("goto: " + e.getMessage());
             }
         }
@@ -2781,12 +2788,13 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
                 boolean renameOk = renameResult != null && (renameResult.contains("Success") || renameResult.contains("Renamed"));
                 sb.append("\"rename\": {\"success\": ").append(renameOk);
                 if (!renameOk) {
-                    sb.append(", \"error\": \"").append(com.xebyte.core.ServiceUtils.escapeJson(renameResult)).append("\"");
+                    sb.append(", \"error\": ").append(JsonHelper.toJson(renameResult));
                     errors.add("rename: " + renameResult);
                 }
                 sb.append("}");
             } catch (Exception e) {
-                sb.append("\"rename\": {\"success\": false, \"error\": \"").append(com.xebyte.core.ServiceUtils.escapeJson(e.getMessage())).append("\"}");
+                sb.append("\"rename\": {\"success\": false, \"error\": ")
+                    .append(JsonHelper.toJson(e.getMessage())).append("}");
                 errors.add("rename: " + e.getMessage());
             }
         }
@@ -2801,12 +2809,13 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
                 com.xebyte.core.FunctionService.PrototypeResult protoResult = setFunctionPrototype(address, prototype, callingConvention);
                 sb.append("\"prototype\": {\"success\": ").append(protoResult.isSuccess());
                 if (!protoResult.isSuccess()) {
-                    sb.append(", \"error\": \"").append(com.xebyte.core.ServiceUtils.escapeJson(protoResult.getErrorMessage())).append("\"");
+                    sb.append(", \"error\": ").append(JsonHelper.toJson(protoResult.getErrorMessage()));
                     errors.add("prototype: " + protoResult.getErrorMessage());
                 }
                 sb.append("}");
             } catch (Exception e) {
-                sb.append("\"prototype\": {\"success\": false, \"error\": \"").append(com.xebyte.core.ServiceUtils.escapeJson(e.getMessage())).append("\"}");
+                sb.append("\"prototype\": {\"success\": false, \"error\": ")
+                    .append(JsonHelper.toJson(e.getMessage())).append("}");
                 errors.add("prototype: " + e.getMessage());
             }
         }
@@ -2839,7 +2848,7 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
                 sb.append(", \"errors\": [");
                 for (int i = 0; i < typeErrors.size(); i++) {
                     if (i > 0) sb.append(", ");
-                    sb.append("\"").append(com.xebyte.core.ServiceUtils.escapeJson(typeErrors.get(i))).append("\"");
+                    sb.append(JsonHelper.toJson(typeErrors.get(i)));
                 }
                 sb.append("]");
                 errors.addAll(typeErrors);
@@ -2881,7 +2890,8 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
                 if (!renameOk) errors.add("variable_renames: " + renameResult);
                 sb.append("}");
             } catch (Exception e) {
-                sb.append("\"variable_renames\": {\"success\": false, \"error\": \"").append(com.xebyte.core.ServiceUtils.escapeJson(e.getMessage())).append("\"}");
+                sb.append("\"variable_renames\": {\"success\": false, \"error\": ")
+                    .append(JsonHelper.toJson(e.getMessage())).append("}");
                 errors.add("variable_renames: " + e.getMessage());
             }
         }
@@ -2923,7 +2933,8 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
                 if (!commentOk) errors.add("comments: " + commentResult);
                 sb.append("}");
             } catch (Exception e) {
-                sb.append("\"comments\": {\"success\": false, \"error\": \"").append(com.xebyte.core.ServiceUtils.escapeJson(e.getMessage())).append("\"}");
+                sb.append("\"comments\": {\"success\": false, \"error\": ")
+                    .append(JsonHelper.toJson(e.getMessage())).append("}");
                 errors.add("comments: " + e.getMessage());
             }
         }
@@ -2939,7 +2950,8 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
                 String scoreResult = analyzeFunctionCompleteness(address, true);
                 sb.append(", \"completeness\": ").append(scoreResult);
             } catch (Exception e) {
-                sb.append(", \"completeness\": {\"error\": \"").append(com.xebyte.core.ServiceUtils.escapeJson(e.getMessage())).append("\"}");
+                sb.append(", \"completeness\": {\"error\": ")
+                    .append(JsonHelper.toJson(e.getMessage())).append("}");
             }
         }
 
@@ -2947,7 +2959,7 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
         sb.append(", \"errors\": [");
         for (int i = 0; i < errors.size(); i++) {
             if (i > 0) sb.append(", ");
-            sb.append("\"").append(com.xebyte.core.ServiceUtils.escapeJson(errors.get(i))).append("\"");
+            sb.append(JsonHelper.toJson(errors.get(i)));
         }
         sb.append("]}");
 
@@ -3424,8 +3436,11 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
         // Deregister from UDS ServerManager
         ServerManager.getInstance().deregisterTool(tool);
 
-        liveInstances.remove(this);
-        instanceCount--;
+        if (registeredInstance) {
+            liveInstances.remove(this);
+            instanceCount--;
+            registeredInstance = false;
+        }
 
         // This instance's programProvider is dead either way — release the
         // programs it was holding, regardless of whether other windows

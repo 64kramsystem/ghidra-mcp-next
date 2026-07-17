@@ -69,6 +69,12 @@ public class BinaryComparisonService {
     private static final double NW_EDGE_COUNT = 0.10;
     private static final double NW_STRING_REF = 0.05;
 
+    private record InstructionParts(
+            List<Instruction> prologue,
+            List<Instruction> body,
+            List<Instruction> epilogue) {
+    }
+
     // Set sub-weights
     private static final double SW_CALLEES = 0.50;
     private static final double SW_STRINGS = 0.30;
@@ -588,19 +594,14 @@ public class BinaryComparisonService {
     }
 
     /**
-     * Strip prologue and epilogue instructions, returning body instructions.
-     * Returns a 3-element array: [prologue, body, epilogue].
+     * Split instructions into prologue, body, and epilogue segments.
      */
-    static List<Instruction>[] splitPrologueBodyEpilogue(Program program, Function func) {
+    private static InstructionParts splitPrologueBodyEpilogue(Program program, Function func) {
         List<Instruction> all = getAllInstructions(program, func);
-        @SuppressWarnings("unchecked")
-        List<Instruction>[] result = new List[3];
 
         if (all.isEmpty()) {
-            result[0] = Collections.emptyList();
-            result[1] = Collections.emptyList();
-            result[2] = Collections.emptyList();
-            return result;
+            return new InstructionParts(
+                Collections.emptyList(), Collections.emptyList(), Collections.emptyList());
         }
 
         // Find prologue end
@@ -632,10 +633,10 @@ public class BinaryComparisonService {
             epilogueStart = prologueEnd;
         }
 
-        result[0] = all.subList(0, prologueEnd);
-        result[1] = all.subList(prologueEnd, epilogueStart);
-        result[2] = all.subList(epilogueStart, all.size());
-        return result;
+        return new InstructionParts(
+            all.subList(0, prologueEnd),
+            all.subList(prologueEnd, epilogueStart),
+            all.subList(epilogueStart, all.size()));
     }
 
     // ========================================================================
@@ -653,10 +654,10 @@ public class BinaryComparisonService {
         sig.programName = program.getName();
         sig.paramCount = func.getParameterCount();
 
-        List<Instruction>[] parts = splitPrologueBodyEpilogue(program, func);
-        List<Instruction> body = parts[1];
-        sig.hasPrologueStripped = !parts[0].isEmpty();
-        sig.hasEpilogueStripped = !parts[2].isEmpty();
+        InstructionParts parts = splitPrologueBodyEpilogue(program, func);
+        List<Instruction> body = parts.body();
+        sig.hasPrologueStripped = !parts.prologue().isEmpty();
+        sig.hasEpilogueStripped = !parts.epilogue().isEmpty();
 
         sig.instructionCount = body.size();
 
@@ -1004,8 +1005,8 @@ public class BinaryComparisonService {
             Program progB, Function funcB,
             TaskMonitor monitor) {
 
-        List<Instruction>[] partsA = splitPrologueBodyEpilogue(progA, funcA);
-        List<Instruction>[] partsB = splitPrologueBodyEpilogue(progB, funcB);
+        InstructionParts partsA = splitPrologueBodyEpilogue(progA, funcA);
+        InstructionParts partsB = splitPrologueBodyEpilogue(progB, funcB);
 
         AddressSetView bodyA = funcA.getBody();
         AddressSetView bodyB = funcB.getBody();
@@ -1014,11 +1015,11 @@ public class BinaryComparisonService {
 
         // Normalize body instructions
         List<String> normA = new ArrayList<>();
-        for (Instruction instr : partsA[1]) {
+        for (Instruction instr : partsA.body()) {
             normA.add(normalizeInstruction(instr, bodyA, startA, progA));
         }
         List<String> normB = new ArrayList<>();
-        for (Instruction instr : partsB[1]) {
+        for (Instruction instr : partsB.body()) {
             normB.add(normalizeInstruction(instr, bodyB, startB, progB));
         }
 
@@ -1038,22 +1039,22 @@ public class BinaryComparisonService {
 
         // Normalize and diff prologue
         List<String> prologueA = new ArrayList<>();
-        for (Instruction instr : partsA[0]) {
+        for (Instruction instr : partsA.prologue()) {
             prologueA.add(instr.toString());
         }
         List<String> prologueB = new ArrayList<>();
-        for (Instruction instr : partsB[0]) {
+        for (Instruction instr : partsB.prologue()) {
             prologueB.add(instr.toString());
         }
         List<DiffEntry> prologueDiff = computeLCSDiff(prologueA, prologueB);
 
         // Normalize and diff epilogue
         List<String> epilogueA = new ArrayList<>();
-        for (Instruction instr : partsA[2]) {
+        for (Instruction instr : partsA.epilogue()) {
             epilogueA.add(instr.toString());
         }
         List<String> epilogueB = new ArrayList<>();
-        for (Instruction instr : partsB[2]) {
+        for (Instruction instr : partsB.epilogue()) {
             epilogueB.add(instr.toString());
         }
         List<DiffEntry> epilogueDiff = computeLCSDiff(epilogueA, epilogueB);
@@ -1096,13 +1097,15 @@ public class BinaryComparisonService {
         funcAInfo.put("name", funcA.getName());
         funcAInfo.putAll(ServiceUtils.addressToJson(funcA.getEntryPoint(), progA));
         funcAInfo.put("program", progA.getName());
-        funcAInfo.put("instruction_count", partsA[0].size() + partsA[1].size() + partsA[2].size());
+        funcAInfo.put("instruction_count",
+            partsA.prologue().size() + partsA.body().size() + partsA.epilogue().size());
 
         Map<String, Object> funcBInfo = new LinkedHashMap<>();
         funcBInfo.put("name", funcB.getName());
         funcBInfo.putAll(ServiceUtils.addressToJson(funcB.getEntryPoint(), progB));
         funcBInfo.put("program", progB.getName());
-        funcBInfo.put("instruction_count", partsB[0].size() + partsB[1].size() + partsB[2].size());
+        funcBInfo.put("instruction_count",
+            partsB.prologue().size() + partsB.body().size() + partsB.epilogue().size());
 
         return Response.ok(JsonHelper.mapOf(
             "function_a", funcAInfo,

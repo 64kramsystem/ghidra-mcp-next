@@ -103,8 +103,10 @@ public class HeadlessManagementService {
         try {
             boolean ok = programProvider.createProject(parentDir, name);
             if (ok) {
-                return Response.text("{\"success\": true, \"name\": \"" + ServiceUtils.escapeJson(name)
-                    + "\", \"path\": \"" + ServiceUtils.escapeJson(parentDir + "/" + name) + "\"}");
+                return Response.ok(JsonHelper.mapOf(
+                    "success", true,
+                    "name", name,
+                    "path", parentDir + "/" + name));
             }
             return Response.err("Failed to create project");
         } catch (Exception e) {
@@ -120,7 +122,9 @@ public class HeadlessManagementService {
         }
         boolean success = programProvider.openProject(projectPath);
         if (success) {
-            return Response.text("{\"success\": true, \"project\": \"" + ServiceUtils.escapeJson(programProvider.getProjectName()) + "\"}");
+            return Response.ok(JsonHelper.mapOf(
+                "success", true,
+                "project", programProvider.getProjectName()));
         }
         return Response.err("Failed to open project: " + projectPath);
     }
@@ -132,7 +136,7 @@ public class HeadlessManagementService {
         }
         String projectName = programProvider.getProjectName();
         programProvider.closeProject();
-        return Response.text("{\"success\": true, \"closed\": \"" + ServiceUtils.escapeJson(projectName) + "\"}");
+        return Response.ok(JsonHelper.mapOf("success", true, "closed", projectName));
     }
 
     @McpTool(path = "/load_program_from_project", method = "POST", description = "Load a program from the open local project. Returns project location, loaded programs, and available project paths on failure.", category = "headless")

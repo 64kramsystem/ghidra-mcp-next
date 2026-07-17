@@ -48,36 +48,34 @@ public record EndpointDef(String path, String method, EndpointHandler handler,
 
         /** Serialize to JSON. */
         public String toJson() {
-            StringBuilder sb = new StringBuilder();
-            sb.append("{\"name\": \"").append(ServiceUtils.escapeJson(name)).append("\"");
-            sb.append(", \"type\": \"").append(type).append("\"");
-            sb.append(", \"source\": \"").append(source).append("\"");
-            sb.append(", \"required\": ").append(required);
+            return JsonHelper.toJson(schema());
+        }
+
+        private Map<String, Object> schema() {
+            Map<String, Object> schema = new LinkedHashMap<>();
+            schema.put("name", name);
+            schema.put("type", type);
+            schema.put("source", source);
+            schema.put("required", required);
             if (defaultValue != null) {
-                sb.append(", \"default\": \"").append(ServiceUtils.escapeJson(defaultValue)).append("\"");
+                schema.put("default", defaultValue);
             }
             if (description != null && !description.isEmpty()) {
-                sb.append(", \"description\": \"").append(ServiceUtils.escapeJson(description)).append("\"");
+                schema.put("description", description);
             }
-            sb.append("}");
-            return sb.toString();
+            return schema;
         }
     }
 
     /** Serialize endpoint schema to JSON. */
     public String schemaJson() {
-        StringBuilder sb = new StringBuilder();
-        sb.append("{\"path\": \"").append(ServiceUtils.escapeJson(path)).append("\"");
-        sb.append(", \"method\": \"").append(method).append("\"");
+        Map<String, Object> schema = new LinkedHashMap<>();
+        schema.put("path", path);
+        schema.put("method", method);
         if (description != null && !description.isEmpty()) {
-            sb.append(", \"description\": \"").append(ServiceUtils.escapeJson(description)).append("\"");
+            schema.put("description", description);
         }
-        sb.append(", \"params\": [");
-        for (int i = 0; i < params.size(); i++) {
-            if (i > 0) sb.append(", ");
-            sb.append(params.get(i).toJson());
-        }
-        sb.append("]}");
-        return sb.toString();
+        schema.put("params", params.stream().map(ParamDef::schema).toList());
+        return JsonHelper.toJson(schema);
     }
 }

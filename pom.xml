@@ -14,6 +14,7 @@
         <maven.compiler.release>21</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <ghidra.version>12.1.2</ghidra.version>
+        <mockito.version>5.23.0</mockito.version>
         <!-- Build timestamp generated at compile time (format: yyyyMMdd-HHmmss) -->
         <build.timestamp>${maven.build.timestamp}</build.timestamp>
         <maven.build.timestamp.format>yyyyMMdd-HHmmss</maven.build.timestamp.format>
@@ -142,7 +143,7 @@
         <dependency>
             <groupId>org.mockito</groupId>
             <artifactId>mockito-core</artifactId>
-            <version>5.23.0</version>
+            <version>${mockito.version}</version>
             <scope>test</scope>
         </dependency>
         <!-- Ghidra DB (test only) — needed so Mockito can instrument Program's type hierarchy -->
@@ -175,14 +176,15 @@
             </resource>
         </resources>
         <plugins>
-            <!-- Maven Surefire Plugin — enable Byte Buddy experimental mode for Java 25.
-                 @{argLine} late-binds the JaCoCo agent injected by prepare-agent. -->
+            <!-- Maven Surefire Plugin — load Mockito statically, disable CDS (instrumentation
+                 appends to the bootstrap classpath), and enable Byte Buddy experimental mode
+                 for Java 25. @{argLine} late-binds the JaCoCo agent. -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.5.6</version>
                 <configuration>
-                    <argLine>@{argLine} -Dnet.bytebuddy.experimental=true</argLine>
+                    <argLine>@{argLine} -javaagent:${settings.localRepository}/org/mockito/mockito-core/${mockito.version}/mockito-core-${mockito.version}.jar -Xshare:off -Dnet.bytebuddy.experimental=true</argLine>
                 </configuration>
             </plugin>
             <!-- JaCoCo — line coverage for the offline test tier. Report lands in
@@ -216,7 +218,11 @@
                 <configuration>
                     <release>${maven.compiler.release}</release>
                     <encoding>UTF-8</encoding>
-                    <showWarnings>false</showWarnings>
+                    <showWarnings>true</showWarnings>
+                    <compilerArgs>
+                        <arg>-Xlint:all</arg>
+                        <arg>-Werror</arg>
+                    </compilerArgs>
                 </configuration>
             </plugin>
             <!-- Ensure deterministic resource/properties encoding -->

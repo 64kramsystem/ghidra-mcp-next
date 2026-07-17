@@ -32,9 +32,9 @@ public class CommentService {
     // -----------------------------------------------------------------------
 
     /**
-     * Set a comment using the specified comment type (PRE_COMMENT or EOL_COMMENT).
+     * Set a comment using the specified comment type.
      */
-    public Response setCommentAtAddress(String addressStr, String comment, int commentType, String transactionName, String programName) {
+    public Response setCommentAtAddress(String addressStr, String comment, CommentType commentType, String transactionName, String programName) {
         ServiceUtils.ProgramOrError pe = ServiceUtils.getProgramOrError(programProvider, programName);
         if (pe.hasError()) return pe.error();
         Program program = pe.program();
@@ -76,7 +76,7 @@ public class CommentService {
         return Response.err(errorMsg.get() != null ? errorMsg.get() : "Unknown failure");
     }
 
-    public Response setCommentAtAddress(String addressStr, String comment, int commentType, String transactionName) {
+    public Response setCommentAtAddress(String addressStr, String comment, CommentType commentType, String transactionName) {
         return setCommentAtAddress(addressStr, comment, commentType, transactionName, null);
     }
 
@@ -90,7 +90,7 @@ public class CommentService {
                                + "address is unambiguous.") String addressStr,
             @Param(value = "comment", source = ParamSource.BODY) String comment,
             @Param(value = "program", description = "Target program name", defaultValue = "") String programName) {
-        return setCommentAtAddress(addressStr, comment, CodeUnit.PRE_COMMENT, "Set decompiler comment", programName);
+        return setCommentAtAddress(addressStr, comment, CommentType.PRE, "Set decompiler comment", programName);
     }
 
     public Response setDecompilerComment(String addressStr, String comment) {
@@ -107,7 +107,7 @@ public class CommentService {
                                + "address is unambiguous.") String addressStr,
             @Param(value = "comment", source = ParamSource.BODY) String comment,
             @Param(value = "program", description = "Target program name", defaultValue = "") String programName) {
-        return setCommentAtAddress(addressStr, comment, CodeUnit.EOL_COMMENT, "Set disassembly comment", programName);
+        return setCommentAtAddress(addressStr, comment, CommentType.EOL, "Set disassembly comment", programName);
     }
 
     public Response setDisassemblyComment(String addressStr, String comment) {
@@ -294,14 +294,13 @@ public class CommentService {
                             // address regardless of defined-data status,
                             // so the gate was never necessary.
                             Listing dataListing = program.getListing();
-                            String existingPlate = dataListing.getComment(
-                                    CodeUnit.PLATE_COMMENT, funcAddr);
+                            String existingPlate = dataListing.getComment(CommentType.PLATE, funcAddr);
                             if (existingPlate != null && !existingPlate.isEmpty()) {
                                 overwrittenCount.incrementAndGet();
                             }
                             dataListing.setComment(
                                     funcAddr,
-                                    CodeUnit.PLATE_COMMENT,
+                                    CommentType.PLATE,
                                     plateComment.isEmpty() ? null : plateComment);
                             plateSet.set(true);
                         }
@@ -316,11 +315,11 @@ public class CommentService {
                             if (addrStr != null && cmt != null) {
                                 Address address = ServiceUtils.parseAddress(program, addrStr);
                                 if (address != null) {
-                                    String existing = listing.getComment(CodeUnit.PRE_COMMENT, address);
+                                    String existing = listing.getComment(CommentType.PRE, address);
                                     if (existing != null && !existing.isEmpty()) {
                                         overwrittenCount.incrementAndGet();
                                     }
-                                    listing.setComment(address, CodeUnit.PRE_COMMENT, cmt.isEmpty() ? null : cmt);
+                                    listing.setComment(address, CommentType.PRE, cmt.isEmpty() ? null : cmt);
                                     decompilerCount.incrementAndGet();
                                 }
                             }
@@ -335,11 +334,11 @@ public class CommentService {
                             if (addrStr != null && cmt != null) {
                                 Address address = ServiceUtils.parseAddress(program, addrStr);
                                 if (address != null) {
-                                    String existing = listing.getComment(CodeUnit.EOL_COMMENT, address);
+                                    String existing = listing.getComment(CommentType.EOL, address);
                                     if (existing != null && !existing.isEmpty()) {
                                         overwrittenCount.incrementAndGet();
                                     }
-                                    listing.setComment(address, CodeUnit.EOL_COMMENT, cmt.isEmpty() ? null : cmt);
+                                    listing.setComment(address, CommentType.EOL, cmt.isEmpty() ? null : cmt);
                                     disassemblyCount.incrementAndGet();
                                 }
                             }
@@ -440,17 +439,17 @@ public class CommentService {
                         Address instrAddr = instr.getAddress();
 
                         if (clearPre) {
-                            String existing = listing.getComment(CodeUnit.PRE_COMMENT, instrAddr);
+                            String existing = listing.getComment(CommentType.PRE, instrAddr);
                             if (existing != null) {
-                                listing.setComment(instrAddr, CodeUnit.PRE_COMMENT, null);
+                                listing.setComment(instrAddr, CommentType.PRE, null);
                                 preCleared.incrementAndGet();
                             }
                         }
 
                         if (clearEol) {
-                            String existing = listing.getComment(CodeUnit.EOL_COMMENT, instrAddr);
+                            String existing = listing.getComment(CommentType.EOL, instrAddr);
                             if (existing != null) {
-                                listing.setComment(instrAddr, CodeUnit.EOL_COMMENT, null);
+                                listing.setComment(instrAddr, CommentType.EOL, null);
                                 eolCleared.incrementAndGet();
                             }
                         }

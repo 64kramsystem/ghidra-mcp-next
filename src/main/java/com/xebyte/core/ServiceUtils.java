@@ -38,21 +38,6 @@ public final class ServiceUtils {
     // ========================================================================
 
     /**
-     * Escape a string for safe inclusion in JSON values.
-     * Handles quotes, backslashes, and control characters.
-     * @deprecated Use {@link JsonHelper#toJson(Object)} instead — Gson handles escaping automatically.
-     */
-    @Deprecated
-    public static String escapeJson(String str) {
-        if (str == null) return "";
-        return str.replace("\\", "\\\\")
-                  .replace("\"", "\\\"")
-                  .replace("\n", "\\n")
-                  .replace("\r", "\\r")
-                  .replace("\t", "\\t");
-    }
-
-    /**
      * Unescape JSON string escape sequences: \n -> newline, \" -> quote, \\ -> backslash, etc.
      */
     public static String unescapeJsonString(String s) {
@@ -90,65 +75,6 @@ public final class ServiceUtils {
                 sb.append(c);
             }
         }
-        return sb.toString();
-    }
-
-    /**
-     * Serialize a List of objects to a JSON array string.
-     * @deprecated Use {@link JsonHelper#toJson(Object)} instead.
-     */
-    @Deprecated
-    public static String serializeListToJson(List<?> list) {
-        StringBuilder sb = new StringBuilder("[");
-        for (int i = 0; i < list.size(); i++) {
-            if (i > 0) sb.append(",");
-            Object item = list.get(i);
-            if (item instanceof String) {
-                sb.append("\"").append(escapeJson((String) item)).append("\"");
-            } else if (item instanceof Number) {
-                sb.append(item);
-            } else if (item instanceof Map) {
-                sb.append(serializeMapToJson((Map<?, ?>) item));
-            } else if (item instanceof List) {
-                sb.append(serializeListToJson((List<?>) item));
-            } else {
-                sb.append("\"").append(escapeJson(item.toString())).append("\"");
-            }
-        }
-        sb.append("]");
-        return sb.toString();
-    }
-
-    /**
-     * Serialize a Map to a JSON object string.
-     * @deprecated Use {@link JsonHelper#toJson(Object)} instead.
-     */
-    @Deprecated
-    public static String serializeMapToJson(Map<?, ?> map) {
-        StringBuilder sb = new StringBuilder("{");
-        boolean first = true;
-        for (Map.Entry<?, ?> entry : map.entrySet()) {
-            if (!first) sb.append(",");
-            first = false;
-            sb.append("\"").append(escapeJson(entry.getKey().toString())).append("\":");
-            Object value = entry.getValue();
-            if (value instanceof String) {
-                sb.append("\"").append(escapeJson((String) value)).append("\"");
-            } else if (value instanceof Number) {
-                sb.append(value);
-            } else if (value instanceof Map) {
-                sb.append(serializeMapToJson((Map<?, ?>) value));
-            } else if (value instanceof List) {
-                sb.append(serializeListToJson((List<?>) value));
-            } else if (value instanceof Boolean) {
-                sb.append(value);
-            } else if (value == null) {
-                sb.append("null");
-            } else {
-                sb.append("\"").append(escapeJson(value.toString())).append("\"");
-            }
-        }
-        sb.append("}");
         return sb.toString();
     }
 
@@ -251,23 +177,13 @@ public final class ServiceUtils {
     /**
      * Safely downcast a List&lt;Object&gt; to List&lt;Map&lt;String,String&gt;&gt;.
      */
-    @SuppressWarnings("unchecked")
     public static List<Map<String, String>> convertToMapList(Object obj) {
         if (obj == null) {
             return null;
         }
 
-        if (obj instanceof List) {
-            List<Object> objList = (List<Object>) obj;
-            List<Map<String, String>> result = new ArrayList<>();
-
-            for (Object item : objList) {
-                if (item instanceof Map) {
-                    result.add((Map<String, String>) item);
-                }
-            }
-
-            return result;
+        if (obj instanceof List<?>) {
+            return JsonHelper.toMapStringList(obj);
         }
 
         if (obj instanceof String json) {
@@ -546,18 +462,6 @@ public final class ServiceUtils {
     // ========================================================================
     // Program Resolution
     // ========================================================================
-
-    /**
-     * Generate a JSON error response for when a program cannot be found.
-     * @deprecated Use {@link #getProgramOrError(ProgramProvider, String)} instead.
-     */
-    @Deprecated
-    public static String programNotFoundError(String programName) {
-        if (programName == null || programName.isEmpty()) {
-            return "{\"error\": \"No program is currently open\"}";
-        }
-        return "{\"error\": \"Program not found: " + escapeJson(programName) + "\"}";
-    }
 
     /**
      * Type-safe result from program resolution.

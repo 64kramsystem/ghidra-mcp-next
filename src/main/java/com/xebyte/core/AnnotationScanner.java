@@ -363,8 +363,7 @@ public class AnnotationScanner {
     private static String convertFieldsJson(Object obj) {
         if (obj == null) return null;
         if (obj instanceof String s) return s;
-        if (obj instanceof List<?> list) return ServiceUtils.serializeListToJson(list);
-        if (obj instanceof Map<?, ?>) return ServiceUtils.serializeMapToJson((Map<?, ?>) obj);
+        if (obj instanceof List<?> || obj instanceof Map<?, ?>) return JsonHelper.toJson(obj);
         return obj.toString();
     }
 
@@ -486,8 +485,7 @@ public class AnnotationScanner {
     }
 
     private static String jsonStr(String s) {
-        if (s == null) return "null";
-        return "\"" + ServiceUtils.escapeJson(s) + "\"";
+        return JsonHelper.toJson(s);
     }
 
     // ==================================================================
