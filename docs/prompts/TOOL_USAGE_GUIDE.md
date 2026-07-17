@@ -114,6 +114,7 @@ debugger_status()
 debugger_traces()
 debugger_modules()
 debugger_memory_maps(...)
+copy_debugger_memory_to_program(...)
 debugger_static_to_dynamic(...)
 debugger_set_breakpoint(...)
 debugger_resume()
@@ -130,11 +131,7 @@ Before setting a runtime breakpoint, obtain the module/trace state and use
 `debugger_static_to_dynamic`. After a stop, re-read status rather than assuming
 the last action completed synchronously.
 
-Generic selected-offer/PID attachment is available through `debugger_attach`, `debugger_wait_for_stop` provides bounded event-driven waiting, and `debugger_memory_maps` enumerates current trace regions. The planned addition is:
-
-- `copy_debugger_memory_to_program`, creating/populating a program block from a trace range.
-
-Do not invent the remaining tool names or emulate them by repeatedly calling unrelated tools. If a workflow requires one today, record the limitation.
+Generic selected-offer/PID attachment is available through `debugger_attach`, `debugger_wait_for_stop` provides bounded event-driven waiting, and `debugger_memory_maps` enumerates current trace regions. Use `copy_debugger_memory_to_program` to create and populate a static program block from a fully known range in the active trace.
 
 ## 7. Wine context
 

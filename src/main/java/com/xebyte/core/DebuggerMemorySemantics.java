@@ -8,13 +8,30 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
+import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressRange;
+import ghidra.program.model.address.AddressSet;
+import ghidra.program.model.address.AddressSetView;
+import ghidra.program.model.mem.Memory;
+import ghidra.program.model.mem.MemoryBlock;
+import ghidra.program.model.listing.Program;
+import ghidra.trace.model.memory.TraceMemoryManager;
 import ghidra.trace.model.memory.TraceMemoryRegion;
+import ghidra.trace.model.memory.TraceMemoryState;
 import ghidra.trace.model.target.TraceObject;
 import ghidra.trace.model.target.TraceObjectValue;
 import ghidra.trace.model.thread.TraceProcess;
+import ghidra.util.task.TaskMonitor;
 
 final class DebuggerMemorySemantics {
+    interface ProgramBlockWriter {
+        MemoryBlock create(Program program, String name, Address start, long length,
+                           boolean read, boolean write, boolean execute,
+                           List<byte[]> chunks) throws Exception;
+    }
+
+    record RegionRange<T>(T region, AddressRange range) {}
+
     record RegionInfo(
             String name,
             String path,
@@ -115,5 +132,85 @@ final class DebuggerMemorySemantics {
             result.add(item);
         }
         return List.copyOf(result);
+    }
+
+    static TraceMemoryRegion requireContainingRegion(
+            Collection<? extends TraceMemoryRegion> regions,
+            long snap,
+            AddressRange source) {
+        List<RegionRange<TraceMemoryRegion>> ranges = regions.stream()
+                .map(region -> new RegionRange<>(region, region.getRange(snap)))
+                .toList();
+        return requireContainingRegionRange(ranges, source);
+    }
+
+    static <T> T requireContainingRegionRange(
+            Collection<RegionRange<T>> regions,
+            AddressRange source) {
+        List<RegionRange<T>> matches = regions.stream()
+                .filter(region -> region.range() != null &&
+                        region.range().contains(source.getMinAddress()) &&
+                        region.range().contains(source.getMaxAddress()))
+                .toList();
+        if (matches.size() != 1) {
+            throw new IllegalArgumentException(
+                    "Source range must be contained in exactly one current memory region; " +
+                            "matched " + matches.size());
+        }
+        return matches.get(0).region();
+    }
+
+    static void requireKnown(TraceMemoryManager memory, long snap, AddressRange source) {
+        AddressSet requested = new AddressSet(source);
+        AddressSetView known = memory.getAddressesWithState(
+                snap, requested, state -> state == TraceMemoryState.KNOWN);
+        requireKnown(known, source);
+    }
+
+    static void requireKnown(AddressSetView known, AddressRange source) {
+        if (!known.contains(source.getMinAddress(), source.getMaxAddress())) {
+            throw new IllegalArgumentException(
+                    "Source range contains bytes not known at the current trace snapshot");
+        }
+    }
+
+    static void requireDestinationFree(Memory memory, AddressRange destination) {
+        if (!memory.intersect(new AddressSet(destination)).isEmpty()) {
+            throw new IllegalArgumentException(
+                    "Destination range overlaps existing program memory");
+        }
+    }
+
+    static ProgramBlockWriter programBlockWriter(TaskMonitor monitor) {
+        return (program, name, start, length, read, write, execute, chunks) -> {
+            int transaction = program.startTransaction("Copy debugger memory");
+            boolean commit = false;
+            try {
+                MemoryBlock block = program.getMemory().createInitializedBlock(
+                        name, start, length, (byte) 0, monitor, false);
+                long offset = 0;
+                for (byte[] chunk : chunks) {
+                    int written = block.putBytes(start.addNoWrap(offset), chunk);
+                    if (written != chunk.length) {
+                        throw new IllegalStateException(
+                                "Short program-memory write: expected " + chunk.length +
+                                        " bytes, wrote " + written);
+                    }
+                    offset = Math.addExact(offset, chunk.length);
+                }
+                if (offset != length) {
+                    throw new IllegalStateException(
+                            "Chunk length mismatch: expected " + length +
+                                    " bytes, received " + offset);
+                }
+                block.setRead(read);
+                block.setWrite(write);
+                block.setExecute(execute);
+                commit = true;
+                return block;
+            } finally {
+                program.endTransaction(transaction, commit);
+            }
+        };
     }
 }

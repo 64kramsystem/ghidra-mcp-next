@@ -1,7 +1,7 @@
 {
   "version": "5.15.0",
   "description": "GhidraMCP REST API Endpoint Specification",
-  "total_endpoints": 232,
+  "total_endpoints": 233,
   "categories": {
     "listing": "List program data",
     "getter": "Get specific data",
@@ -460,6 +460,19 @@
         "size"
       ],
       "description": "Convert number between bases"
+    },
+    {
+      "path": "/copy_debugger_memory_to_program",
+      "method": "POST",
+      "category": "debugger",
+      "params": [
+        "source_address",
+        "length",
+        "program",
+        "destination_address",
+        "block_name"
+      ],
+      "description": "Create and populate a program memory block from the active trace"
     },
     {
       "path": "/create_array_type",

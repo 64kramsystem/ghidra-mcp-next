@@ -23,6 +23,24 @@ public class DebuggerTransferSemanticsTest extends TestCase {
         assertInvalid(() -> DebuggerTransferSemantics.planChunks(1, 0));
     }
 
+    public void testCheckedRangeUsesInclusiveEnd() {
+        assertEquals(new DebuggerTransferSemantics.OffsetRange(0x1000, 0x101f, 0x20),
+                DebuggerTransferSemantics.checkedRange(0x1000, 0x20));
+    }
+
+    public void testCheckedRangeRejectsInvalidLengthAndOverflow() {
+        assertInvalid(() -> DebuggerTransferSemantics.checkedRange(0x1000, 0));
+        assertInvalid(() -> DebuggerTransferSemantics.checkedRange(0x1000, -1));
+        assertInvalid(() -> DebuggerTransferSemantics.checkedRange(Long.MAX_VALUE, 2));
+    }
+
+    public void testChunkPlanUsesExact4096Boundaries() {
+        var chunks = DebuggerTransferSemantics.planChunks(8192, 4096);
+        assertEquals(2, chunks.size());
+        assertEquals(new DebuggerTransferSemantics.Chunk(0, 4096), chunks.get(0));
+        assertEquals(new DebuggerTransferSemantics.Chunk(4096, 4096), chunks.get(1));
+    }
+
     private void assertInvalid(Runnable action) {
         try {
             action.run();

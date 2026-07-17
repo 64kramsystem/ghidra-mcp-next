@@ -17,6 +17,7 @@ FILEZILLA_ENDPOINTS = {
 }
 
 TRACE_RMI_ENDPOINTS = {
+    "/copy_debugger_memory_to_program",
     "/debugger/launch_offers", "/debugger/launch", "/debugger/attach",
     "/debugger/wait_for_stop",
     "/debugger/memory_maps",
@@ -54,6 +55,7 @@ REMOVED_DOCUMENTATION_ENDPOINTS = {
 }
 
 TRACE_RMI_CONTRACT_TOOLS = {
+    "copy_debugger_memory_to_program",
     "debugger/launch_offers",
     "debugger/launch",
     "debugger/attach",
@@ -105,6 +107,20 @@ def test_filezilla_workflow_endpoints_are_cataloged():
 
 def test_trace_rmi_workflow_endpoints_are_cataloged():
     assert TRACE_RMI_ENDPOINTS <= _catalog_paths()
+
+
+def test_copy_memory_tool_keeps_exact_public_name():
+    from bridge_mcp_ghidra import _parse_schema
+
+    schema = _parse_schema({"tools": [{
+        "path": "/copy_debugger_memory_to_program",
+        "method": "POST",
+        "category": "debugger",
+        "params": [],
+    }]})
+    assert [tool["name"] for tool in schema] == [
+        "copy_debugger_memory_to_program"
+    ]
 
 
 def test_local_comparison_endpoints_are_cataloged():

@@ -34,10 +34,13 @@ public class DebuggerServiceContractTest extends TestCase {
                 attach.indexOf("DebuggerCoordinates postAttachCoordinates"));
     }
 
-    public void testRemainingFutureEndpointsAreNotFalselyAdvertised() throws Exception {
+    public void testCopyMemoryUsesExactTopLevelToolName() throws Exception {
         String source = Files.readString(Path.of(System.getProperty("user.dir"),
                 "src/main/java/com/xebyte/core/DebuggerService.java"));
-        assertFalse(source.contains("/debugger/copy_memory_to_program"));
+        assertTrue(source.contains("path = \"/copy_debugger_memory_to_program\""));
+        assertTrue(source.contains("category = \"debugger\""));
+        assertFalse(source.contains(
+                "path = \"/debugger/copy_debugger_memory_to_program\""));
     }
 
     public void testWaitForStopUsesEventDrivenStateWaiter() throws Exception {

@@ -39,7 +39,7 @@ mvn clean package assembly:single -DskipTests
 
 ## Maintenance rules
 
-- Describe local GUI/headless projects and the current 232-endpoint catalog.
+- Describe local GUI/headless projects and the current 233-endpoint catalog.
 - Use exact exposed MCP names, especially the 21 `debugger_*` TraceRMI tools.
 - Clearly distinguish implemented attach/wait/map behavior from the remaining planned debugger addition.
 - Treat BSim as optional and explicitly configured.

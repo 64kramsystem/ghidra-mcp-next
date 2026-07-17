@@ -83,7 +83,7 @@ def test_docs_name_the_retained_dynamic_contract():
     assert "There is no generic TraceRMI attach endpoint" not in text
 
 
-def test_docs_name_the_remaining_debugger_gap():
+def test_docs_name_the_trace_memory_copy_tool():
     text = _maintained_text()
     assert "copy_debugger_memory_to_program" in text
 

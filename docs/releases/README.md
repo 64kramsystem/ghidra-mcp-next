@@ -6,7 +6,7 @@ historical records, not instructions for the current tree.
 
 The current unreleased architecture is local-first:
 
-- 232 cataloged endpoints served by the Ghidra GUI plugin or headless server;
+- 233 cataloged endpoints served by the Ghidra GUI plugin or headless server;
 - Maven for Java builds and `uv` for Python packaging and tests;
 - local Ghidra projects and explicit multi-program selection;
 - Ghidra TraceRMI debugging through the 21 `debugger_*` tools; and
