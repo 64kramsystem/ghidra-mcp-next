@@ -311,8 +311,7 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
         boolean udsOk = false;
         if (udsEnabled) {
             try {
-                ServerManager.getInstance().registerTool(
-                    tool, GuiProjectService::registerUdsEndpoints);
+                ServerManager.getInstance().registerTool(tool);
                 udsOk = true;
                 Msg.info(this, "GhidraMCP UDS server active at " + ServerManager.getInstance().getSocketPath());
             } catch (IOException e) {
@@ -397,8 +396,7 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
                 StringBuilder started = new StringBuilder();
                 if (uds && !ServerManager.getInstance().isRunning()) {
                     try {
-                        ServerManager.getInstance().registerTool(
-                            tool, GuiProjectService::registerUdsEndpoints);
+                        ServerManager.getInstance().registerTool(tool);
                         started.append("UDS: ").append(ServerManager.getInstance().getSocketPath());
                     } catch (IOException e) {
                         Msg.showError(getClass(), null, "GhidraMCP", "Failed to start UDS server: " + e.getMessage());
@@ -541,7 +539,7 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
             listingService, functionService, commentService, symbolLabelService,
             xrefCallGraphService, dataTypeService, analysisService,
             binaryComparisonService, malwareSecurityService, programScriptService,
-            emulationService, debuggerService);
+            emulationService, debuggerService, guiProjectService);
 
         for (EndpointDef ep : scanner.getEndpoints()) {
             server.createContext(ep.path(), safeHandler(exchange -> {
@@ -668,38 +666,6 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
         // — selection is a UI concept that has no meaning there).
         server.createContext("/get_current_selection", safeHandler(exchange -> {
             sendResponse(exchange, getCurrentSelection());
-        }));
-
-        // /create_project — create and activate a Ghidra project through
-        // the FrontEnd APIs without requiring GUI interaction.
-        server.createContext("/create_project", safeHandler(exchange -> {
-            Map<String, Object> params = parseJsonParams(exchange);
-            String parentDir = params.get("parentDir") != null
-                ? params.get("parentDir").toString() : null;
-            String name = params.get("name") != null
-                ? params.get("name").toString() : null;
-            sendResponse(exchange, guiProjectService.createProject(parentDir, name));
-        }));
-
-        // /open_project — open (or switch to) a Ghidra project from the
-        // FrontEnd plugin programmatically. Mirrors the headless server's
-        // /open_project route but additionally supports an optional
-        // `headless` boolean (default true) that controls whether a
-        // CodeBrowser window is auto-launched for `program` after the
-        // project opens. Without the flag, the project is loaded into the
-        // FrontEnd tool only — useful for automation that wants to access
-        // programs via the `program` query parameter without spawning UI.
-        //
-        // Body: { "path": <.gpr or project dir>, "headless": true|false,
-        //         "program": "<DomainFile path to launch in CodeBrowser>" }
-        server.createContext("/open_project", safeHandler(exchange -> {
-            Map<String, Object> params = parseJsonParams(exchange);
-            String projectPath = params.get("path") != null ? params.get("path").toString() : null;
-            boolean headless = params.get("headless") == null
-                || Boolean.parseBoolean(String.valueOf(params.get("headless")));
-            String programToLaunch = params.get("program") != null ? params.get("program").toString() : null;
-            sendResponse(exchange,
-                guiProjectService.openProject(projectPath, headless, programToLaunch));
         }));
 
         // GET_DATA_TYPE_SIZE - Get the size in bytes of a data type (not yet in service layer)

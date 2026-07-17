@@ -1,0 +1,69 @@
+package com.xebyte.offline;
+
+import com.xebyte.core.AnnotationScanner;
+import com.xebyte.core.GuiProjectService;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Map;
+import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+
+import junit.framework.TestCase;
+
+/** Guards the live GUI schemas served by both TCP and Unix sockets. */
+public class GuiTransportSchemaParityTest extends TestCase {
+    private static final Path ROOT = Path.of(System.getProperty("user.dir"));
+
+    public void testGuiProjectLifecycleEndpointsAreAnnotationScanned() {
+        AnnotationScanner scanner = new AnnotationScanner(
+                new GuiProjectService(() -> null));
+        Map<String, AnnotationScanner.ToolDescriptor> tools = scanner.getDescriptors()
+                .stream()
+                .collect(Collectors.toMap(
+                        AnnotationScanner.ToolDescriptor::path,
+                        Function.identity()));
+
+        assertTrue("GUI schema must advertise /create_project",
+                tools.containsKey("/create_project"));
+        assertTrue("GUI schema must advertise /open_project",
+                tools.containsKey("/open_project"));
+        assertEquals(Set.of("parentDir", "name"),
+                parameterNames(tools.get("/create_project")));
+        assertEquals(Set.of("path", "headless", "program"),
+                parameterNames(tools.get("/open_project")));
+        assertEquals("headless", tools.get("/create_project").category());
+        assertEquals("headless", tools.get("/open_project").category());
+    }
+
+    public void testTcpScannerIncludesGuiProjectLifecycleService() throws IOException {
+        String source = Files.readString(ROOT.resolve(
+                "src/main/java/com/xebyte/GhidraMCPPlugin.java"));
+        assertTrue("TCP scanner must include GuiProjectService so schema and routes agree",
+                source.matches("(?s).*new AnnotationScanner\\(programProvider,.*"
+                        + "debuggerService,\\s*guiProjectService\\).*"));
+    }
+
+    public void testUdsScannerIncludesProtectedGuiServices() throws IOException {
+        String source = Files.readString(ROOT.resolve(
+                "src/main/java/com/xebyte/core/ServerManager.java"));
+        assertTrue("UDS must construct EmulationService", source.contains(
+                "EmulationService emulationService = new EmulationService"));
+        assertTrue("UDS must construct DebuggerService", source.contains(
+                "DebuggerService debuggerService = new DebuggerService"));
+        assertTrue("UDS must construct GuiProjectService", source.contains(
+                "GuiProjectService guiProjectService = new GuiProjectService"));
+        assertTrue("UDS scanner must advertise emulation, debugger, and project tools",
+                source.matches("(?s).*new AnnotationScanner\\(programProvider,.*"
+                        + "programScriptService,\\s*emulationService,\\s*debuggerService,\\s*"
+                        + "guiProjectService\\).*"));
+    }
+
+    private Set<String> parameterNames(AnnotationScanner.ToolDescriptor tool) {
+        return tool.params().stream()
+                .map(AnnotationScanner.ParamDescriptor::name)
+                .collect(Collectors.toSet());
+    }
+}

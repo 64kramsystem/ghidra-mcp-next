@@ -74,7 +74,9 @@ mvn clean package assembly:single -DskipTests
 In a CodeBrowser window, enable **GhidraMCP** through **File > Configure**, then
 start the server with **Tools > GhidraMCP > Start MCP Server**. The default TCP
 endpoint is `http://127.0.0.1:8089`; Unix-domain sockets are also enabled on
-supported local hosts to distinguish multiple GUI instances.
+supported local hosts to distinguish multiple GUI instances. The GUI TCP and
+Unix-socket transports publish the same discovered tool schema, including
+local project lifecycle, emulation, and TraceRMI tools.
 
 ## Connect an MCP client
 

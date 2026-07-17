@@ -47,8 +47,7 @@ public class ServerManager {
 
     private ServerManager() {}
 
-    public synchronized void registerTool(PluginTool tool,
-            java.util.function.Consumer<UdsHttpServer> guiEndpoints) throws IOException {
+    public synchronized void registerTool(PluginTool tool) throws IOException {
         String toolId = String.valueOf(System.identityHashCode(tool));
         tools.put(toolId, tool);
         activeToolId.compareAndSet(null, toolId);
@@ -70,13 +69,17 @@ public class ServerManager {
             AnalysisService analysisService = new AnalysisService(programProvider, ts, functionService);
             MalwareSecurityService malwareSecurityService = new MalwareSecurityService(programProvider, ts);
             ProgramScriptService programScriptService = new ProgramScriptService(programProvider, ts);
+            EmulationService emulationService = new EmulationService(programProvider, ts);
+            DebuggerService debuggerService = new DebuggerService(programProvider, ts, tool);
+            GuiProjectService guiProjectService = new GuiProjectService(this::getActiveTool);
 
             AnnotationScanner scanner = new AnnotationScanner(programProvider,
                 listingService, functionService, commentService, symbolLabelService,
                 xrefCallGraphService, dataTypeService, analysisService,
-                binaryComparisonService, malwareSecurityService, programScriptService);
+                binaryComparisonService, malwareSecurityService, programScriptService,
+                emulationService, debuggerService, guiProjectService);
 
-            startServer(scanner, guiEndpoints);
+            startServer(scanner);
         }
     }
 
@@ -112,8 +115,7 @@ public class ServerManager {
         return server != null ? server.getSocketPath() : null;
     }
 
-    private void startServer(AnnotationScanner scanner,
-            java.util.function.Consumer<UdsHttpServer> guiEndpoints) throws IOException {
+    private void startServer(AnnotationScanner scanner) throws IOException {
         Path socketDir = getSocketDir();
         Files.createDirectories(socketDir);
         hardenSocketDir(socketDir);
@@ -150,11 +152,6 @@ public class ServerManager {
                 sendJsonResponse(exchange, Response.ok(buildInstanceInfo()).toJson());
             } catch (Exception ignored) {}
         });
-
-        // Register GUI-specific endpoints
-        if (guiEndpoints != null) {
-            guiEndpoints.accept(server);
-        }
 
         server.start();
     }

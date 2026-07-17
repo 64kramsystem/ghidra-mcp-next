@@ -20,6 +20,16 @@ Complete version history for the Ghidra MCP Server project.
 - Restricted MCP script execution to a reviewed generic allowlist and made
   BSim scripts require an explicit local database URL.
 
+### Fixed
+
+- Kept the live GUI TCP and Unix-socket schemas aligned: both now advertise
+  local project creation/opening plus the retained emulation and 18 TraceRMI
+  debugger tools. Project lifecycle routes are annotation-scanned so their
+  handlers and schema metadata cannot drift apart.
+- Mirrored Ghidra's FrontEnd project-close notification when MCP switches local
+  projects, preventing stale listeners from treating the replacement as a
+  second active project.
+
 ### Removed
 
 - Gradle, Docker, the alternate build-backend selector, and their CI paths.

@@ -2,6 +2,7 @@ package com.xebyte.core;
 
 import java.io.File;
 import java.io.IOException;
+import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
@@ -15,6 +16,7 @@ import ghidra.framework.main.AppInfo;
 import ghidra.framework.main.FrontEndTool;
 import ghidra.framework.model.DomainFile;
 import ghidra.framework.model.Project;
+import ghidra.framework.model.ProjectListener;
 import ghidra.framework.model.ProjectLocator;
 import ghidra.framework.model.ProjectManager;
 import ghidra.framework.plugintool.PluginTool;
@@ -28,6 +30,10 @@ public final class GuiProjectService {
         Project getActiveProject();
 
         void setActiveProject(Project project);
+
+        default void projectClosed(Project project) {
+            // Test controllers and non-FrontEnd implementations have no listeners.
+        }
     }
 
     private final Supplier<PluginTool> toolSupplier;
@@ -73,42 +79,45 @@ public final class GuiProjectService {
             public void setActiveProject(Project project) {
                 frontEnd.setActiveProject(project);
             }
+
+            @Override
+            public void projectClosed(Project project) {
+                notifyProjectClosed(frontEnd, project);
+            }
         };
     }
 
-    /** Register project lifecycle endpoints on the shared UDS server. */
-    public static void registerUdsEndpoints(UdsHttpServer server) {
-        GuiProjectService service = new GuiProjectService(
-            () -> ServerManager.getInstance().getActiveTool());
-        registerUdsEndpoints(server, service);
+    private static void notifyProjectClosed(FrontEndTool frontEnd, Project project) {
+        try {
+            // Ghidra 12.1.2 keeps listener enumeration package-private. Its own
+            // FileActionManager calls projectClosed after Project.close(), but
+            // ProjectManager's public API does not. Mirror that required step so
+            // RecoverySnapshotMgr and other FrontEnd listeners release the old
+            // project before setActiveProject advertises the replacement.
+            Method getListeners = FrontEndTool.class.getDeclaredMethod("getListeners");
+            getListeners.setAccessible(true);
+            Object listeners = getListeners.invoke(frontEnd);
+            if (listeners instanceof Iterable<?> iterable) {
+                for (Object listener : iterable) {
+                    ((ProjectListener) listener).projectClosed(project);
+                }
+            }
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            throw new IllegalStateException(
+                "Unable to notify FrontEnd project listeners of project closure", e);
+        }
     }
 
-    static void registerUdsEndpoints(UdsHttpServer server, GuiProjectService service) {
-        server.createContext("/create_project", exchange -> {
-            Map<String, Object> params = JsonHelper.parseBody(exchange.getRequestBody());
-            String parentDir = stringParam(params, "parentDir");
-            String name = stringParam(params, "name");
-            ServerManager.sendJsonResponse(exchange,
-                service.createProject(parentDir, name).toJson());
-        });
-
-        server.createContext("/open_project", exchange -> {
-            Map<String, Object> params = JsonHelper.parseBody(exchange.getRequestBody());
-            String projectPath = stringParam(params, "path");
-            boolean headless = params.get("headless") == null
-                || Boolean.parseBoolean(String.valueOf(params.get("headless")));
-            String program = stringParam(params, "program");
-            ServerManager.sendJsonResponse(exchange,
-                service.openProject(projectPath, headless, program));
-        });
-    }
-
-    private static String stringParam(Map<String, Object> params, String name) {
-        Object value = params.get(name);
-        return value != null ? value.toString() : null;
-    }
-
-    public Response createProject(String parentDir, String name) {
+    @McpTool(path = "/create_project", method = "POST",
+        description = "Create and activate a new local Ghidra project",
+        category = "headless")
+    public Response createProject(
+            @Param(value = "parentDir", source = ParamSource.BODY,
+                description = "Existing local directory that will contain the project")
+            String parentDir,
+            @Param(value = "name", source = ParamSource.BODY,
+                description = "Name for the new Ghidra project")
+            String name) {
         if (parentDir == null || parentDir.isBlank() || name == null || name.isBlank()) {
             return error("invalid_request", "parentDir and name are required");
         }
@@ -243,6 +252,7 @@ public final class GuiProjectService {
                         // Preserve the existing best-effort save policy.
                     }
                     currentProject.close();
+                    activeProjects.projectClosed(currentProject);
                     previousClosed[0] = true;
                     activeProjects.setActiveProject(null);
                     AppInfo.setActiveProject(null);
@@ -298,6 +308,24 @@ public final class GuiProjectService {
         }
         json.append("}");
         return json.toString();
+    }
+
+    @McpTool(path = "/open_project", method = "POST",
+        description = "Open or switch to an existing local Ghidra project",
+        category = "headless")
+    public Response openProjectEndpoint(
+            @Param(value = "path", source = ParamSource.BODY,
+                description = "Local .gpr file or project directory")
+            String projectPath,
+            @Param(value = "headless", source = ParamSource.BODY,
+                defaultValue = "true",
+                description = "Keep the project in the FrontEnd without launching CodeBrowser")
+            boolean headless,
+            @Param(value = "program", source = ParamSource.BODY,
+                defaultValue = "",
+                description = "Optional project program to open when headless is false")
+            String programToLaunch) {
+        return Response.text(openProject(projectPath, headless, programToLaunch));
     }
 
     /** Launch a CodeBrowser, optionally opening a project file. */
@@ -399,6 +427,7 @@ public final class GuiProjectService {
                     // Match the existing /open_project best-effort save policy.
                 }
                 current.close();
+                activeProjects.projectClosed(current);
                 clearOnFailure = true;
                 activeProjects.setActiveProject(null);
                 AppInfo.setActiveProject(null);
@@ -442,6 +471,7 @@ public final class GuiProjectService {
         if (failed != null && locator.equals(failed.getProjectLocator())) {
             try {
                 failed.close();
+                activeProjects.projectClosed(failed);
             } catch (Exception ignored) {
                 // Keep the failure response; disk artifacts are intentionally preserved.
             }
