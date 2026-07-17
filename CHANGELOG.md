@@ -6,121 +6,54 @@ Complete version history for the Ghidra MCP Server project.
 
 ## Unreleased
 
-### Added
-
-- **Create and connect a Ghidra project directly through MCP.** The always-
-  available `create_project(parent_dir, name, instance?)` management tool can
-  bootstrap a running GUI instance with no open project, make the new project
-  active, register its dynamic tools, emit `tools/list_changed`, and make
-  `import_file` callable immediately. Instance discovery now merges TCP and
-  UDS records with PID-safe deduplication and exact selectors. The GUI plugin
-  serves `/create_project` over both transports, and `/open_project` now has
-  matching UDS support. Failed GUI creation preserves the previous bridge
-  target; schema-refresh failures return explicit partial success while
-  keeping the new project active and clearing stale tools.
-- **Coverage gates and baselines across all test tiers.**
-  - CI unit job now runs with coverage and a `--cov-fail-under=46` ratchet
-    (baseline 53%); the offline fun-doc job adds `--cov=fun-doc` with a floor of
-    26 (baseline 29%). Both upload to Codecov. The floor is a ratchet — it sits
-    a few points below the measured baseline to absorb platform/version skew;
-    raise it as coverage improves, never lower it.
-  - JaCoCo wired into Maven (`jacoco-maven-plugin` 0.8.13, report on every
-    `mvn test`, `-Djacoco.skip=true` to disable) — first-ever Java coverage
-    baseline (6.5% line, offline tier). CI uploads the report artifact.
-  - New `python-tests-windows` CI job runs the unit suite on windows-latest so
-    both halves of every `os.name == "nt"` branch (AF_UNIX gating, drive sweep)
-    execute on each PR; wired into `build-status`.
-
-### Fixed
-
-- **Thunk no-return metadata repair.** `set_function_no_return` now synchronizes the requested flag across every thunk hop and its terminal target instead of relying on Ghidra's asymmetric delegated setter/local getter behavior. Successful responses include verified `function_no_return` and `terminal_no_return` values, allowing later flow repair to restore valid call fallthrough.
-- **WOW64 exception-filter gaps found in review of #366/#367.** #366 and #367
-  shipped with no test coverage of `_on_exception`, `_our_bp_addrs`, or the
-  fast path, and their design docs assumed contradictory models of how a
-  planted breakpoint's INT3 is delivered on WOW64 (first-chance EXCEPTION vs.
-  the separate BREAKPOINT event) with no live run confirming either. Added
-  `TestOnExceptionFilter`/`TestDetachClearsBreakpointBookkeeping` in
-  `tests/unit/test_debugger_engine.py` pinning the fast path, WX86 code
-  handling, ret_catch recognition, and fault capture, so a future change
-  can't silently regress either PR's fix. Also fixed two real bugs the
-  contradiction surfaced: (1) `_on_exception`'s address match now queries
-  dbgeng's *live* breakpoint list (`_live_bp_addrs()`) instead of the
-  `_our_bp_addrs` shadow set, which went stale the moment a oneshot
-  breakpoint fired (dbgeng auto-drops the object with no
-  `remove_breakpoint()` call to clean up the shadow entry) — a later real
-  exception at the reused address would otherwise be misclassified as ours
-  and hidden from the target; (2) `detach()` now clears
-  `_our_bp_addrs`/`_bp_id_to_addr`/`_call_guard`/`_stepping`, which
-  previously survived a detach and could misclassify the next attached
-  process's exceptions. **Live-verified end to end on genuine WOW64
-  (2026-07-05)**: compiled a synthetic, disposable x86 process (confirmed
-  PE machine type 0x14C) looping on `kernel32!SleepEx`. Passive path:
-  `go_wait` reported repeated genuine hits under the merged filter even
-  without registering `events.breakpoint()` — dbgeng halts execution at a
-  recognized breakpoint independent of the interest mask, so the fast path
-  does not swallow ordinary passive-capture breakpoints. Guarded-call path:
-  with the thread stopped at that hit, `call_function` (defaulted
-  `ret_catch`) returned cleanly (`returned_to == ret_catch`, not faulted),
-  and passive capture kept working afterward with no run-control poisoning.
-  See the docstring on `_on_exception` and the `reference-debugger-sim-runs`
-  memory.
-- **fun-doc storage bootstrap race.** `_get_storage_repo()` was an unlocked
-  check-then-build singleton and `db/migrate.py` recorded schema versions
-  with a bare INSERT, so two threads bootstrapping the same fresh SQLite
-  (worker/watchdog + main) could die with `UNIQUE constraint failed:
-  schema_versions.version`. Now double-check-locked, with
-  `INSERT OR IGNORE` / `ON CONFLICT DO NOTHING` version recording. `migrate()`
-  is additionally serialized with a module-level lock: the PRAGMA-based
-  `ADD COLUMN` skip can't win a cross-connection TOCTOU race (two threads both
-  read an empty schema and race the same `ALTER TABLE ADD COLUMN`, the loser
-  dying with "duplicate column name"), so the lock lets the second caller
-  observe the first's committed schema and no-op. 3 race-regression tests in
-  `test_migrate_sqlite_idempotent.py`.
-- **libclang/clang version mismatch.** The `clang` bindings (21.x) had outrun
-  the `libclang` DLL wheel (18.1.1, the newest published on PyPI), breaking
-  `benchmark/extract_truth.py` with `clang_getOffsetOfBase not found`. Both are
-  now pinned to LLVM 18.1.x (`clang>=18.1.8,<19`, `libclang>=18.1.1,<19`); the
-  3 erroring extract-truth tests pass.
-- **Windows cross-drive UDS discovery + AF_UNIX fallback.** On Windows the
-  plugin's socket-dir fallback (`/tmp`, drive-relative) resolved against the
-  JVM's working drive (e.g. `F:\tmp` when Ghidra runs from F:) while the bridge
-  scanned its own drive's `\tmp`, so `list_instances` always reported "No
-  running Ghidra instances" and the bridge never auto-connected after a Ghidra
-  restart. Three-part fix:
-  - Plugin: `ServerManager.getSocketDir()` now falls back to `java.io.tmpdir`
-    (honors `%TEMP%`) before the literal `/tmp`, giving both sides an absolute,
-    agreed-on location.
-  - Bridge: `get_socket_dir_candidates()` sweeps every mounted drive root for
-    `<drive>:\tmp\ghidra-mcp-<user>` (backward compat with older JARs).
-  - Bridge: on Windows CPython, which doesn't expose `socket.AF_UNIX`
-    (python/cpython#77589), discovery enriches socket-file hits with
-    project/programs/url fetched over the plugin's TCP listener (joined by PID),
-    and `connect_instance` / startup auto-connect / post-restart reconnect all
-    route the connection over that TCP url instead of failing the UDS handshake.
-  - Tests: real-socket transport tests (`test_transport_network.py`) and bridge
-    CLI / DNS-rebinding tests (`test_bridge_cli.py`), plus
-    `ServerManagerSocketDirTest.java` for the plugin fallback.
-
 ### Changed
 
-- **Bridge restructured into a package + uv-native packaging.** The historical
-  single-file `bridge_mcp_ghidra.py` (~2,270 lines) is split into a focused-module
-  package under `python/bridge_mcp_ghidra/` (`config`, `state`, `server`,
-  `validation`, `transport`, `discovery`, `schema`, `dispatch`, `registry`,
-  `static_tools`, `debugger`, `cli`). Behavior is unchanged; cross-module calls
-  are module-qualified and mutable runtime state lives in `state.py`.
-- **uv is now the Python toolchain.** A root `pyproject.toml` + `uv.lock` define
-  the shippable `ghidra-mcp-bridge` wheel (console script `bridge-mcp-ghidra`)
-  and PEP 735 dependency groups (`test`, `debugger`, `fun-doc`, `dev`). The
-  `requirements*.txt` files and `pytest.ini` were removed (folded into
-  `pyproject.toml`); `tools.setup` installs deps via `uv sync` and deploys the
-  built wheel.
-- **CI builds and attaches a wheel.** Release / pre-release workflows build the
-  bridge wheel with `uv build` and publish `ghidra_mcp_bridge-X.Y.Z-py3-none-any.whl`
-  as the GitHub Release asset instead of the raw bridge script. Test/lint jobs run
-  through uv.
-- **Run the bridge with** `uv run bridge-mcp-ghidra` or `python -m bridge_mcp_ghidra`
-  (the old `python bridge_mcp_ghidra.py` invocation is gone).
+- Streamlined ghidra-mcp around its local GUI/headless analysis stack, with
+  229 cataloged endpoints, schema discovery, TCP/UDS transports, and explicit
+  multi-program selection.
+- Made Maven the only Java build backend while retaining the uv-packaged
+  Python bridge and setup commands.
+- Kept caller-supplied annotations unrestricted and retained generated-symbol
+  filtering without repository-wide naming-policy enforcement.
+- Normalized the retained Ghidra TraceRMI surface around the 18
+  `debugger_*` tools and `debugger_resume`.
+- Restricted MCP script execution to a reviewed generic allowlist and made
+  BSim scripts require an explicit local database URL.
+
+### Removed
+
+- Gradle, Docker, the alternate build-backend selector, and their CI paths.
+- The fun-doc/performance stack, documentation archive/propagation/indexing
+  services, repository-server administration/version-control endpoints, the
+  standalone dbgeng HTTP proxy, naming-policy configuration and prompt
+  automation, application-specific scripts, remote BSim defaults, and
+  obsolete documentation describing those surfaces.
+
+### Preserved
+
+- Local project creation/import/save/switch workflows in GUI and headless
+  modes, including the tools needed for local FileZilla reverse engineering.
+- Ghidra TraceRMI and ghidratrace workflows used for Wine debugging.
+- Local hash, signature, fuzzy-match, diff, and optional explicitly configured
+  local BSim capabilities.
+- SecurityConfig script gating and the seams needed for future debugger
+  extensions.
+
+### Planned
+
+- Generic TraceRMI attach using a selected launch offer and PID.
+- `debugger_wait_for_stop(timeout_ms)`.
+- Process memory-map enumeration.
+- `copy_debugger_memory_to_program`, creating and populating a block from
+  a trace range.
+
+These four debugger additions are not implemented in this release.
+
+### Testing
+
+- Added protected-workflow, negative architecture, endpoint parity, packaging,
+  script-allowlist, dynamic-debugger, local-comparison, and documentation
+  contracts across the Python and offline Java suites.
 
 ---
 

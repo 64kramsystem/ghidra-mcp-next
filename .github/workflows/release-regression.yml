@@ -70,11 +70,11 @@ jobs:
         shell: powershell
         run: |
           uv python install 3.13
-          uv sync --python 3.13 --group test --group fun-doc
+          uv sync --python 3.13 --group test
 
       - name: Build Benchmark.dll
         shell: powershell
-        run: uv run python fun-doc\benchmark\build.py
+        run: uv run python tests\fixtures\ghidra_benchmark\build.py
 
       - name: Install Ghidra jars
         shell: powershell
@@ -82,7 +82,7 @@ jobs:
 
       - name: Build extension
         shell: powershell
-        run: uv run python -m tools.setup build
+        run: mvn clean package assembly:single -DskipTests
 
       - name: Deploy and run release regression
         shell: powershell

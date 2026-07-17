@@ -66,8 +66,7 @@ public class ServerManager {
             FunctionService functionService = new FunctionService(programProvider, ts);
             XrefCallGraphService xrefCallGraphService = new XrefCallGraphService(programProvider, ts);
             DataTypeService dataTypeService = new DataTypeService(programProvider, ts);
-            DocumentationHashService documentationHashService = new DocumentationHashService(programProvider, ts, new BinaryComparisonService());
-            documentationHashService.setFunctionService(functionService);
+            BinaryComparisonService binaryComparisonService = new BinaryComparisonService(programProvider, ts);
             AnalysisService analysisService = new AnalysisService(programProvider, ts, functionService);
             MalwareSecurityService malwareSecurityService = new MalwareSecurityService(programProvider, ts);
             ProgramScriptService programScriptService = new ProgramScriptService(programProvider, ts);
@@ -75,7 +74,7 @@ public class ServerManager {
             AnnotationScanner scanner = new AnnotationScanner(programProvider,
                 listingService, functionService, commentService, symbolLabelService,
                 xrefCallGraphService, dataTypeService, analysisService,
-                documentationHashService, malwareSecurityService, programScriptService);
+                binaryComparisonService, malwareSecurityService, programScriptService);
 
             startServer(scanner, guiEndpoints);
         }

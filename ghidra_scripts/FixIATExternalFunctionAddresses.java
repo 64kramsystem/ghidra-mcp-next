@@ -17,8 +17,8 @@
 //     2. Set the ExternalLocation address so Ghidra shows it as "bound"
 //
 // EXPORT FILE FORMAT (dll_exports/*.txt):
-//   D2COMMON.DLL::Ordinal_10000@6fd9f450->Ordinal_10000
-//   D2COMMON.DLL::ITEMSReadInfoFromStreamVersioned@6fd72000->ITEMSReadInfoFromStreamVersioned
+//   EXAMPLE.DLL::Ordinal_42@180001000->Ordinal_42
+//   EXAMPLE.DLL::ParseRecord@180002000->ParseRecord
 //
 // USAGE:
 //   Run from Ghidra Script Manager on the binary being analyzed.
@@ -26,8 +26,8 @@
 //     <GHIDRA_PROJECT_DIR>/../dll_exports/   (relative to the project)
 //   OR set DLL_EXPORTS_DIR below to an absolute path.
 //
-// @author d2re
-// @category Diablo 2
+// @author ghidra-mcp
+// @category PE
 // @keybinding
 // @menupath
 // @toolbar
@@ -60,7 +60,7 @@ public class FixIATExternalFunctionAddresses extends GhidraScript {
         }
         println("Loading export tables from: " + exportsDir.getAbsolutePath());
 
-        // 2. Parse all *.txt files → { "D2COMMON.DLL" -> { "Ordinal_10000" -> 0x6fd9f450L } }
+        // 2. Parse all *.txt files into { library -> { export -> runtime address } }
         Map<String, Map<String, Long>> allExports = loadAllExports(exportsDir);
         int totalExportEntries = allExports.values().stream().mapToInt(Map::size).sum();
         println(String.format("Loaded %d DLLs, %d total exports.", allExports.size(), totalExportEntries));
@@ -201,7 +201,7 @@ public class FixIATExternalFunctionAddresses extends GhidraScript {
 
     /**
      * Parse all dll_exports/*.txt files into a nested map.
-     * Line format: D2COMMON.DLL::FuncName@hexaddr->FuncName
+     * Line format: EXAMPLE.DLL::FuncName@hexaddr->FuncName
      */
     private Map<String, Map<String, Long>> loadAllExports(File dir) throws IOException {
         Map<String, Map<String, Long>> result = new HashMap<>();
@@ -214,7 +214,7 @@ public class FixIATExternalFunctionAddresses extends GhidraScript {
                 while ((line = br.readLine()) != null) {
                     line = line.trim();
                     if (line.isEmpty()) continue;
-                    // D2COMMON.DLL::Ordinal_10000@6fd9f450->Ordinal_10000
+                    // EXAMPLE.DLL::Ordinal_42@180001000->Ordinal_42
                     int dcIdx = line.indexOf("::");
                     int atIdx = line.indexOf('@', dcIdx);
                     int arrowIdx = line.indexOf("->", atIdx);

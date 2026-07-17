@@ -45,7 +45,8 @@ python -m tools.setup verify-version
 ## 2. Documentation and Metadata
 
 - [ ] Update `CHANGELOG.md` with a new top entry for the release.
-- [ ] Update `docs/releases/README.md` so the latest release summary is current.
+- [ ] Confirm `docs/releases/README.md` still points to the canonical history
+  and current architecture.
 - [ ] Update user-facing docs for any changed commands, defaults, side effects,
   endpoints, or environment variables.
 - [ ] Confirm `README.md` examples and version references are current.
@@ -63,7 +64,7 @@ rg -n "OLD_VERSION|NEW_VERSION|MCP Tools|GUI Endpoints|Headless Endpoints|total_
 Run the cheap gates before any live Ghidra work:
 
 ```text
-python -m tools.setup preflight --ghidra-path "F:\ghidra_12.1_PUBLIC"
+python -m tools.setup preflight --ghidra-path /path/to/ghidra
 python -m tools.setup build
 uv build                                  # build the ghidra-mcp-bridge wheel (-> dist/)
 uv run pytest tests/unit/ -v --no-cov
@@ -81,7 +82,7 @@ bridge script is no longer shipped).
 For setup/version/catalog changes, also run:
 
 ```text
-pytest tests/unit/test_version_bump.py tests/unit/test_endpoint_catalog.py tests/unit/test_setup_cli.py tests/unit/test_setup_ghidra.py -v --no-cov
+uv run pytest tests/unit/test_version_bump.py tests/unit/test_endpoint_catalog.py tests/unit/test_setup_cli.py tests/unit/test_setup_ghidra.py -v --no-cov
 ```
 
 For Java endpoint/catalog changes, run the offline Java scanner/parity tests:
@@ -99,13 +100,12 @@ benchmark, or endpoint behavior changes.
 - [ ] Run the release-grade deploy regression:
 
 ```text
-python -m tools.setup deploy --ghidra-path "F:\ghidra_12.1_PUBLIC" --test release
+python -m tools.setup deploy --ghidra-path /path/to/ghidra --test release
 ```
 
 - [ ] Record whether the release regression passed.
 - [ ] If the run required manual dialog intervention, document the popup and
-  decide whether the deploy/prompt-policy automation needs another fix before
-  release.
+  decide whether the live workflow needs another fix before release.
 
 ## 5. Commit and Pull Request
 

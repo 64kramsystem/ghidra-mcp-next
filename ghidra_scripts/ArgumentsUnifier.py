@@ -8,10 +8,10 @@
 #Ensures consistent type sizes regardless of platform or compiler settings.
 #
 #@author Ben Ethington
-#@category Diablo 2
+#@category Analysis
 #@description Standardizes function parameter and return types to fixed-width equivalents (int32_t, uint16_t, etc.)
 #@keybinding
-#@menupath Diablo II.Arguments Unifier
+#@menupath Tools.Arguments Unifier
 
 import json
 
@@ -94,10 +94,7 @@ def retypeArgs(args):
 def main():
     monitor.initialize(currentProgram.getFunctionManager().getFunctionCount())
     c = 0
-    for func in currentProgram.functionManager.getFunctions(1): 
-        if "{}".format(func.getEntryPoint()) == "00681a48":
-            break
-            
+    for func in currentProgram.functionManager.getFunctions(1):
         monitor.incrementProgress(1)
         monitor.setShowProgressValue(True)
         

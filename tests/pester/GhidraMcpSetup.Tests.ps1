@@ -108,10 +108,10 @@ Describe '-Help' {
         $script:HelpResult.Output | Should -Match 'GhidraMCP Setup - Usage'
     }
 
-    It 'documents the Ghidra-lifecycle switches (SkipRestart, AutoOpen, ServerPassword)' {
+    It 'documents the retained Ghidra-lifecycle switches (SkipRestart, AutoOpen)' {
         $script:HelpResult.Output | Should -Match '-SkipRestart'
         $script:HelpResult.Output | Should -Match '-AutoOpen'
-        $script:HelpResult.Output | Should -Match '-ServerPassword'
+        $script:HelpResult.Output | Should -Not -Match '-ServerPassword'
     }
 
     It 'does not leak internal function names into Usage (regression for line 86-91 bug)' {

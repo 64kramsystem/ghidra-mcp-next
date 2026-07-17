@@ -28,6 +28,11 @@ public final class ServiceUtils {
 
     private ServiceUtils() {} // Prevent instantiation
 
+    public static boolean isUndefinedToUndefined(String oldType, String newType) {
+        return oldType != null && newType != null
+                && oldType.startsWith("undefined") && newType.startsWith("undefined");
+    }
+
     // ========================================================================
     // JSON Encoding/Decoding
     // ========================================================================

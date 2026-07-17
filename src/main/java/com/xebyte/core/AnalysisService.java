@@ -65,47 +65,6 @@ public class AnalysisService {
     }
 
     // ========================================================================
-    // Per-program tokenized-name cache (Copilot review feedback on PR #168)
-    // ========================================================================
-    // The name_collision deduction below would otherwise tokenize every
-    // function name in the program on every scoring call — O(n²) per
-    // binary-wide rescore. We cache the precomputed tokens per Program
-    // with a short TTL so batch scoring amortizes the work. WeakHashMap
-    // lets the entries get GC'd when a Program closes; the synchronized
-    // wrapper makes concurrent access safe.
-
-    private static final Map<Program, ProgramNameCache> NAME_CACHE =
-            java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
-    private static final long NAME_CACHE_TTL_MS = 30_000L;
-
-    private static final class ProgramNameCache {
-        final List<NamingConventions.TokenizedName> tokenized;
-        final long timestamp;
-        ProgramNameCache(List<NamingConventions.TokenizedName> tokenized, long ts) {
-            this.tokenized = tokenized;
-            this.timestamp = ts;
-        }
-    }
-
-    private static List<NamingConventions.TokenizedName> getProgramTokenizedNames(Program program) {
-        if (program == null) return java.util.Collections.emptyList();
-        long now = System.currentTimeMillis();
-        ProgramNameCache cached = NAME_CACHE.get(program);
-        if (cached != null && (now - cached.timestamp) < NAME_CACHE_TTL_MS) {
-            return cached.tokenized;
-        }
-        List<String> names = new ArrayList<>();
-        for (Function f : program.getFunctionManager().getFunctions(true)) {
-            String n = f.getName();
-            if (n != null && !n.isEmpty()) names.add(n);
-        }
-        List<NamingConventions.TokenizedName> tokenized =
-                NamingConventions.precomputeTokenized(names);
-        NAME_CACHE.put(program, new ProgramNameCache(tokenized, now));
-        return tokenized;
-    }
-
-    // ========================================================================
     // Function classification utility
     // ========================================================================
 
@@ -2652,64 +2611,6 @@ public class AnalysisService {
             breakdown.add(deductionItem("address_suffix_name", 20.0, true, 1,
                     "Function name ends with address suffix (e.g., _6FD93C30) — strip suffix and verify name"));
         } else if (!isThunk && !isCompilerHelper) {
-            // Name-quality + collision deductions (Q6 calibration). Only fire
-            // for already-custom names — auto/address-suffix names already
-            // get a heavier deduction above. Thunks and compiler helpers are
-            // exempt: those names aren't model-authored.
-            String name = func.getName();
-            NamingConventions.NameQualityResult q =
-                    NamingConventions.checkFunctionNameQuality(name);
-            if (!q.ok) {
-                fixablePenalty += 8;
-                breakdown.add(deductionItem("low_name_quality", 8.0, true, 1,
-                        "Name '" + name + "' fails verb-tier specificity (" + q.issue + ")"));
-            }
-
-            // Token-subset collision against any other function in this
-            // program (same module-prefix scope). Uses a process-wide
-            // WeakHashMap cache (TTL 30s) of precomputed token-sets so
-            // batch scoring amortizes the per-name tokenization cost
-            // across calls (Copilot review on PR #168 flagged the prior
-            // O(n²) pattern of re-tokenizing every name on every score).
-            Program owner = func.getProgram();
-            List<NamingConventions.TokenizedName> tokenizedNames =
-                    getProgramTokenizedNames(owner);
-            if (!tokenizedNames.isEmpty()) {
-                String collidesWith = NamingConventions.findTokenSubsetCollisionPrecomputed(
-                        name, tokenizedNames);
-                if (collidesWith != null) {
-                    fixablePenalty += 10;
-                    breakdown.add(deductionItem("name_collision", 10.0, true, 1,
-                            "Token-subset collision with '" + collidesWith
-                                    + "' — names need a meaningful distinguisher"));
-                }
-            }
-
-            // Missing module prefix: name lacks UPPERCASE_ prefix AND ≥3 of
-            // its callees share a known prefix. Cheap and high-signal.
-            if (NamingConventions.extractModulePrefix(name) == null) {
-                Map<String, Integer> prefixCounts = new HashMap<>();
-                for (Function callee : func.getCalledFunctions(null)) {
-                    String pfx = NamingConventions.extractModulePrefix(callee.getName());
-                    if (pfx != null) prefixCounts.merge(pfx, 1, Integer::sum);
-                }
-                String dominantPrefix = null;
-                int dominantCount = 0;
-                for (Map.Entry<String, Integer> e : prefixCounts.entrySet()) {
-                    if (e.getValue() > dominantCount) {
-                        dominantCount = e.getValue();
-                        dominantPrefix = e.getKey();
-                    }
-                }
-                if (dominantCount >= 3 && dominantPrefix != null) {
-                    fixablePenalty += 5;
-                    breakdown.add(deductionItem("missing_module_prefix", 5.0, true, 1,
-                            "Name '" + name + "' has no module prefix but " + dominantCount
-                                    + " callees use '" + dominantPrefix
-                                    + "_' — consider prefixing this function the same way"));
-                }
-            }
-
             // Q1-Q6 v5.7.0: per-function global-quality deductions. Walks the
             // function's instructions, collects unique data-reference targets,
             // audits each via DataTypeService.auditGlobalAt, and aggregates
@@ -2748,10 +2649,8 @@ public class AnalysisService {
                         if (issues.contains("untyped")) untypedCount++;
                         if (issues.contains("unformatted_bytes_length_mismatch")
                                 || issues.contains("unformatted_bytes_should_be_string")) unformattedCount++;
-                        if (issues.contains("generic_name")
-                                || issues.stream().anyMatch(s -> s.startsWith("name_"))) genericNameCount++;
-                        if (issues.contains("missing_plate_comment")
-                                || issues.contains("plate_comment_too_short")) missingPlateCount++;
+                        if (issues.contains("generic_name")) genericNameCount++;
+                        if (issues.contains("missing_plate_comment")) missingPlateCount++;
                     }
                     // Per-issue weights (Q6 design):
                     //   untyped_global -8, unformatted -5, generic_name -5,
@@ -3024,7 +2923,7 @@ public class AnalysisService {
             recommendations.add("2. Use rename_or_label() or rename_data() to give meaningful names to each global");
             recommendations.add("3. Apply Hungarian notation with g_ prefix: g_dwPlayerCount, g_pCurrentGame, g_abEncryptionKey");
             recommendations.add("4. If global is a structure, apply type with apply_data_type() first, then rename");
-            recommendations.add("5. Consult KNOWN_ORDINALS.md and existing codebase for naming conventions");
+            recommendations.add("5. Consult dependency exports, symbols, and existing project evidence for names");
         }
 
         // UNRENAMED LAB_* LABELS (auto-generated goto targets)
@@ -3039,7 +2938,7 @@ public class AnalysisService {
         if (!undocumentedOrdinals.isEmpty()) {
             recommendations.add("UNDOCUMENTED ORDINAL CALLS - Add inline comments for each:");
             recommendations.add("1. Found " + undocumentedOrdinals.size() + " Ordinal call(s) without comments: " + String.join(", ", undocumentedOrdinals.subList(0, Math.min(5, undocumentedOrdinals.size()))));
-            recommendations.add("2. Consult docs/KNOWN_ORDINALS.md for Ordinal mappings (Storm.dll, Fog.dll ordinals documented)");
+            recommendations.add("2. Consult dependency exports, symbols, or vendor documentation to resolve each ordinal");
             recommendations.add("3. Use set_decompiler_comment() or batch_set_comments() to add inline comment explaining the call");
             recommendations.add("4. Format: /* Ordinal_123 = StorageFunctionName - brief description */");
         }
@@ -3063,9 +2962,9 @@ public class AnalysisService {
             recommendations.add("4. Apply struct type to variables with set_local_variable_type() or set_function_prototype()");
         }
 
-        // CRITICAL: Undefined Type Audit (FUNCTION_DOC_WORKFLOW_V4.md Mandatory Undefined Type Audit)
+        // CRITICAL: Undefined Type Audit
         if (!undefinedVars.isEmpty()) {
-            recommendations.add("UNDEFINED TYPES DETECTED - Follow FUNCTION_DOC_WORKFLOW_V4.md 'Mandatory Undefined Type Audit' section:");
+            recommendations.add("UNDEFINED TYPES DETECTED - Resolve types before finalizing names:");
             recommendations.add("1. Type Resolution: Apply type normalization before renaming:");
             recommendations.add("   - undefined1 -> byte (8-bit integer)");
             recommendations.add("   - undefined2 -> ushort/short (16-bit integer)");
@@ -3077,12 +2976,12 @@ public class AnalysisService {
             recommendations.add("   - Stack temporaries: [EBP + local_offset] not in get_function_variables()");
             recommendations.add("   - XMM register spills: undefined1[16] at stack locations");
             recommendations.add("   - Intermediate calculation results not appearing in decompiled view");
-            recommendations.add("4. After resolving ALL undefined types, rename variables with Hungarian notation using rename_variables()");
+            recommendations.add("4. After resolving ALL undefined types, rename variables with rename_variables() using the caller's selected convention");
         }
 
         // Plate Comment Issues
         if (!plateCommentIssues.isEmpty()) {
-            recommendations.add("PLATE COMMENT ISSUES - Follow FUNCTION_DOC_WORKFLOW_V4.md 'Plate Comment Creation' section:");
+            recommendations.add("PLATE COMMENT ISSUES - Make the function summary complete and evidence-based:");
             for (String issue : plateCommentIssues) {
                 if (issue.contains("Missing Algorithm section")) {
                     recommendations.add("1. Add Algorithm section with numbered steps describing operations (validation, function calls, error handling)");
@@ -3096,7 +2995,7 @@ public class AnalysisService {
                     recommendations.add("5. Expand plate comment to minimum 10 lines with comprehensive documentation");
                 }
             }
-            recommendations.add("Use set_plate_comment() to create/update plate comment following docs/prompts/PLATE_COMMENT_FORMAT_GUIDE.md");
+            recommendations.add("Use set_plate_comment() to create or update the plate comment");
         }
 
         // Hungarian Notation Violations
@@ -3111,7 +3010,7 @@ public class AnalysisService {
                 }
                 recommendations.add("FIX THE TYPE, NOT THE NAME. The human-assigned name is correct; the decompiler-inferred type is wrong.");
             }
-            recommendations.add("HUNGARIAN NOTATION VIOLATIONS - Follow FUNCTION_DOC_WORKFLOW_V4.md 'Local Variable Renaming' section and docs/HUNGARIAN_NOTATION.md:");
+            recommendations.add("LEGACY HUNGARIAN HEURISTIC - Apply only when this convention is appropriate for the current project:");
             recommendations.add("1. Verify type-to-prefix mapping matches Ghidra type:");
             recommendations.add("   - byte -> b/by | char -> c/ch | bool -> f | short -> n/s | ushort -> w");
             recommendations.add("   - int -> n/i | uint -> dw | long -> l | ulong -> dw");
@@ -3126,7 +3025,7 @@ public class AnalysisService {
 
         // Type Quality Issues
         if (!typeQualityIssues.isEmpty()) {
-            recommendations.add("TYPE QUALITY ISSUES - Follow FUNCTION_DOC_WORKFLOW_V4.md 'Structure Identification' section:");
+            recommendations.add("TYPE QUALITY ISSUES - Replace generic types with evidence-backed structures where possible:");
             for (String issue : typeQualityIssues) {
                 if (issue.contains("Unresolved this pointer")) {
                     recommendations.add("UNRESOLVED THIS POINTER - __thiscall function has void* this:");
@@ -3209,7 +3108,7 @@ public class AnalysisService {
                 recommendations.add("3. Add concise plate comment with Purpose/Origin/Parameters/Returns.");
                 recommendations.add("4. Re-score and stop when only structural deductions remain.");
             } else {
-                recommendations.add("COMPLETE WORKFLOW (FUNCTION_DOC_WORKFLOW_V4.md):");
+                recommendations.add("COMPLETE ANALYSIS WORKFLOW:");
                 recommendations.add("1. Initialize: get_current_selection() + analyze_function_complete() -- gather decompiled code, xrefs, callees, callers, disassembly, variables");
                 recommendations.add("2. Classify: Leaf/Worker/Thunk/Init/Callback/Public API/Internal utility");
                 recommendations.add("3. Mandatory Undefined Type Audit: examine BOTH decompiled code and disassembly for undefined types");
@@ -3217,9 +3116,9 @@ public class AnalysisService {
                 recommendations.add("5. Control Flow + Loop Mapping: return points, loop headers/bounds/stride, error paths");
                 recommendations.add("6. Structure Identification: search_data_types() or create_struct(), memory model docs");
                 recommendations.add("7. Rename + Prototype: rename_function_by_address() (PascalCase) + set_function_prototype()");
-                recommendations.add("8. Local Variable Renaming: set_local_variable_type() then rename_variables() with Hungarian notation");
-                recommendations.add("9. Global Data: rename_or_label() with g_ prefix for DAT_*/s_* references");
-                recommendations.add("10. Plate Comment: set_plate_comment() per PLATE_COMMENT_FORMAT_GUIDE.md (Algorithm, Parameters, Returns, Structure Layout, Magic Numbers)");
+                recommendations.add("8. Local Variable Renaming: set_local_variable_type() then rename_variables() using the caller's selected convention");
+                recommendations.add("9. Global Data: rename_or_label() with evidence-backed semantic names");
+                recommendations.add("10. Plate Comment: set_plate_comment() with Algorithm, Parameters, Returns, Structure Layout, and Magic Numbers as applicable");
                 recommendations.add("11. Inline Comments: PRE_COMMENTs + EOL_COMMENTs via batch_set_comments()");
                 recommendations.add("12. Verify: analyze_function_completeness() once -- accept phantom/void* deductions");
             }
@@ -5193,11 +5092,6 @@ public class AnalysisService {
         return Response.ok(out);
     }
 }
-
-
-
-
-
 
 
 

@@ -1,7 +1,7 @@
 """
-Unit tests for tools.setup.cli — backend dispatch, subcommand routing, helpers.
+Unit tests for tools.setup.cli — Maven command routing and helpers.
 
-All tests run without a live Ghidra server or Maven/Gradle installation.
+All tests run without a live Ghidra server or Maven installation.
 Subprocess-calling functions are stubbed via monkeypatch.
 """
 
@@ -24,11 +24,8 @@ def _args(**kwargs) -> argparse.Namespace:
         dry_run=False,
         ghidra_path=None,
         strict=False,
-        use_debugger_toggle=False,
-        with_debugger=False,
         force=False,
         test=[],
-        env_file=None,
         new=None,
         old=None,
         tag=False,
@@ -38,89 +35,22 @@ def _args(**kwargs) -> argparse.Namespace:
 
 
 # ===========================================================================
-# _get_backend
-# ===========================================================================
-
-
-def test_get_backend_defaults_to_maven(monkeypatch):
-    monkeypatch.delenv("TOOLS_SETUP_BACKEND", raising=False)
-    from tools.setup import cli
-
-    assert cli._get_backend() == "maven"
-
-
-def test_get_backend_gradle_when_env_set(monkeypatch):
-    monkeypatch.setenv("TOOLS_SETUP_BACKEND", "gradle")
-    from tools.setup import cli
-
-    assert cli._get_backend() == "gradle"
-
-
-def test_get_backend_case_insensitive(monkeypatch):
-    monkeypatch.setenv("TOOLS_SETUP_BACKEND", "GRADLE")
-    from tools.setup import cli
-
-    assert cli._get_backend() == "gradle"
-
-
-# ===========================================================================
 # cmd_build
 # ===========================================================================
 
 
-def test_cmd_build_uses_skiptests_for_maven(monkeypatch):
+def test_cmd_build_routes_to_maven(monkeypatch):
     from tools.setup import cli
 
-    monkeypatch.setattr(cli, "detect_repo_root", lambda: Path("C:/repo"))
-    monkeypatch.setattr(cli, "_get_backend", lambda: "maven")
-
-    recorded: dict = {}
-    monkeypatch.setattr(
-        cli,
-        "run_maven",
-        lambda root, goals, dry_run=False: recorded.update({"goals": goals}) or 0,
-    )
-
-    result = cli.cmd_build(_args())
-
-    assert result == 0
-    assert recorded["goals"] == ["clean", "package", "assembly:single", "-DskipTests"]
-
-
-def test_cmd_build_routes_to_gradle(monkeypatch):
-    from tools.setup import cli
-
+    calls = []
     monkeypatch.setattr(cli, "detect_repo_root", lambda: Path("/repo"))
-    monkeypatch.setattr(cli, "_get_backend", lambda: "gradle")
-
-    recorded: dict = {}
     monkeypatch.setattr(
-        cli,
-        "run_gradle",
-        lambda root, tasks, **kw: recorded.update({"tasks": tasks}) or 0,
+        cli, "run_maven", lambda root, goals, **kw: calls.append((root, goals, kw)) or 0
     )
-
-    result = cli.cmd_build(_args())
-
-    assert result == 0
-    assert recorded["tasks"] == ["buildExtension"]
-
-
-def test_cmd_build_dry_run_passed_to_maven(monkeypatch):
-    from tools.setup import cli
-
-    monkeypatch.setattr(cli, "detect_repo_root", lambda: Path("/repo"))
-    monkeypatch.setattr(cli, "_get_backend", lambda: "maven")
-
-    recorded: dict = {}
-    monkeypatch.setattr(
-        cli,
-        "run_maven",
-        lambda root, goals, dry_run=False: recorded.update({"dry_run": dry_run}) or 0,
-    )
-
-    cli.cmd_build(_args(dry_run=True))
-    assert recorded["dry_run"] is True
+    assert cli.cmd_build(_args(dry_run=True)) == 0
+    assert calls == [
+        (Path("/repo"), ["clean", "package", "assembly:single", "-DskipTests"], {"dry_run": True})
+    ]
 
 
 # ===========================================================================
@@ -132,7 +62,6 @@ def test_cmd_clean_routes_to_maven(monkeypatch):
     from tools.setup import cli
 
     monkeypatch.setattr(cli, "detect_repo_root", lambda: Path("/repo"))
-    monkeypatch.setattr(cli, "_get_backend", lambda: "maven")
 
     recorded: dict = {}
     monkeypatch.setattr(
@@ -145,23 +74,6 @@ def test_cmd_clean_routes_to_maven(monkeypatch):
     assert recorded["goals"] == ["clean"]
 
 
-def test_cmd_clean_routes_to_gradle(monkeypatch):
-    from tools.setup import cli
-
-    monkeypatch.setattr(cli, "detect_repo_root", lambda: Path("/repo"))
-    monkeypatch.setattr(cli, "_get_backend", lambda: "gradle")
-
-    recorded: dict = {}
-    monkeypatch.setattr(
-        cli,
-        "run_gradle",
-        lambda root, tasks, **kw: recorded.update({"tasks": tasks}) or 0,
-    )
-
-    cli.cmd_clean(_args())
-    assert recorded["tasks"] == ["clean"]
-
-
 # ===========================================================================
 # cmd_run_tests
 # ===========================================================================
@@ -171,7 +83,6 @@ def test_cmd_run_tests_routes_to_maven(monkeypatch):
     from tools.setup import cli
 
     monkeypatch.setattr(cli, "detect_repo_root", lambda: Path("/repo"))
-    monkeypatch.setattr(cli, "_get_backend", lambda: "maven")
 
     recorded: dict = {}
     monkeypatch.setattr(
@@ -184,56 +95,15 @@ def test_cmd_run_tests_routes_to_maven(monkeypatch):
     assert recorded["goals"] == ["test"]
 
 
-def test_cmd_run_tests_routes_to_gradle(monkeypatch):
-    from tools.setup import cli
-
-    monkeypatch.setattr(cli, "detect_repo_root", lambda: Path("/repo"))
-    monkeypatch.setattr(cli, "_get_backend", lambda: "gradle")
-
-    recorded: dict = {}
-    monkeypatch.setattr(
-        cli,
-        "run_gradle",
-        lambda root, tasks, **kw: recorded.update({"tasks": tasks}) or 0,
-    )
-
-    cli.cmd_run_tests(_args())
-    assert recorded["tasks"] == ["test"]
-
-
 # ===========================================================================
 # cmd_deploy
 # ===========================================================================
-
-
-def test_cmd_deploy_routes_to_gradle(tmp_path, monkeypatch):
-    from tools.setup import cli
-
-    monkeypatch.setattr(cli, "detect_repo_root", lambda: tmp_path)
-    monkeypatch.setattr(cli, "_get_backend", lambda: "gradle")
-    monkeypatch.setattr(cli, "_load_repo_env", lambda root: {})
-
-    recorded: dict = {}
-    monkeypatch.setattr(
-        cli,
-        "run_gradle",
-        lambda root, tasks, **kw: recorded.update({"tasks": tasks, **kw}) or 0,
-    )
-
-    ghidra_path = tmp_path / "ghidra_12.1_PUBLIC"
-    ghidra_path.mkdir()
-    result = cli.cmd_deploy(_args(ghidra_path=ghidra_path))
-
-    assert result == 0
-    assert recorded["tasks"] == ["deploy"]
-    assert recorded.get("ghidra_path") == ghidra_path.resolve()
 
 
 def test_cmd_deploy_routes_to_maven(tmp_path, monkeypatch):
     from tools.setup import cli
 
     monkeypatch.setattr(cli, "detect_repo_root", lambda: tmp_path)
-    monkeypatch.setattr(cli, "_get_backend", lambda: "maven")
     monkeypatch.setattr(cli, "_load_repo_env", lambda root: {})
 
     called = []
@@ -279,33 +149,10 @@ def test_cmd_deploy_raises_when_no_ghidra_path(tmp_path, monkeypatch):
 # ===========================================================================
 
 
-def test_cmd_start_ghidra_routes_to_gradle(tmp_path, monkeypatch):
-    from tools.setup import cli
-
-    monkeypatch.setattr(cli, "detect_repo_root", lambda: tmp_path)
-    monkeypatch.setattr(cli, "_get_backend", lambda: "gradle")
-    monkeypatch.setattr(cli, "_load_repo_env", lambda root: {})
-
-    recorded: dict = {}
-    monkeypatch.setattr(
-        cli,
-        "run_gradle",
-        lambda root, tasks, **kw: recorded.update({"tasks": tasks}) or 0,
-    )
-
-    ghidra_path = tmp_path / "ghidra_12.1_PUBLIC"
-    ghidra_path.mkdir()
-    result = cli.cmd_start_ghidra(_args(ghidra_path=ghidra_path))
-
-    assert result == 0
-    assert recorded["tasks"] == ["startGhidra"]
-
-
 def test_cmd_start_ghidra_routes_to_maven(tmp_path, monkeypatch):
     from tools.setup import cli
 
     monkeypatch.setattr(cli, "detect_repo_root", lambda: tmp_path)
-    monkeypatch.setattr(cli, "_get_backend", lambda: "maven")
     monkeypatch.setattr(cli, "_load_repo_env", lambda root: {})
 
     called = []
@@ -340,7 +187,6 @@ def test_cmd_clean_all_routes_to_maven(monkeypatch):
     from tools.setup import cli
 
     monkeypatch.setattr(cli, "detect_repo_root", lambda: Path("/repo"))
-    monkeypatch.setattr(cli, "_get_backend", lambda: "maven")
 
     called = []
     monkeypatch.setattr(
@@ -349,23 +195,6 @@ def test_cmd_clean_all_routes_to_maven(monkeypatch):
 
     cli.cmd_clean_all(_args())
     assert called
-
-
-def test_cmd_clean_all_routes_to_gradle(monkeypatch):
-    from tools.setup import cli
-
-    monkeypatch.setattr(cli, "detect_repo_root", lambda: Path("/repo"))
-    monkeypatch.setattr(cli, "_get_backend", lambda: "gradle")
-
-    recorded: dict = {}
-    monkeypatch.setattr(
-        cli,
-        "run_gradle",
-        lambda root, tasks, **kw: recorded.update({"tasks": tasks}) or 0,
-    )
-
-    cli.cmd_clean_all(_args())
-    assert recorded["tasks"] == ["cleanAll"]
 
 
 # ===========================================================================
@@ -377,7 +206,6 @@ def test_cmd_install_ghidra_deps_routes_to_maven(tmp_path, monkeypatch):
     from tools.setup import cli
 
     monkeypatch.setattr(cli, "detect_repo_root", lambda: tmp_path)
-    monkeypatch.setattr(cli, "_get_backend", lambda: "maven")
     monkeypatch.setattr(cli, "_load_repo_env", lambda root: {})
 
     called = []
@@ -393,26 +221,6 @@ def test_cmd_install_ghidra_deps_routes_to_maven(tmp_path, monkeypatch):
     assert called
 
 
-def test_cmd_install_ghidra_deps_routes_to_gradle(tmp_path, monkeypatch):
-    from tools.setup import cli
-
-    monkeypatch.setattr(cli, "detect_repo_root", lambda: tmp_path)
-    monkeypatch.setattr(cli, "_get_backend", lambda: "gradle")
-    monkeypatch.setattr(cli, "_load_repo_env", lambda root: {})
-
-    recorded: dict = {}
-    monkeypatch.setattr(
-        cli,
-        "run_gradle",
-        lambda root, tasks, **kw: recorded.update({"tasks": tasks}) or 0,
-    )
-
-    ghidra_path = tmp_path / "ghidra_12.1_PUBLIC"
-    ghidra_path.mkdir()
-    cli.cmd_install_ghidra_deps(_args(ghidra_path=ghidra_path))
-    assert recorded["tasks"] == ["prepareGhidraClasspath"]
-
-
 # ===========================================================================
 # cmd_verify_version
 # ===========================================================================
@@ -423,7 +231,6 @@ def test_cmd_verify_version_maven_no_ghidra_path(tmp_path, monkeypatch, capsys):
     from tools.setup.versioning import VersionInfo
 
     monkeypatch.setattr(cli, "detect_repo_root", lambda: tmp_path)
-    monkeypatch.setattr(cli, "_get_backend", lambda: "maven")
     monkeypatch.setattr(cli, "_load_repo_env", lambda root: {})
     monkeypatch.setattr(
         cli, "read_pom_versions", lambda root: VersionInfo("5.4.1", "12.1")
@@ -442,7 +249,6 @@ def test_cmd_verify_version_maven_versions_match(tmp_path, monkeypatch):
     from tools.setup.versioning import VersionInfo
 
     monkeypatch.setattr(cli, "detect_repo_root", lambda: tmp_path)
-    monkeypatch.setattr(cli, "_get_backend", lambda: "maven")
     monkeypatch.setattr(cli, "_load_repo_env", lambda root: {})
     monkeypatch.setattr(
         cli, "read_pom_versions", lambda root: VersionInfo("5.4.1", "12.1")
@@ -461,7 +267,6 @@ def test_cmd_verify_version_maven_version_mismatch(tmp_path, monkeypatch):
     from tools.setup.versioning import VersionInfo
 
     monkeypatch.setattr(cli, "detect_repo_root", lambda: tmp_path)
-    monkeypatch.setattr(cli, "_get_backend", lambda: "maven")
     monkeypatch.setattr(cli, "_load_repo_env", lambda root: {})
     monkeypatch.setattr(
         cli, "read_pom_versions", lambda root: VersionInfo("5.4.1", "12.1")
@@ -480,7 +285,6 @@ def test_cmd_verify_version_maven_uninferrable_path(tmp_path, monkeypatch):
     from tools.setup.versioning import VersionInfo
 
     monkeypatch.setattr(cli, "detect_repo_root", lambda: tmp_path)
-    monkeypatch.setattr(cli, "_get_backend", lambda: "maven")
     monkeypatch.setattr(cli, "_load_repo_env", lambda root: {})
     monkeypatch.setattr(
         cli, "read_pom_versions", lambda root: VersionInfo("5.4.1", "12.1")
@@ -492,25 +296,6 @@ def test_cmd_verify_version_maven_uninferrable_path(tmp_path, monkeypatch):
     result = cli.cmd_verify_version(_args(ghidra_path=ghidra_path))
 
     assert result == 1
-
-
-def test_cmd_verify_version_routes_to_gradle(tmp_path, monkeypatch):
-    from tools.setup import cli
-
-    monkeypatch.setattr(cli, "detect_repo_root", lambda: tmp_path)
-    monkeypatch.setattr(cli, "_get_backend", lambda: "gradle")
-    monkeypatch.setattr(cli, "_load_repo_env", lambda root: {})
-
-    recorded: dict = {}
-    monkeypatch.setattr(
-        cli,
-        "run_gradle",
-        lambda root, tasks, **kw: recorded.update({"tasks": tasks}) or 0,
-    )
-
-    result = cli.cmd_verify_version(_args())
-    assert result == 0
-    assert recorded["tasks"] == ["verifyVersion"]
 
 
 # ===========================================================================
@@ -644,60 +429,7 @@ def test_require_ghidra_path_returns_path_when_set(tmp_path, monkeypatch):
 
 
 # ===========================================================================
-# _should_install_debugger
-# ===========================================================================
-
-
-def test_should_install_debugger_with_flag():
-    from tools.setup import cli
-
-    assert (
-        cli._should_install_debugger(
-            {}, _args(with_debugger=True, use_debugger_toggle=False)
-        )
-        is True
-    )
-
-
-def test_should_install_debugger_from_env_toggle():
-    from tools.setup import cli
-
-    assert (
-        cli._should_install_debugger(
-            {"INSTALL_DEBUGGER_DEPS": "true"},
-            _args(with_debugger=False, use_debugger_toggle=True),
-        )
-        is True
-    )
-
-
-def test_should_install_debugger_env_disabled():
-    from tools.setup import cli
-
-    assert (
-        cli._should_install_debugger(
-            {"INSTALL_DEBUGGER_DEPS": "false"},
-            _args(with_debugger=False, use_debugger_toggle=True),
-        )
-        is False
-    )
-
-
-def test_should_install_debugger_toggle_off():
-    from tools.setup import cli
-
-    # INSTALL_DEBUGGER_DEPS=true in env, but toggle not passed — should NOT install
-    assert (
-        cli._should_install_debugger(
-            {"INSTALL_DEBUGGER_DEPS": "true"},
-            _args(with_debugger=False, use_debugger_toggle=False),
-        )
-        is False
-    )
-
-
-# ===========================================================================
-# cmd_preflight — Maven backend
+# cmd_preflight
 # ===========================================================================
 
 
@@ -705,7 +437,6 @@ def test_cmd_preflight_maven_missing_maven_returns_1(tmp_path, monkeypatch):
     from tools.setup import cli
 
     monkeypatch.setattr(cli, "detect_repo_root", lambda: tmp_path)
-    monkeypatch.setattr(cli, "_get_backend", lambda: "maven")
     monkeypatch.setattr(cli, "_load_repo_env", lambda root: {})
     monkeypatch.setattr(cli, "find_repo_python", lambda root: Path("python"))
 
@@ -722,7 +453,6 @@ def test_cmd_preflight_maven_missing_java_returns_1(tmp_path, monkeypatch):
     from tools.setup import cli
 
     monkeypatch.setattr(cli, "detect_repo_root", lambda: tmp_path)
-    monkeypatch.setattr(cli, "_get_backend", lambda: "maven")
     monkeypatch.setattr(cli, "_load_repo_env", lambda root: {})
     monkeypatch.setattr(cli, "find_repo_python", lambda root: Path("python"))
     monkeypatch.setattr(cli, "find_maven_command", lambda: Path("/usr/bin/mvn"))
@@ -740,7 +470,6 @@ def test_cmd_preflight_maven_passes_without_ghidra_path(tmp_path, monkeypatch):
     from tools.setup.versioning import VersionInfo
 
     monkeypatch.setattr(cli, "detect_repo_root", lambda: tmp_path)
-    monkeypatch.setattr(cli, "_get_backend", lambda: "maven")
     monkeypatch.setattr(cli, "_load_repo_env", lambda root: {})
     monkeypatch.setattr(cli, "find_repo_python", lambda root: Path("python"))
     monkeypatch.setattr(cli, "find_maven_command", lambda: Path("/usr/bin/mvn"))
@@ -758,29 +487,6 @@ def test_cmd_preflight_maven_passes_without_ghidra_path(tmp_path, monkeypatch):
     assert result == 0
 
 
-def test_cmd_preflight_gradle_routes_to_run_gradle(tmp_path, monkeypatch):
-    from tools.setup import cli
-
-    monkeypatch.setattr(cli, "detect_repo_root", lambda: tmp_path)
-    monkeypatch.setattr(cli, "_get_backend", lambda: "gradle")
-    monkeypatch.setattr(cli, "_load_repo_env", lambda root: {})
-    monkeypatch.setattr(cli, "find_repo_python", lambda root: Path("python"))
-    monkeypatch.setattr(
-        subprocess, "run", lambda *a, **kw: type("R", (), {"returncode": 0})()
-    )
-
-    recorded: dict = {}
-    monkeypatch.setattr(
-        cli,
-        "run_gradle",
-        lambda root, tasks, **kw: recorded.update({"tasks": tasks}) or 0,
-    )
-
-    result = cli.cmd_preflight(_args())
-    assert result == 0
-    assert recorded["tasks"] == ["preflight"]
-
-
 # ===========================================================================
 # cmd_ensure_prereqs — dry run
 # ===========================================================================
@@ -793,15 +499,17 @@ def test_cmd_ensure_prereqs_dry_run_prints_plan(tmp_path, monkeypatch, capsys):
     fake_plan = InstallPlan(
         repo_root=tmp_path,
         groups=("dev",),
-        install_debugger=False,
     )
 
     monkeypatch.setattr(cli, "detect_repo_root", lambda: tmp_path)
-    monkeypatch.setattr(cli, "_get_backend", lambda: "gradle")
     monkeypatch.setattr(cli, "_load_repo_env", lambda root: {})
     monkeypatch.setattr(cli, "make_install_plan", lambda *a, **kw: fake_plan)
     monkeypatch.setattr(cli, "execute_install_plan", lambda plan: None)
-    monkeypatch.setattr(cli, "run_gradle", lambda root, tasks, **kw: 0)
+    monkeypatch.setattr(
+        cli,
+        "install_ghidra_dependencies",
+        lambda root, path, force=False, dry_run=False: 0,
+    )
 
     ghidra_path = tmp_path / "ghidra_12.1_PUBLIC"
     ghidra_path.mkdir()
@@ -852,15 +560,21 @@ def test_parser_install_python_deps_rejects_obsolete_flags():
         assert exc_info.value.code != 0
 
 
-def test_parser_install_python_deps_accepts_supported_flags():
+def test_parser_install_python_deps_rejects_removed_debugger_flags():
     from tools.setup.cli import build_parser
 
-    args = build_parser().parse_args(
-        ["install-python-deps", "--with-debugger", "--env-file", ".env.local"]
-    )
+    parser = build_parser()
+    for flag in ("--with-debugger", "--use-debugger-toggle"):
+        with pytest.raises(SystemExit) as exc_info:
+            parser.parse_args(["install-python-deps", flag])
+        assert exc_info.value.code != 0
+
+
+def test_parser_install_python_deps_accepts_no_flags():
+    from tools.setup.cli import build_parser
+
+    args = build_parser().parse_args(["install-python-deps"])
     assert args.command == "install-python-deps"
-    assert args.with_debugger is True
-    assert args.env_file == Path(".env.local")
 
 
 def test_parser_bump_version_parses_new_flag():
@@ -894,18 +608,16 @@ def test_main_build_maven(monkeypatch):
     from tools.setup import cli
 
     monkeypatch.setattr(cli, "detect_repo_root", lambda: Path("/repo"))
-    monkeypatch.setattr(cli, "_get_backend", lambda: "maven")
     monkeypatch.setattr(cli, "run_maven", lambda root, goals, dry_run=False: 0)
 
     assert cli.main(["build"]) == 0
 
 
-def test_main_clean_gradle(monkeypatch):
+def test_main_clean_maven(monkeypatch):
     from tools.setup import cli
 
     monkeypatch.setattr(cli, "detect_repo_root", lambda: Path("/repo"))
-    monkeypatch.setattr(cli, "_get_backend", lambda: "gradle")
-    monkeypatch.setattr(cli, "run_gradle", lambda root, tasks, **kw: 0)
+    monkeypatch.setattr(cli, "run_maven", lambda root, goals, dry_run=False: 0)
 
     assert cli.main(["clean"]) == 0
 
@@ -914,7 +626,6 @@ def test_main_run_tests_maven(monkeypatch):
     from tools.setup import cli
 
     monkeypatch.setattr(cli, "detect_repo_root", lambda: Path("/repo"))
-    monkeypatch.setattr(cli, "_get_backend", lambda: "maven")
     monkeypatch.setattr(cli, "run_maven", lambda root, goals, dry_run=False: 0)
 
     assert cli.main(["run-tests"]) == 0

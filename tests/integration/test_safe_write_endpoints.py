@@ -378,41 +378,6 @@ class TestSafeLabelOperations:
         assert response.status_code in [200, 400, 404]
 
 
-class TestSafeDocumentationOperations:
-    """Test documentation operations."""
-
-    def test_get_function_documentation(self, http_client, first_function):
-        """Get and verify function documentation can be retrieved."""
-        address = first_function["address"]
-
-        response = http_client.get(
-            "/get_function_documentation", params={"address": address}
-        )
-
-        assert response.status_code == 200
-
-    def test_apply_same_documentation(self, http_client, first_function):
-        """Get documentation and apply it back."""
-        address = first_function["address"]
-
-        # Get current documentation
-        get_response = http_client.get(
-            "/get_function_documentation", params={"address": address}
-        )
-
-        if get_response.status_code != 200:
-            pytest.skip("Cannot get function documentation")
-
-        # Try to apply the same documentation back
-        response = http_client.post(
-            "/apply_function_documentation",
-            json_data={"address": address, "documentation": get_response.text},
-        )
-
-        # May fail due to format, but should not crash
-        assert response.status_code in [200, 400, 404, 500]
-
-
 class TestSafeNoReturnAttribute:
     """Test function no-return attribute operations."""
 

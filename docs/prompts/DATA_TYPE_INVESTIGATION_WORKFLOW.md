@@ -634,6 +634,6 @@ Pair with `get_field_access_context` (which lists xref addresses but not their s
 
 ## Related Workflows
 
-- **FUNCTION_DOC_WORKFLOW_V5.md**: For complete function documentation using proper types
 - **GLOBAL_DATA_ANALYSIS_WORKFLOW.md**: For global data structure identification
-- **HUNGARIAN_NOTATION_REFERENCE.md**: For proper variable naming conventions
+- **TOOL_USAGE_GUIDE.md**: For load-once tool discovery and safe mutation discipline
+- Apply the caller-selected naming convention only after type evidence is established.

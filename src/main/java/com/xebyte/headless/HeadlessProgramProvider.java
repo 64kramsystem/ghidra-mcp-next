@@ -428,29 +428,7 @@ public class HeadlessProgramProvider implements ProgramProvider {
     }
 
     /**
-     * Load a program from a Ghidra project with structured diagnostics.
-     *
-     * Discussion #119 surfaced the recurring "checkout succeeded, can't open"
-     * pattern: users connect a headless Docker container to a remote Ghidra
-     * server, run /server/version_control/checkout (which acquires the
-     * server-side lock on the standalone {@link GhidraServerManager}
-     * connection), then call /load_program_from_project and get a flat
-     * "Program not found" error. The usual root cause is one of:
-     *
-     *   1. The locally-open project is a standalone project, not a shared
-     *      project bound to the server. /server/version_control/checkout
-     *      operates on the GhidraServerManager's standalone connection,
-     *      which doesn't sync content to a non-shared local project.
-     *
-     *   2. The path doesn't match the project's folder hierarchy (case,
-     *      leading slash, server folder layout vs container folder layout).
-     *
-     *   3. The project IS shared but the file hasn't been pulled to the
-     *      local cache yet — opening it triggers the server fetch but the
-     *      first call can fail if the server is unreachable.
-     *
-     * This method returns a structured result so the endpoint handler can
-     * surface what actually went wrong rather than the legacy bare null.
+     * Load a program from a local Ghidra project with structured diagnostics.
      */
     public ProgramLoadResult loadProgramFromProjectDetailed(String projectPath) {
         if (project == null) {
@@ -485,17 +463,14 @@ public class HeadlessProgramProvider implements ProgramProvider {
                 // Best-effort — diagnostic shouldn't itself fail.
             }
 
-            String serverHint = describeServerBinding(projectData);
-            return ProgramLoadResult.notFound(projectPath, available, serverHint);
+            return ProgramLoadResult.notFound(projectPath, available);
         }
 
         try {
             Program program = (Program) domainFile.getDomainObject(this, true, false, monitor);
             if (program == null) {
-                String serverHint = describeServerBinding(projectData);
                 return ProgramLoadResult.failure(
-                    "domainFile.getDomainObject returned null for: " + projectPath
-                    + (serverHint.isEmpty() ? "" : " (" + serverHint + ")"));
+                    "domainFile.getDomainObject returned null for: " + projectPath);
             }
             registerProgram(program);
             if (currentProgram == null) {
@@ -504,11 +479,9 @@ public class HeadlessProgramProvider implements ProgramProvider {
             Msg.info(this, "Loaded program from project: " + program.getName());
             return ProgramLoadResult.success(program);
         } catch (Exception e) {
-            String serverHint = describeServerBinding(projectData);
             Msg.error(this, "Error loading program from project: " + projectPath, e);
             return ProgramLoadResult.failure(
-                "Open failed (" + e.getClass().getSimpleName() + "): " + e.getMessage()
-                + (serverHint.isEmpty() ? "" : ". " + serverHint));
+                "Open failed (" + e.getClass().getSimpleName() + "): " + e.getMessage());
         }
     }
 
@@ -531,85 +504,30 @@ public class HeadlessProgramProvider implements ProgramProvider {
         }
     }
 
-    /**
-     * Describe whether the open project is server-bound, for inclusion in
-     * error diagnostics. Empty string when not server-bound (the standalone
-     * case). Used by both {@link #loadProgramFromProjectDetailed} and
-     * {@link #getProjectServerInfo} so the description is consistent.
-     */
-    private String describeServerBinding(ProjectData projectData) {
-        try {
-            ghidra.framework.client.RepositoryAdapter repo = projectData.getRepository();
-            if (repo == null) {
-                return "Project is local-only (not bound to a Ghidra Server). "
-                    + "If you intended a server-checked-out file, the local project "
-                    + "must be a shared project — create one via Ghidra GUI or "
-                    + "`analyzeHeadless -connect ghidra://host:port/repo` and "
-                    + "mount it into this container, then reopen it via "
-                    + "/open_project.";
-            }
-            // Only RepositoryAdapter.getName() is touched here — the
-            // server host:port lives behind getServer().getServerInfo(),
-            // whose return type differs across Ghidra 12.0.x point builds
-            // (String on some, ServerInfo on others) and broke the CI
-            // build. The repo name + "bound to a server" is the
-            // diagnostic the operator actually needs; they configured the
-            // host:port themselves.
-            return "Project is bound to a Ghidra Server (repo '" + repo.getName() + "')";
-        } catch (Exception e) {
-            return "Server binding probe failed: " + e.getClass().getSimpleName();
-        }
-    }
-
-    /**
-     * Server-binding info for the open project, or {@code null} when no
-     * project is open. Exposed to the management service so /get_project_info
-     * can surface "is this project shared?" without re-implementing the
-     * probe.
-     */
-    public ServerBindingInfo getProjectServerInfo() {
-        if (project == null) return null;
-        try {
-            ghidra.framework.client.RepositoryAdapter repo = project.getProjectData().getRepository();
-            if (repo == null) {
-                return new ServerBindingInfo(false, null, null);
-            }
-            // serverInfo (host:port) is intentionally left null — see
-            // describeServerBinding: getServer().getServerInfo()'s return
-            // type isn't stable across Ghidra 12.0.x point builds. The
-            // serverBound flag + repo name are the load-bearing fields.
-            return new ServerBindingInfo(true, null, repo.getName());
-        } catch (Exception e) {
-            return new ServerBindingInfo(false, null, null);
-        }
-    }
-
     /** Structured result from {@link #loadProgramFromProjectDetailed}. */
     public static class ProgramLoadResult {
         public final boolean success;
-        public final Program program;          // null on failure
-        public final String error;             // null on success
+        public final Program program; // null on failure
+        public final String message; // null on success
         public final List<String> availablePaths; // null unless notFound
-        public final String serverHint;        // null unless server-relevant
 
-        private ProgramLoadResult(boolean success, Program program, String error,
-                                  List<String> availablePaths, String serverHint) {
+        private ProgramLoadResult(boolean success, Program program, String message,
+                                  List<String> availablePaths) {
             this.success = success;
             this.program = program;
-            this.error = error;
+            this.message = message;
             this.availablePaths = availablePaths;
-            this.serverHint = serverHint;
         }
 
         public static ProgramLoadResult success(Program program) {
-            return new ProgramLoadResult(true, program, null, null, null);
+            return new ProgramLoadResult(true, program, null, null);
         }
 
-        public static ProgramLoadResult failure(String error) {
-            return new ProgramLoadResult(false, null, error, null, null);
+        public static ProgramLoadResult failure(String message) {
+            return new ProgramLoadResult(false, null, message, null);
         }
 
-        public static ProgramLoadResult notFound(String requestedPath, List<String> available, String serverHint) {
+        public static ProgramLoadResult notFound(String requestedPath, List<String> available) {
             String msg = "Program not found in project: " + requestedPath;
             if (available != null && !available.isEmpty()) {
                 msg += " (project contains " + available.size() + " program file(s); first few: "
@@ -617,20 +535,7 @@ public class HeadlessProgramProvider implements ProgramProvider {
             } else if (available != null) {
                 msg += " (project has no program files)";
             }
-            return new ProgramLoadResult(false, null, msg, available, serverHint);
-        }
-    }
-
-    /** Shared-project / server binding state for {@link #getProjectServerInfo}. */
-    public static class ServerBindingInfo {
-        public final boolean serverBound;
-        public final String serverInfo;  // host:port string, or null when not bound
-        public final String repoName;    // repo name on the server, or null
-
-        public ServerBindingInfo(boolean serverBound, String serverInfo, String repoName) {
-            this.serverBound = serverBound;
-            this.serverInfo = serverInfo;
-            this.repoName = repoName;
+            return new ProgramLoadResult(false, null, msg, available);
         }
     }
 
@@ -683,131 +588,6 @@ public class HeadlessProgramProvider implements ProgramProvider {
      */
     public TaskMonitor getMonitor() {
         return monitor;
-    }
-
-    /**
-     * Check a program back in to the shared Ghidra Server, creating a new
-     * server version. This closes the #119 gap: GhidraServerManager.checkinFile
-     * cannot commit (RepositoryAdapter exposes no checkin), so a checkin must
-     * run through DomainFile.checkin() on the open shared project.
-     *
-     * Any pending edits on the open DomainObject are saved into the local
-     * project database, then the object is released BEFORE checkin. Releasing
-     * first matters: checking in while the program is still open forces
-     * keepCheckedOut=true regardless of the handler (Ghidra logs "File
-     * currently open - must keep checked-out"), so keepCheckedOut=false only
-     * actually drops the server checkout once the object is closed.
-     *
-     * @param path            project path of the file (e.g. "/scratch/writetest");
-     *                        null/empty uses the current program's own file
-     * @param comment         checkin comment (also used for the pre-checkin save)
-     * @param keepCheckedOut  keep the file checked out after the new version lands
-     * @return result map with status/version_before/version/version_bumped, or error
-     */
-    public Map<String, Object> checkinProgram(String path, String comment, boolean keepCheckedOut) {
-        Map<String, Object> out = new LinkedHashMap<>();
-        if (project == null) {
-            out.put("success", false);
-            out.put("error", "No project open. Call /open_project first.");
-            return out;
-        }
-        if (comment == null) {
-            comment = "";
-        }
-
-        ProjectData projectData;
-        try {
-            projectData = project.getProjectData();
-        } catch (Exception e) {
-            out.put("success", false);
-            out.put("error", "Could not access project data: " + e.getMessage());
-            return out;
-        }
-
-        Program prog;
-        DomainFile file;
-        if (path == null || path.isEmpty()) {
-            prog = currentProgram;
-            if (prog == null) {
-                out.put("success", false);
-                out.put("error", "No current program open; supply 'path'.");
-                return out;
-            }
-            file = prog.getDomainFile();
-            path = file.getPathname();
-        } else {
-            try {
-                file = projectData.getFile(path);
-            } catch (Exception e) {
-                out.put("success", false);
-                out.put("error", "Path lookup failed: " + e.getMessage());
-                return out;
-            }
-            if (file == null) {
-                out.put("success", false);
-                out.put("error", "File not found in project: " + path);
-                return out;
-            }
-            // Only treat a same-named open program as ours if its DomainFile matches.
-            Program candidate = openPrograms.get(file.getName());
-            prog = (candidate != null && file.equals(candidate.getDomainFile())) ? candidate : null;
-        }
-
-        if (!file.isVersioned()) {
-            out.put("success", false);
-            out.put("error", "File is not under version control: " + path
-                + " (add it first, or check out a versioned file)");
-            return out;
-        }
-        if (!file.isCheckedOut()) {
-            out.put("success", false);
-            out.put("error", "File is not checked out: " + path);
-            return out;
-        }
-
-        try {
-            // Save pending edits into the local project DB, then release the
-            // open object so the checkout can be dropped on checkin.
-            if (prog != null) {
-                try {
-                    if (prog.isChanged()) {
-                        prog.save(comment.isEmpty() ? "checkin" : comment, monitor);
-                    }
-                } catch (Exception e) {
-                    out.put("success", false);
-                    out.put("error", "Save before checkin failed: " + e.getMessage());
-                    return out;
-                }
-                closeProgram(prog);
-            }
-
-            int versionBefore = file.getVersion();
-            final String cmt = comment;
-            final boolean keep = keepCheckedOut;
-            file.checkin(new ghidra.framework.data.CheckinHandler() {
-                public boolean keepCheckedOut() { return keep; }
-                public String getComment() { return cmt; }
-                public boolean createKeepFile() { return false; }
-            }, monitor);
-            int versionAfter = file.getVersion();
-
-            out.put("success", true);
-            out.put("status", "checked_in");
-            out.put("path", path);
-            out.put("version_before", versionBefore);
-            out.put("version", versionAfter);
-            out.put("version_bumped", versionAfter > versionBefore);
-            out.put("checked_out", file.isCheckedOut());
-            out.put("comment", comment);
-            out.put("keep_checked_out", keepCheckedOut);
-            Msg.info(this, "Checked in " + path + " (v" + versionBefore + " -> v" + versionAfter + ")");
-            return out;
-        } catch (Exception e) {
-            Msg.error(this, "Checkin failed for " + path, e);
-            out.put("success", false);
-            out.put("error", "Checkin failed (" + e.getClass().getSimpleName() + "): " + e.getMessage());
-            return out;
-        }
     }
 
     /**
@@ -1477,6 +1257,15 @@ public class HeadlessProgramProvider implements ProgramProvider {
         return project != null ? project.getName() : null;
     }
 
+    /**
+     * Return the local project directory, or {@code null} when no project is open.
+     */
+    public String getProjectLocation() {
+        if (project == null || project.getProjectLocator() == null) {
+            return null;
+        }
+        return project.getProjectLocator().getProjectDir().getAbsolutePath();
+    }
     /**
      * Run auto-analysis on a program.
      *

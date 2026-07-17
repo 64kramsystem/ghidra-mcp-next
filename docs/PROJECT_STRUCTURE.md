@@ -1,98 +1,76 @@
-# Ghidra MCP Project Structure
+# Project Structure
 
-This guide describes the current, maintained layout of the repository. It is a
-high-level map, not a full file inventory.
-
-## Top-Level Layout
+Ghidra MCP has two runtime layers: a Java extension/headless service that owns
+Ghidra operations, and a Python bridge that exposes the discovered HTTP schema
+as MCP tools.
 
 ```text
 ghidra-mcp/
-├── README.md                    # Main project guide
-├── CHANGELOG.md                 # Version history
-├── CONTRIBUTING.md              # Contributor workflow
-├── AGENTS.md / CLAUDE.md        # AI operator guidance
-├── python/bridge_mcp_ghidra/    # Python MCP bridge package (ghidra-mcp-bridge wheel)
-├── pyproject.toml               # uv project: wheel build + PEP 735 dependency groups
-├── uv.lock                      # Pinned dependency lockfile (uv)
-├── pom.xml                      # Canonical Maven build
-├── build.gradle                 # Secondary/manual Gradle path
-├── docs/                        # Maintained documentation
-├── src/                         # Java plugin/headless server source
-├── tests/                       # Python tests
-├── debugger/                    # Standalone debugger bridge package
-├── tools/                       # Python utilities and setup helpers
-├── ghidra_scripts/              # Scripts that run inside Ghidra
-├── docker/                      # Container assets
-├── d2-analysis/                 # Diablo II workflow material
-├── dll_exports/                 # Export lists and reference data
-└── examples/                    # Examples and sample inputs
+├── src/main/java/com/xebyte/
+│   ├── GhidraMCPPlugin.java       # GUI plugin and endpoint registration
+│   ├── core/                      # analysis, program, project, and utility services
+│   └── headless/                  # local headless launcher and endpoint handler
+├── src/test/java/com/xebyte/      # offline contracts and Ghidra-aware tests
+├── python/bridge_mcp_ghidra/      # MCP bridge, schema normalization, transports
+├── tools/setup/                   # setup/build/deploy/version CLI
+├── ghidra_scripts/                # exact reviewed generic-script allowlist
+├── tests/
+│   ├── endpoints.json             # generated/curated endpoint catalog
+│   ├── unit/                      # Python offline and architecture tests
+│   ├── integration/               # optional live HTTP tests
+│   └── fixtures/                  # deterministic test inputs
+├── docs/                          # maintained guides and release notes
+├── .github/workflows/             # CI and release automation
+├── pom.xml                        # Java build
+├── pyproject.toml                 # Python package and dependency groups
+└── uv.lock                        # locked Python dependencies
 ```
 
-## Key Directories
+## Java ownership
 
-### `src/`
+- `GhidraMCPPlugin` constructs GUI services, scans `@McpTool` annotations, and
+  starts TCP/UDS HTTP transports.
+- `core/EndpointRegistry` defines the maintained headless registration surface.
+- `core/DebuggerService` is the schema-discovered TraceRMI boundary.
+- `core/BinaryComparisonService` owns evidence-only local hashes, signatures,
+  fuzzy matching, and function diffs.
+- `core/ProgramScriptService` owns local project/program and script execution;
+  script endpoints consult `SecurityConfig`.
+- `headless/` provides a local headless Ghidra process with deliberate parity
+  or explicit unsupported responses.
 
-- Java source for the GUI plugin and headless server
-- Annotation-scanned MCP endpoints live under `src/main/java/com/xebyte/`
+Caller names and comments are passed to Ghidra unchanged. Generic generated
+symbol detection is read-only and used only for filtering/audit signals.
 
-### `tests/`
+## Python ownership
 
-- Python unit, integration, and performance tests
-- `tests/endpoints.json` is the maintained endpoint catalog snapshot
+The `bridge_mcp_ghidra` package:
 
-### `tools/`
+- discovers running GUI/headless instances;
+- fetches the endpoint schema;
+- converts endpoint paths into stable MCP names;
+- provides management tools such as `search_tools`, `list_tool_groups`, and
+  `load_tool_group`;
+- forwards calls over local UDS or TCP; and
+- optionally serves stdio, Streamable HTTP, or legacy SSE MCP transports.
 
-- Python-native repo utilities
-- `tools/setup/` is the supported setup/build/deploy/versioning interface
+It does not implement a second debugger or analysis engine.
 
-### `docs/`
+## Catalog and parity
 
-- Maintained guides, prompt docs, and release notes
-- Use `docs/README.md` as the entry point
+`tests/endpoints.json` is part of the public contract. Endpoint-changing commits
+must regenerate it and pass Java parity plus Python catalog tests. The 18
+`/debugger/*` routes remain schema-discovered and normalize to clean
+`debugger_*` names.
 
-### `ghidra_scripts/`
+## Build and package outputs
 
-- Scripts intended to run inside Ghidra's Script Manager
-- Distinct from the Python MCP bridge and external repo tooling
+Maven produces the extension archive and headless assembly under `target/`:
 
-### `debugger/`
+```bash
+python -m tools.setup build
+mvn clean package assembly:single -DskipTests
+```
 
-- Standalone Python debugger server used by the bridge when debugger support is enabled
-
-### `d2-analysis/`
-
-- Diablo II-specific notes, examples, outputs, and workflow material
-- Not part of the core build/deploy path
-
-## Supported Operator Workflow
-
-The supported cross-platform operator surface is:
-
-- `python -m tools.setup preflight`
-- `python -m tools.setup ensure-prereqs`
-- `python -m tools.setup build`
-- `python -m tools.setup deploy`
-- `python -m tools.setup start-ghidra`
-- `python -m tools.setup run-tests`
-- `python -m tools.setup bump-version --new X.Y.Z`
-
-Do not add new documentation that points users at removed wrapper-script
-workflows.
-
-## Quick Navigation
-
-| Task | Location |
-|------|----------|
-| Install and deploy | `python -m tools.setup ...` in the repo root |
-| Run the MCP bridge | `uv run bridge-mcp-ghidra` (or `python -m bridge_mcp_ghidra`) |
-| Read release notes | `docs/releases/` |
-| Read prompt docs | `docs/prompts/` |
-| Run Python tests | `tests/` |
-| Work on Java plugin code | `src/main/java/com/xebyte/` |
-| Run Ghidra scripts | `ghidra_scripts/` |
-
-## Maintenance Notes
-
-- Keep this file aligned with the real top-level repo layout.
-- Prefer category-level descriptions over stale file-by-file inventories.
-- Historical cleanup plans belong in archival/project-management docs, not here.
+The Python wheel contains only `python/bridge_mcp_ghidra`. `uv` dependency
+groups provide development and test tooling.

@@ -3,13 +3,9 @@
 // Downloads the matching PDB for the current program from Microsoft's symbol
 // server (msdl.microsoft.com) and applies it. Surfaces real names + signatures
 // + parameter types for statically-linked MSVC CRT / VC-runtime / iostream
-// code, eliminating the need for fun-doc workers to spend LLM tokens
-// classifying or naming this code.
-//
-// Pairs with `fun-doc/library_code_detector.py`: PDB handles what Microsoft
-// published (CRT, MSVCRT, MFC, etc.); the heuristic detector catches the rest
-// (statically-linked code without PdbInformation metadata, e.g. third-party
-// builds linked without /DEBUG).
+// code, reducing manual effort spent classifying or naming library code. PDB
+// coverage is limited to symbols Microsoft published; statically linked code
+// without PdbInformation metadata still requires ordinary analysis.
 //
 // Installation: copy this file into your Ghidra user scripts directory:
 //   Windows: %USERPROFILE%\ghidra_scripts\

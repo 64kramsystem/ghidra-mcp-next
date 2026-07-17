@@ -43,7 +43,6 @@ def build_rules(
             rf"(<packaging>jar</packaging>\s*<version>){escaped_old}(</version>)",
             rf"\g<1>{new_version}\g<2>",
         ),
-        ReplacementRule(repo_root / "pom.xml", rf"v{escaped_old}:", f"v{new_version}:"),
         # Python distribution version (source of truth for the wheel).
         ReplacementRule(
             repo_root / "pyproject.toml",

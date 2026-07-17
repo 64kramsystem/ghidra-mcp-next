@@ -847,46 +847,6 @@ class TestAutoConnectMultiInstance(unittest.TestCase):
         self.assertIsNone(bridge.state._active_tcp)
 
 
-class TestDebuggerAttachAddressSync(unittest.TestCase):
-    """debugger_attach must read image_base directly from
-    /list_open_programs entries (not the plain-text /get_metadata
-    endpoint, where json.loads() always failed and the auto-sync
-    silently never fired)."""
-
-    def test_uses_image_base_from_list_open_programs(self):
-        import bridge_mcp_ghidra as bridge
-
-        programs_payload = json.dumps([
-            {"path": "/proj/Foo.exe", "name": "Foo.exe", "image_base": "0x400000"},
-            {"path": "/proj/Bar.dll", "name": "Bar.dll", "image_base": "0x10000000"},
-        ])
-        debugger_calls = []
-
-        def fake_debugger_request(method, path, body=None, **kw):
-            debugger_calls.append((method, path, body))
-            return '{"status":"ok"}'
-
-        def fake_dispatch_get(path, params=None):
-            if path == "/list_open_programs":
-                return programs_payload
-            raise AssertionError(
-                f"unexpected GET {path} — auto-sync must not call "
-                "/get_metadata or any other endpoint"
-            )
-
-        with patch.object(bridge.debugger, "_debugger_request",
-                          side_effect=fake_debugger_request), \
-             patch.object(bridge.dispatch, "dispatch_get", side_effect=fake_dispatch_get), \
-             patch.object(bridge.state, "_transport_mode", "tcp"):
-            bridge.debugger_attach("12345")
-
-        sync = [c for c in debugger_calls if c[1] == "/debugger/sync_modules"]
-        self.assertEqual(len(sync), 1, "auto-sync did not fire")
-        bases = sync[0][2].get("ghidra_bases", {})
-        self.assertEqual(bases.get("/proj/Foo.exe"), "0x400000")
-        self.assertEqual(bases.get("/proj/Bar.dll"), "0x10000000")
-
-
 class TestIsPidAlive(unittest.TestCase):
     """Test PID liveness check."""
 
@@ -1375,117 +1335,24 @@ class TestUnixHTTPConnection(unittest.TestCase):
         self.assertEqual(conn.timeout, 10)
 
 
-class TestDebuggerEnabled(unittest.TestCase):
-    """_debugger_enabled gates the WinDbg debugger proxy tools.
+def test_trace_rmi_debugger_endpoint_keeps_clean_name():
+    import bridge_mcp_ghidra as bridge
 
-    The standalone debugger server (debugger/server.py) wraps dbgeng and only
-    runs on Windows, so a *local* debugger URL can never serve on a non-Windows
-    host. Registration is gated accordingly to keep the tool list uncluttered.
-    """
-
-    def test_disabled_on_non_windows_with_local_url(self):
-        from bridge_mcp_ghidra import _debugger_enabled
-
-        self.assertFalse(
-            _debugger_enabled(url="http://127.0.0.1:8099", platform="linux", override=None)
-        )
-
-    def test_disabled_on_non_windows_with_localhost_name(self):
-        from bridge_mcp_ghidra import _debugger_enabled
-
-        self.assertFalse(
-            _debugger_enabled(url="http://localhost:8099", platform="darwin", override=None)
-        )
-
-    def test_disabled_on_non_windows_with_ipv6_loopback(self):
-        from bridge_mcp_ghidra import _debugger_enabled
-
-        self.assertFalse(
-            _debugger_enabled(url="http://[::1]:8099", platform="linux", override=None)
-        )
-
-    def test_enabled_on_non_windows_with_remote_host(self):
-        """A remote Windows host running the server is reachable from Linux."""
-        from bridge_mcp_ghidra import _debugger_enabled
-
-        self.assertTrue(
-            _debugger_enabled(url="http://winbox.lan:8099", platform="linux", override=None)
-        )
-
-    def test_enabled_on_windows_with_local_url(self):
-        from bridge_mcp_ghidra import _debugger_enabled
-
-        self.assertTrue(
-            _debugger_enabled(url="http://127.0.0.1:8099", platform="win32", override=None)
-        )
-
-    def test_override_forces_off_even_on_windows(self):
-        from bridge_mcp_ghidra import _debugger_enabled
-
-        self.assertFalse(
-            _debugger_enabled(url="http://127.0.0.1:8099", platform="win32", override="0")
-        )
-
-    def test_override_forces_on_even_on_linux_local(self):
-        from bridge_mcp_ghidra import _debugger_enabled
-
-        self.assertTrue(
-            _debugger_enabled(url="http://127.0.0.1:8099", platform="linux", override="1")
-        )
-
-    def test_blank_override_is_ignored(self):
-        """An empty string (e.g. unset-but-present env) falls back to auto-detect."""
-        from bridge_mcp_ghidra import _debugger_enabled
-
-        self.assertFalse(
-            _debugger_enabled(url="http://127.0.0.1:8099", platform="linux", override="")
-        )
+    schema = bridge._parse_schema(
+        {"tools": [{"path": "/debugger/status", "method": "GET", "params": []}]}
+    )
+    assert schema[0]["name"] == "debugger_status"
+    assert schema[0]["name_collided"] is False
 
 
-class TestDebuggerToolRegistration(unittest.TestCase):
-    """Debugger proxy tools register conditionally; their functions always exist."""
+def test_active_static_endpoint_keeps_identity_for_registration_deduplication():
+    import bridge_mcp_ghidra as bridge
 
-    def test_debugger_function_always_defined(self):
-        """The proxy functions stay importable/callable even when not registered."""
-        import bridge_mcp_ghidra as bridge
-
-        self.assertTrue(callable(bridge.debugger_attach))
-
-    def test_all_static_names_superset_of_active(self):
-        import bridge_mcp_ghidra as bridge
-
-        self.assertTrue(
-            bridge.DEBUGGER_TOOL_NAMES.issubset(bridge._ALL_STATIC_TOOL_NAMES)
-        )
-        self.assertTrue(
-            bridge.STATIC_TOOL_NAMES.issubset(bridge._ALL_STATIC_TOOL_NAMES)
-        )
-
-    @unittest.skipIf(sys.platform.startswith("win"), "proxies active on Windows")
-    def test_inactive_proxy_frees_clean_name_for_trace_rmi_tool(self):
-        """With the WinDbg proxies inactive (non-Windows local), Ghidra's own
-        TraceRmi /debugger/status (System B) gets the clean name, not _2."""
-        import bridge_mcp_ghidra as bridge
-
-        schema = bridge._parse_schema(
-            {"tools": [{"path": "/debugger/status", "method": "GET", "params": []}]}
-        )
-        self.assertEqual(schema[0]["name"], "debugger_status")
-        self.assertFalse(schema[0]["name_collided"])
-
-    @unittest.skipIf(sys.platform.startswith("win"), "debugger tools active on Windows")
-    def test_debugger_tools_not_registered_on_non_windows(self):
-        import bridge_mcp_ghidra as bridge
-
-        self.assertNotIn("debugger_attach", bridge.mcp._tool_manager._tools)
-        self.assertNotIn("debugger_attach", bridge.STATIC_TOOL_NAMES)
-
-    @unittest.skipIf(sys.platform.startswith("win"), "debugger tools active on Windows")
-    def test_management_tools_still_registered_on_non_windows(self):
-        import bridge_mcp_ghidra as bridge
-
-        self.assertIn("list_instances", bridge.mcp._tool_manager._tools)
-        self.assertIn("list_instances", bridge.STATIC_TOOL_NAMES)
+    schema = bridge._parse_schema(
+        {"tools": [{"path": "/import_file", "method": "POST", "params": []}]}
+    )
+    assert schema[0]["name"] == "import_file"
+    assert schema[0]["name_collided"] is False
 
 
 if __name__ == "__main__":

@@ -192,7 +192,7 @@ class TestJavaArchitecture(unittest.TestCase):
         expected = [
             "ListingService", "FunctionService", "CommentService",
             "SymbolLabelService", "XrefCallGraphService", "DataTypeService",
-            "AnalysisService", "DocumentationHashService",
+            "AnalysisService", "BinaryComparisonService",
             "MalwareSecurityService", "ProgramScriptService",
         ]
         for name in expected:
@@ -226,7 +226,6 @@ class TestJavaArchitecture(unittest.TestCase):
             "/mcp/health",
             "/mcp/instance_info",
             "/project/info",
-            "/server/authenticate",
             "/tool/goto_address",
             "/tool/launch_codebrowser",
             "/tool/running_tools",
@@ -243,25 +242,13 @@ class TestJavaArchitecture(unittest.TestCase):
         self.assertEqual(gui - headless - annotated, gui_only_expected)
         self.assertEqual(headless - gui - annotated, headless_only_expected)
 
-    def test_manual_admin_endpoint_params_are_cataloged(self):
-        """Hand-registered admin routes should document mode-specific params."""
-        catalog = {
-            entry["path"]: set(entry.get("params", []))
+    def test_manual_repository_server_endpoints_are_absent(self):
+        """Removed repository-server routes must not survive as catalog-only entries."""
+        paths = {
+            entry["path"]
             for entry in json.loads(ENDPOINTS_JSON.read_text())["endpoints"]
         }
-
-        expected_params = {
-            "/server/admin/terminate_all_checkouts": {"repo", "path"},
-            "/server/admin/terminate_checkout": {
-                "repo", "path", "checkoutId", "checkout_id"
-            },
-        }
-        for path, params in expected_params.items():
-            self.assertIn(path, catalog)
-            self.assertTrue(
-                params.issubset(catalog[path]),
-                f"{path} missing params: {sorted(params - catalog[path])}",
-            )
+        self.assertFalse(any(path.startswith("/server/") for path in paths))
 
 
 class TestProjectStructure(unittest.TestCase):

@@ -5,7 +5,6 @@ import com.xebyte.core.BinaryComparisonService;
 import com.xebyte.core.CommentService;
 import com.xebyte.core.DataTypeService;
 import com.xebyte.core.DebuggerService;
-import com.xebyte.core.DocumentationHashService;
 import com.xebyte.core.FunctionService;
 import com.xebyte.core.ListingService;
 import com.xebyte.core.MalwareSecurityService;
@@ -15,7 +14,6 @@ import com.xebyte.core.ProgramScriptService;
 import com.xebyte.core.SymbolLabelService;
 import com.xebyte.core.ThreadingStrategy;
 import com.xebyte.core.XrefCallGraphService;
-import com.xebyte.headless.GhidraServerManager;
 import com.xebyte.headless.HeadlessManagementService;
 import com.xebyte.headless.HeadlessProgramProvider;
 
@@ -43,16 +41,15 @@ public final class ServiceFactory {
         FunctionService functionService = new FunctionService(provider, ts);
         XrefCallGraphService xrefCallGraphService = new XrefCallGraphService(provider, ts);
         DataTypeService dataTypeService = new DataTypeService(provider, ts);
-        DocumentationHashService documentationHashService =
-            new DocumentationHashService(provider, ts, new BinaryComparisonService());
-        documentationHashService.setFunctionService(functionService);
+        BinaryComparisonService binaryComparisonService =
+            new BinaryComparisonService(provider, ts);
         AnalysisService analysisService = new AnalysisService(provider, ts, functionService);
         MalwareSecurityService malwareSecurityService = new MalwareSecurityService(provider, ts);
         ProgramScriptService programScriptService = new ProgramScriptService(provider, ts);
         EmulationService emulationService = new EmulationService(provider, ts);
 
         HeadlessManagementService headlessManagementService =
-            new HeadlessManagementService(new HeadlessProgramProvider(), new GhidraServerManager());
+            new HeadlessManagementService(new HeadlessProgramProvider());
 
         // DebuggerService uses PluginTool only at runtime; scanner only reflects on
         // method signatures, so a null tool is safe for offline scanning.
@@ -66,7 +63,7 @@ public final class ServiceFactory {
             xrefCallGraphService,
             dataTypeService,
             analysisService,
-            documentationHashService,
+            binaryComparisonService,
             malwareSecurityService,
             programScriptService,
             emulationService,

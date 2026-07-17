@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -12,7 +11,6 @@ from tools.setup.ghidra import (
     DEFAULT_MCP_URL,
     PLUGIN_CLASS,
     REQUIRED_GHIDRA_JARS,
-    _has_dependency_group,
     collect_preflight_issues,
     find_plugin_archive,
     mark_extension_known_in_tool_config,
@@ -248,7 +246,7 @@ def test_resolve_ghidra_user_dir_falls_back_to_latest_existing_dir(tmp_path: Pat
     assert resolved == latest_dir
 
 
-def test_collect_preflight_issues_reports_missing_jar_and_debugger_requirements(
+def test_collect_preflight_issues_reports_missing_jar(
     tmp_path: Path,
 ):
     ghidra_path = tmp_path / "ghidra_12.1_PUBLIC"
@@ -260,57 +258,11 @@ def test_collect_preflight_issues_reports_missing_jar_and_debugger_requirements(
     issues = collect_preflight_issues(
         tmp_path,
         ghidra_path,
-        Path(sys.executable),
-        install_debugger=True,
         strict=False,
         user_base_dir=user_base,
     )
 
     assert any("Missing required Ghidra dependency" in issue for issue in issues)
-    assert any(
-        "Debugger dependency group not found" in issue for issue in issues
-    )
-
-
-class TestHasDependencyGroup:
-    def test_true_for_real_entry(self, tmp_path: Path):
-        pyproject = tmp_path / "pyproject.toml"
-        pyproject.write_text(
-            "[dependency-groups]\ndebugger = [\"pybag==2.2.16\"]\n",
-            encoding="utf-8",
-        )
-        assert _has_dependency_group(pyproject, "debugger") is True
-
-    def test_true_for_quoted_key(self, tmp_path: Path):
-        pyproject = tmp_path / "pyproject.toml"
-        pyproject.write_text(
-            "[dependency-groups]\n\"debugger\" = [\"pybag\"]\n",
-            encoding="utf-8",
-        )
-        assert _has_dependency_group(pyproject, "debugger") is True
-
-    def test_false_when_word_only_in_comment(self, tmp_path: Path):
-        # The reviewer's false-positive case: "debugger" appears as prose but
-        # there is no resolvable dependency group, so uv sync would fail.
-        pyproject = tmp_path / "pyproject.toml"
-        pyproject.write_text(
-            "# TODO: add a debugger dependency group later\n"
-            "[dependency-groups]\ntest = [\"pytest\"]\n",
-            encoding="utf-8",
-        )
-        assert _has_dependency_group(pyproject, "debugger") is False
-
-    def test_false_when_key_in_other_section(self, tmp_path: Path):
-        pyproject = tmp_path / "pyproject.toml"
-        pyproject.write_text(
-            "[tool.something]\ndebugger = true\n"
-            "[dependency-groups]\ntest = [\"pytest\"]\n",
-            encoding="utf-8",
-        )
-        assert _has_dependency_group(pyproject, "debugger") is False
-
-    def test_false_when_file_missing(self, tmp_path: Path):
-        assert _has_dependency_group(tmp_path / "nope.toml", "debugger") is False
 
 
 def _stub_version(
@@ -323,22 +275,7 @@ def _stub_version(
 
 
 class TestFindPluginArchive:
-    def test_prefers_newest_exact_version_archive(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ):
-        _stub_version(monkeypatch, tmp_path)
-        gradle_zip = tmp_path / "build" / "distributions" / "GhidraMCP-5.4.1.zip"
-        maven_zip = tmp_path / "target" / "GhidraMCP-5.4.1.zip"
-        gradle_zip.parent.mkdir(parents=True)
-        maven_zip.parent.mkdir(parents=True)
-        gradle_zip.write_bytes(b"gradle")
-        maven_zip.write_bytes(b"maven")
-        os.utime(gradle_zip, (100, 100))
-        os.utime(maven_zip, (200, 200))
-
-        assert find_plugin_archive(tmp_path) == maven_zip
-
-    def test_falls_back_to_maven_target_when_gradle_absent(
+    def test_finds_exact_version_maven_archive(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
         _stub_version(monkeypatch, tmp_path)
@@ -348,23 +285,36 @@ class TestFindPluginArchive:
 
         assert find_plugin_archive(tmp_path) == maven_zip
 
-    def test_finds_versioned_gradle_zip_by_glob_when_name_differs(
+    def test_finds_unversioned_maven_archive(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
         _stub_version(monkeypatch, tmp_path)
-        dist_dir = tmp_path / "build" / "distributions"
-        dist_dir.mkdir(parents=True)
-        other_zip = dist_dir / "GhidraMCP-5.4.0.zip"
+        maven_zip = tmp_path / "target" / "GhidraMCP.zip"
+        maven_zip.parent.mkdir(parents=True)
+        maven_zip.write_bytes(b"maven")
+
+        assert find_plugin_archive(tmp_path) == maven_zip
+
+    def test_finds_versioned_maven_zip_by_glob_when_name_differs(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        _stub_version(monkeypatch, tmp_path)
+        target_dir = tmp_path / "target"
+        target_dir.mkdir(parents=True)
+        other_zip = target_dir / "GhidraMCP-5.4.0.zip"
         other_zip.write_bytes(b"old")
 
         assert find_plugin_archive(tmp_path) == other_zip
 
-    def test_raises_when_no_archive_exists(
+    def test_ignores_archive_outside_maven_target(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
         _stub_version(monkeypatch, tmp_path)
+        legacy_zip = tmp_path / "build" / "distributions" / "GhidraMCP-5.4.1.zip"
+        legacy_zip.parent.mkdir(parents=True)
+        legacy_zip.write_bytes(b"legacy")
 
-        with pytest.raises(FileNotFoundError, match="build/distributions"):
+        with pytest.raises(FileNotFoundError, match="target"):
             find_plugin_archive(tmp_path)
 
 
@@ -386,7 +336,7 @@ def test_start_ghidra_detaches_from_parent_session_on_posix(
         ),
     )
 
-    assert start_ghidra(ghidra_path) == 0
+    assert start_ghidra(ghidra_path, repo_root=tmp_path) == 0
     assert recorded["command"] == [str(launcher)]
     assert recorded["kwargs"]["start_new_session"] is True
 
@@ -409,7 +359,7 @@ def test_start_ghidra_does_not_detach_on_non_posix(
         ),
     )
 
-    assert start_ghidra(ghidra_path) == 0
+    assert start_ghidra(ghidra_path, repo_root=tmp_path) == 0
     assert recorded["kwargs"]["start_new_session"] is False
 
 
@@ -449,9 +399,6 @@ def test_collect_preflight_issues_passes_with_required_files(
         jar_path.parent.mkdir(parents=True, exist_ok=True)
         jar_path.write_text("jar", encoding="utf-8")
 
-    (tmp_path / "pyproject.toml").write_text(
-        "[dependency-groups]\ndebugger = [\"pybag==2.2.16\"]\n", encoding="utf-8"
-    )
     user_base = tmp_path / "user-ghidra"
     (user_base / "ghidra_12.1_PUBLIC").mkdir(parents=True)
     monkeypatch.setattr(
@@ -462,8 +409,6 @@ def test_collect_preflight_issues_passes_with_required_files(
     issues = collect_preflight_issues(
         tmp_path,
         ghidra_path,
-        Path(sys.executable),
-        install_debugger=True,
         strict=False,
         user_base_dir=user_base,
     )
@@ -648,16 +593,9 @@ def test_run_deploy_tests_dispatches_release_tier(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(
         ghidra, "run_release_regression_tests", lambda *args: calls.append("release")
     )
-    monkeypatch.setattr(
-        ghidra,
-        "_mcp_request",
-        lambda *args, **kwargs: calls.append("prompt_policy")
-        or (200, {"enabled": True}),
-    )
-
     run_deploy_tests(Path("C:/repo"), "http://127.0.0.1:8089", ["release"])
 
-    assert calls == ["smoke", "prompt_policy", "release"]
+    assert calls == ["smoke", "release"]
 
 
 def test_run_deploy_tests_default_does_not_import_benchmark(
@@ -682,6 +620,44 @@ def test_run_deploy_tests_default_does_not_import_benchmark(
     run_deploy_tests(Path("C:/repo"), "http://127.0.0.1:8089", [])
 
     assert calls == ["smoke"]
+
+
+def test_reset_benchmark_fixture_builds_generic_fixture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from tools.setup import ghidra
+
+    invocation: dict[str, object] = {}
+
+    class BuildInvoked(Exception):
+        pass
+
+    def fake_run(command, **kwargs):
+        invocation["command"] = command
+        invocation["kwargs"] = kwargs
+        raise BuildInvoked
+
+    monkeypatch.setattr(ghidra, "_terminate_processes_by_name", lambda _name: None)
+    monkeypatch.setattr(ghidra.subprocess, "run", fake_run)
+
+    with pytest.raises(BuildInvoked):
+        ghidra.reset_benchmark_fixture(tmp_path, "http://127.0.0.1:8089")
+
+    build_script = (
+        tmp_path / "tests" / "fixtures" / "ghidra_benchmark" / "build.py"
+    )
+    assert invocation == {
+        "command": [sys.executable, str(build_script)],
+        "kwargs": {"cwd": tmp_path, "check": True},
+    }
+
+
+def test_benchmark_regression_dir_uses_generic_fixture(tmp_path: Path):
+    from tools.setup import ghidra
+
+    assert ghidra._benchmark_regression_dir(tmp_path) == (
+        tmp_path / "tests" / "fixtures" / "ghidra_benchmark" / "regression"
+    )
 
 
 # ---------------------------------------------------------------------------
