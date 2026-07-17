@@ -1,20 +1,16 @@
-"""Live integration tests for v5.7.0 global-variable enforcement.
+"""Live integration tests for global-variable endpoints.
 
-Exercises the new endpoints — `audit_global`, `set_global` — and the
-validator hooks added to `rename_data` and `rename_global_variable`.
-Each rejection code from `NamingConventions.checkGlobalNameQuality`
-is hit by sending a deliberately-bad name and asserting the structured
-rejection comes back.
+Exercises `audit_global`, `set_global`, and `rename_data`, including the
+compatibility contract that caller-supplied names and comments are passed to
+Ghidra without project-specific naming-policy enforcement.
 
 Strategy:
   * Use `list_data_items` to find a real global address in the loaded
     program. We don't pick the address blindly; we read the current
     state first so we can restore at the end.
-  * For rejection tests, send the bad input and assert the response
-    has `status: "rejected"` with the expected `error` / `issue` —
-    we never need to actually mutate state.
-  * For success tests, write a known value, verify, then write the
-    original value back.
+  * For success tests, write a known value, verify, then restore the original
+    value in a `finally` block.
+  * Structural type validation remains covered without mutating state.
 
 Tagged `safe_write` because the success-path tests do mutate program
 state, but always restore it. Run with:
@@ -114,72 +110,37 @@ def test_audit_global_unknown_address_errors_cleanly(http_client):
     assert response.status_code < 500, response.text
 
 
-# ---------- rename_data validator ----------
+# ---------- rename_data unrestricted naming ----------
 
 
-def test_rename_data_rejects_missing_g_prefix(http_client, sample_global_address):
-    """A name without the g_ prefix is hard-rejected via the validator."""
-    response = http_client.post(
-        "/rename_data",
-        json_data={
-            "address": sample_global_address,
-            "newName": "dwActiveQuestState",  # missing g_ prefix
-        },
-    )
-    assert response.status_code == 200, response.text
+def test_rename_data_accepts_caller_naming_convention(http_client, sample_global_address):
+    """A FileZilla-style name is passed to Ghidra unchanged and can be restored."""
     import json
-    body = json.loads(response.text)
-    assert body.get("status") == "rejected", f"expected rejection, got: {body}"
-    assert body.get("error") == "name_quality"
-    assert body.get("issue") == "missing_g_prefix"
-    assert body.get("rejected_name") == "dwActiveQuestState"
-    # Suggestion text is present so the model has guidance.
-    assert body.get("suggestion")
 
+    before = json.loads(http_client.get(
+        "/audit_global", params={"address": sample_global_address}
+    ).text)
+    original_name = before["name"]
+    custom_name = "FileZillaRegistrationState_" + sample_global_address.removeprefix("0x")
 
-def test_rename_data_rejects_auto_generated_remnant(http_client, sample_global_address):
-    """Names that look like 'rename by stripping the auto-generated prefix'
-    (e.g., g_DAT_xxx, g_PTR_xxx) are hard-rejected."""
-    for bad in [
-        "g_DAT_6fdf64d8",
-        "g_PTR_DAT_1234",
-        "g_FUN_6fcab220",
-        "g_dw_6fdf64d8",
-    ]:
+    try:
         response = http_client.post(
             "/rename_data",
-            json_data={"address": sample_global_address, "newName": bad},
+            json_data={"address": sample_global_address, "newName": custom_name},
         )
         assert response.status_code == 200, response.text
-        import json
         body = json.loads(response.text)
-        assert body.get("status") == "rejected", f"{bad}: expected reject, got {body}"
-        assert body.get("issue") == "auto_generated_remnant", f"{bad}: wrong issue"
-
-
-def test_rename_data_rejects_short_descriptor(http_client, sample_global_address):
-    """g_dwX has only a 1-char descriptor — rejected."""
-    response = http_client.post(
-        "/rename_data",
-        json_data={"address": sample_global_address, "newName": "g_dwX"},
-    )
-    import json
-    body = json.loads(response.text)
-    assert body.get("status") == "rejected"
-    assert body.get("issue") == "short_descriptor"
-
-
-def test_rename_data_rejects_missing_hungarian(http_client, sample_global_address):
-    """A name with g_ prefix but no Hungarian after it (e.g., g_ActiveState)
-    fails the Hungarian-prefix check."""
-    response = http_client.post(
-        "/rename_data",
-        json_data={"address": sample_global_address, "newName": "g_ActiveState"},
-    )
-    import json
-    body = json.loads(response.text)
-    assert body.get("status") == "rejected"
-    assert body.get("issue") == "missing_hungarian_prefix"
+        assert body.get("status") == "success", body
+        after = json.loads(http_client.get(
+            "/audit_global", params={"address": sample_global_address}
+        ).text)
+        assert after["name"] == custom_name
+    finally:
+        if original_name:
+            http_client.post(
+                "/rename_data",
+                json_data={"address": sample_global_address, "newName": original_name},
+            )
 
 
 # ---------- set_global ----------
@@ -220,42 +181,44 @@ def test_set_global_rejects_unknown_type(http_client, sample_global_address):
     assert body.get("suggestion")
 
 
-def test_set_global_rejects_short_plate_comment(http_client, sample_global_address):
-    """Plate comments must have a ≥4-word first-line summary."""
-    response = http_client.post(
-        "/set_global",
-        json_data={
-            "address": sample_global_address,
-            "plate_comment": "global counter",  # only 2 words
-        },
-    )
+def test_set_global_accepts_caller_name_and_short_comment(http_client, sample_global_address):
+    """Wine-style names and concise comments are passed through unchanged."""
     import json
-    body = json.loads(response.text)
-    assert body.get("status") == "rejected"
-    assert body.get("error") == "plate_comment_too_short"
-    assert body.get("first_line") == "global counter"
 
+    before = json.loads(http_client.get(
+        "/audit_global", params={"address": sample_global_address}
+    ).text)
+    original_name = before["name"]
+    original_plate = before.get("plate_comment") or ""
+    custom_name = "wine_loader_state_" + sample_global_address.removeprefix("0x")
 
-def test_set_global_rejects_bad_name(http_client, sample_global_address):
-    """Pre-flight rejects the bad name BEFORE the transaction starts.
-
-    Use a plain identifier (not an auto-generated Ghidra default like
-    ``DAT_xxx``): those are intentionally exempt — renaming back to them
-    is treated as 'revert to default' and the unrenamed-globals
-    deduction is applied at the scoring layer instead.
-    See NamingConventions.isAutoGeneratedGlobalName / line ~962."""
-    response = http_client.post(
-        "/set_global",
-        json_data={
-            "address": sample_global_address,
-            "name": "randomBadName",  # missing g_, not auto-gen
-            "plate_comment": "Pointer to the head of the unit list",
-        },
-    )
-    import json
-    body = json.loads(response.text)
-    assert body.get("status") == "rejected"
-    assert body.get("error") == "name_quality"
+    try:
+        response = http_client.post(
+            "/set_global",
+            json_data={
+                "address": sample_global_address,
+                "name": custom_name,
+                "plate_comment": "wine state",
+            },
+        )
+        assert response.status_code == 200, response.text
+        body = json.loads(response.text)
+        assert body.get("status") == "success", body
+        assert "name" in body.get("applied", [])
+        assert "plate_comment" in body.get("applied", [])
+    finally:
+        if original_name:
+            http_client.post(
+                "/rename_data",
+                json_data={"address": sample_global_address, "newName": original_name},
+            )
+        http_client.post(
+            "/batch_set_comments",
+            json_data={
+                "address": sample_global_address,
+                "plate_comment": original_plate,
+            },
+        )
 
 
 def test_set_global_no_partial_application_on_rejection(http_client, sample_global_address):

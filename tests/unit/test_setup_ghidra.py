@@ -593,16 +593,9 @@ def test_run_deploy_tests_dispatches_release_tier(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(
         ghidra, "run_release_regression_tests", lambda *args: calls.append("release")
     )
-    monkeypatch.setattr(
-        ghidra,
-        "_mcp_request",
-        lambda *args, **kwargs: calls.append("prompt_policy")
-        or (200, {"enabled": True}),
-    )
-
     run_deploy_tests(Path("C:/repo"), "http://127.0.0.1:8089", ["release"])
 
-    assert calls == ["smoke", "prompt_policy", "release"]
+    assert calls == ["smoke", "release"]
 
 
 def test_run_deploy_tests_default_does_not_import_benchmark(

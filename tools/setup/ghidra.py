@@ -1968,15 +1968,6 @@ def run_release_regression_tests(repo_root: Path, mcp_url: str) -> None:
 
 def run_deploy_tests(repo_root: Path, mcp_url: str, test_modes: list[str]) -> None:
     run_default_smoke_test(repo_root, mcp_url)
-    if _deploy_tests_use_benchmark(test_modes):
-        _mcp_request(
-            repo_root,
-            mcp_url,
-            "/prompt_policy",
-            data={"action": "enable", "reason": "deploy_tests", "seconds": 300},
-            method="POST",
-            timeout=10,
-        )
     for mode in test_modes:
         if mode == "endpoint-catalog":
             run_endpoint_catalog_test(repo_root, mcp_url)

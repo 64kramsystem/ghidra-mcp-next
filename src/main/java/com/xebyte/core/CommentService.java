@@ -215,15 +215,8 @@ public class CommentService {
         }
 
         if (success.get()) {
-            List<String> plateWarnings = NamingConventions.validatePlateCommentStructure(comment);
-            if (plateWarnings.isEmpty()) {
-                return Response.ok(JsonHelper.mapOf("status", "success", "message",
-                        "Set plate comment for function at " + functionAddress));
-            } else {
-                return Response.ok(JsonHelper.mapOf("status", "success", "message",
-                        "Set plate comment for function at " + functionAddress,
-                        "warnings", plateWarnings));
-            }
+            return Response.ok(JsonHelper.mapOf("status", "success", "message",
+                    "Set plate comment for function at " + functionAddress));
         }
         return Response.err(errorMsg.get() != null ? errorMsg.get() : "Unknown failure");
     }
@@ -259,38 +252,6 @@ public class CommentService {
             if (funcAddr == null) return Response.err(ServiceUtils.getLastParseError());
         } else {
             funcAddr = null;
-        }
-
-        // Pre-flight plate-quality gate (option B enforcement). When the
-        // target address is a data global (defined data, no function),
-        // applying a sub-quality plate via batch_set_comments would have
-        // been an escape hatch around set_global's upfront validator. Run
-        // the same check that set_global runs so a single-tool plate write
-        // can't ship a 1-word summary into a global. Function-target plate
-        // comments retain the existing (warning-only) flow because
-        // function plates have their own structural rules in
-        // validatePlateCommentStructure called below.
-        if (funcAddr != null
-                && plateComment != null
-                && !plateComment.equals("null")
-                && !plateComment.isEmpty()) {
-            Function preFunc = program.getFunctionManager().getFunctionAt(funcAddr);
-            if (preFunc == null) {
-                Data preData = program.getListing().getDefinedDataAt(funcAddr);
-                if (preData != null) {
-                    String[] plateIssue = NamingConventions.checkGlobalPlateComment(plateComment);
-                    if (plateIssue != null) {
-                        return Response.ok(JsonHelper.mapOf(
-                                "status", "rejected",
-                                "error", plateIssue[0],
-                                "address", functionAddress,
-                                "first_line", plateIssue[1],
-                                "message", "Plate-comment first line must be a >=4-word summary describing what the global represents.",
-                                "suggestion", "Replace with a one-liner like 'Bitmap of currently-active quests for the player' or 'Pointer to the head of the linked unit list.'"
-                        ));
-                    }
-                }
-            }
         }
 
         final AtomicBoolean success = new AtomicBoolean(false);
@@ -407,11 +368,6 @@ public class CommentService {
             return Response.err(errorMsg.get() != null ? errorMsg.get() : "Unknown failure");
         }
 
-        // Validate plate comment structure (apply + warn)
-        List<String> plateWarnings = (plateSet.get() && plateComment != null && !plateComment.isEmpty())
-                ? NamingConventions.validatePlateCommentStructure(plateComment)
-                : List.of();
-
         Map<String, Object> resultMap = new LinkedHashMap<>();
         resultMap.put("success", true);
         resultMap.put("decompiler_comments_set", decompilerCount.get());
@@ -419,9 +375,6 @@ public class CommentService {
         resultMap.put("plate_comment_set", plateSet.get());
         resultMap.put("plate_comment_cleared", plateSet.get() && plateComment != null && plateComment.isEmpty());
         resultMap.put("comments_overwritten", overwrittenCount.get());
-        if (!plateWarnings.isEmpty()) {
-            resultMap.put("warnings", plateWarnings);
-        }
         return Response.ok(resultMap);
     }
 
