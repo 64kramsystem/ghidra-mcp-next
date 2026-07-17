@@ -336,7 +336,7 @@ def test_start_ghidra_detaches_from_parent_session_on_posix(
         ),
     )
 
-    assert start_ghidra(ghidra_path) == 0
+    assert start_ghidra(ghidra_path, repo_root=tmp_path) == 0
     assert recorded["command"] == [str(launcher)]
     assert recorded["kwargs"]["start_new_session"] is True
 
@@ -359,7 +359,7 @@ def test_start_ghidra_does_not_detach_on_non_posix(
         ),
     )
 
-    assert start_ghidra(ghidra_path) == 0
+    assert start_ghidra(ghidra_path, repo_root=tmp_path) == 0
     assert recorded["kwargs"]["start_new_session"] is False
 
 
