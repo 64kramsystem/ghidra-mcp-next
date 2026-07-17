@@ -99,10 +99,7 @@ debugger_stack_trace(...)
 debugger_read_memory(...)
 ```
 
-Use `debugger_resume` for continuing execution. There is no generic TraceRMI
-attach endpoint. Planned gaps are generic selected-offer/PID attach,
-`debugger_wait_for_stop(timeout_ms)`, process memory-map enumeration, and
-`copy_debugger_memory_to_program`.
+Use `debugger_attach` for exact selected-offer/PID attachment, `debugger_resume` for continuing execution, and `debugger_wait_for_stop` for a bounded event-driven wait. Planned gaps are Process memory-map enumeration and `copy_debugger_memory_to_program`.
 
 ## Optional local BSim scripts
 
