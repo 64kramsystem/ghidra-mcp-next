@@ -365,15 +365,6 @@ class TestCallGraph:
         assert response.status_code == 200
 
 
-class TestDocumentation:
-    """Test documentation comparison endpoints (read-only)."""
-
-    def test_compare_programs_documentation(self, http_client):
-        """Compare documentation across open programs."""
-        response = http_client.get("/compare_programs_documentation")
-        assert response.status_code == 200
-
-
 class TestFunctionAnalysis:
     """Test function analysis endpoints with first available function."""
 
@@ -484,13 +475,6 @@ class TestFunctionAnalysis:
         """Get function hash."""
         response = http_client.get(
             "/get_function_hash", params={"address": first_function_address}
-        )
-        assert response.status_code == 200
-
-    def test_get_function_documentation(self, http_client, first_function_address):
-        """Get function documentation."""
-        response = http_client.get(
-            "/get_function_documentation", params={"address": first_function_address}
         )
         assert response.status_code == 200
 

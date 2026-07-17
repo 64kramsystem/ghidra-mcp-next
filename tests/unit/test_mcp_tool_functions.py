@@ -186,14 +186,14 @@ class TestPostToolDispatch(unittest.TestCase):
             },
             "required": [],
         }
-        fn = _build_tool_function("/archive_ingest_program", "POST", schema)
+        fn = _build_tool_function("/rename_function", "POST", schema)
         sig = inspect.signature(fn)
 
         self.assertEqual(list(sig.parameters).count("dry_run"), 1)
 
         fn(program="pwahelper.exe", dry_run="false")
         mock_post.assert_called_once_with(
-            "/archive_ingest_program",
+            "/rename_function",
             data={},
             query_params={"program": "pwahelper.exe", "dry_run": "false"},
         )
@@ -215,14 +215,14 @@ class TestPostToolDispatch(unittest.TestCase):
             },
             "required": ["source", "target"],
         }
-        fn = _build_tool_function("/merge_program_documentation", "POST", schema)
+        fn = _build_tool_function("/create_memory_block", "POST", schema)
         sig = inspect.signature(fn)
 
         self.assertEqual(list(sig.parameters).count("dry_run"), 1)
 
         fn(source="recovered", target="original", dry_run=True)
         mock_post.assert_called_once_with(
-            "/merge_program_documentation",
+            "/create_memory_block",
             data={"source": "recovered", "target": "original", "dry_run": True},
             query_params=None,
         )
