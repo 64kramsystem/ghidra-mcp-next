@@ -1,10 +1,10 @@
-// Ingest ALL functions from the current program into a BSim PostgreSQL database.
+// Ingest ALL functions from the current program into a caller-configured BSim database.
 // This generates BSim feature vectors (LSH signatures) for every function and
 // inserts them into the database's exetable/desctable. One-time per binary.
 //
-// Script args: [0] = BSim URL (default: postgresql://10.0.10.30:5432/bsim)
+// Script args: [0] = required BSim URL supported by the installed Ghidra client
 //
-// Usage from MCP: run_script("BSimIngestProgram", args=["postgresql://10.0.10.30:5432/bsim"])
+// Usage from MCP: run_script("BSimIngestProgram", args=["file:/absolute/path/to/local-bsim"])
 // Usage from Ghidra Script Manager: will prompt for URL if no args provided
 //
 // IMPORTANT: The program must be saved before ingestion. BSim needs a stable
@@ -36,8 +36,6 @@ import ghidra.program.model.listing.FunctionManager;
 
 public class BSimIngestProgram extends GhidraScript {
 
-    private static final String DEFAULT_BSIM_URL = "postgresql://10.0.10.30:5432/bsim";
-
     @Override
     protected void run() throws Exception {
         if (currentProgram == null) {
@@ -45,15 +43,13 @@ public class BSimIngestProgram extends GhidraScript {
             return;
         }
 
-        String bsimUrl = DEFAULT_BSIM_URL;
-
-        // Check script args first (headless/MCP mode)
         String[] args = getScriptArgs();
-        if (args != null && args.length > 0 && args[0] != null && !args[0].isEmpty()) {
-            bsimUrl = args[0].trim();
-        } else if (!isRunningHeadless()) {
-            bsimUrl = askString("BSim Ingest Program",
-                "Enter BSim database URL:", DEFAULT_BSIM_URL);
+        String bsimUrl;
+        try {
+            bsimUrl = requireBsimUrl(args, 0, "BSim Ingest Program");
+        } catch (IllegalArgumentException e) {
+            println("{\"status\": \"error\", \"error\": \"" + escapeJson(e.getMessage()) + "\"}");
+            return;
         }
 
         String programName = currentProgram.getName();
@@ -99,10 +95,7 @@ public class BSimIngestProgram extends GhidraScript {
 
             // Resolve the program's repository path for BSim tracking
             DomainFile dFile = currentProgram.getDomainFile();
-            URL fileURL = dFile.getSharedProjectURL(null);
-            if (fileURL == null) {
-                fileURL = dFile.getLocalProjectURL(null);
-            }
+            URL fileURL = dFile.getLocalProjectURL(null);
 
             String repo = null;
             String path = null;
@@ -197,6 +190,19 @@ public class BSimIngestProgram extends GhidraScript {
                 }
             }
         }
+    }
+
+    private String requireBsimUrl(String[] args, int index, String dialogTitle)
+            throws Exception {
+        if (args != null && args.length > index && args[index] != null
+                && !args[index].isBlank()) {
+            return args[index].trim();
+        }
+        if (!isRunningHeadless()) {
+            String value = askString(dialogTitle, "Enter BSim database URL:");
+            if (value != null && !value.isBlank()) return value.trim();
+        }
+        throw new IllegalArgumentException("BSim URL is required");
     }
 
     private String escapeJson(String s) {

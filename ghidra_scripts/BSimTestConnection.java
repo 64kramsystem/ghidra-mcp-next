@@ -1,7 +1,7 @@
-// Test connectivity to a BSim PostgreSQL database and report database info as JSON.
-// Script args: [0] = BSim URL (default: postgresql://10.0.10.30:5432/bsim)
+// Test connectivity to a caller-configured BSim database and report database info as JSON.
+// Script args: [0] = required BSim URL supported by the installed Ghidra client
 //
-// Usage from MCP: run_script("BSimTestConnection", args=["postgresql://10.0.10.30:5432/bsim"])
+// Usage from MCP: run_script("BSimTestConnection", args=["file:/absolute/path/to/local-bsim"])
 // Usage from Ghidra Script Manager: will prompt for URL if no args provided
 //@category BSim
 //@keybinding
@@ -21,20 +21,15 @@ import ghidra.features.bsim.query.protocol.ResponseInfo;
 
 public class BSimTestConnection extends GhidraScript {
 
-    private static final String DEFAULT_BSIM_URL = "postgresql://10.0.10.30:5432/bsim";
-
     @Override
     protected void run() throws Exception {
-        String bsimUrl = DEFAULT_BSIM_URL;
-
-        // Check script args first (headless/MCP mode)
         String[] args = getScriptArgs();
-        if (args != null && args.length > 0 && args[0] != null && !args[0].isEmpty()) {
-            bsimUrl = args[0].trim();
-        } else if (!isRunningHeadless()) {
-            // Interactive mode: prompt the user
-            bsimUrl = askString("BSim Connection Test",
-                "Enter BSim database URL:", DEFAULT_BSIM_URL);
+        String bsimUrl;
+        try {
+            bsimUrl = requireBsimUrl(args, 0, "BSim Connection Test");
+        } catch (IllegalArgumentException e) {
+            println("{\"status\": \"error\", \"error\": \"" + escapeJson(e.getMessage()) + "\"}");
+            return;
         }
 
         println("{");
@@ -116,6 +111,19 @@ public class BSimTestConnection extends GhidraScript {
                 }
             }
         }
+    }
+
+    private String requireBsimUrl(String[] args, int index, String dialogTitle)
+            throws Exception {
+        if (args != null && args.length > index && args[index] != null
+                && !args[index].isBlank()) {
+            return args[index].trim();
+        }
+        if (!isRunningHeadless()) {
+            String value = askString(dialogTitle, "Enter BSim database URL:");
+            if (value != null && !value.isBlank()) return value.trim();
+        }
+        throw new IllegalArgumentException("BSim URL is required");
     }
 
     private String escapeJson(String s) {

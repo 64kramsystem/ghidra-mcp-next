@@ -1,61 +1,67 @@
 # Ghidra Scripts
 
-This directory contains scripts that run **directly inside Ghidra** (not via MCP bridge).
+This directory is an explicit allowlist of generic scripts that run inside
+Ghidra. They supplement the native MCP endpoints without encoding a particular
+application, address layout, or repository workflow.
 
-## Script Types
+## Security gate
 
-### Java Scripts
-- **ClearCallReturnOverrides.java** - Clears incorrect CALL_RETURN flow overrides that prevent proper control flow analysis
-- **DocumentFunctionWithClaude.java** - Documents the current function by calling Claude AI with comprehensive plate comment prompt (Keybinding: Ctrl+Shift+D)
+`run_ghidra_script` and `run_script_inline` execute code inside the Ghidra
+process and are disabled by default. Set `GHIDRA_MCP_ALLOW_SCRIPTS=1` only for a
+trusted local workflow that needs them. The same files can be run interactively
+from Ghidra's Script Manager without using MCP.
 
-## How to Use These Scripts
+## Retained scripts
 
-### Method 1: Ghidra Script Manager (Recommended)
-1. Open Ghidra
-2. Go to **Window → Script Manager**
-3. Click the **"Manage Script Directories"** button (folder icon)
-4. Add this directory: `<repo>/ghidra_scripts`
-5. Click **Refresh** in Script Manager
-6. Scripts will appear in the list - double-click to run
+### BSim
 
-### Method 2: Copy to Ghidra's User Script Directory
+- `BSimTestConnection.java` checks a configured database.
+- `BSimIngestProgram.java` ingests the current analyzed program.
+- `BSimQueryFunction.java` queries one function and returns matches without
+  applying names, comments, or other metadata.
+- `BSimBulkQuery.java` queries default-named functions in one program.
 
-Copy the `.java` files from this directory into your Ghidra user script
-directory, then refresh the Script Manager in Ghidra.
+Every BSim script requires a caller-supplied URL. For example,
+`file:/absolute/path/to/local-bsim` illustrates a local database; the actual URL
+must be supported by the BSim client in the installed Ghidra version. GUI runs
+prompt for the URL when it is omitted. Headless and MCP runs return
+`BSim URL is required` instead of selecting a server implicitly.
 
-## Script Annotations
+### Repair and disassembly
 
-Ghidra scripts use special annotations:
-- `@author` - Script author
-- `@category` - Category in Script Manager (e.g., Analysis, Data)
-- `@keybinding` - Optional keyboard shortcut
-- `@menupath` - Menu location (e.g., Tools.Clear CALL_RETURN Overrides)
-- `@toolbar` - Adds toolbar button
+- `ClearAndDisasm.java`
+- `ClearCallReturnOverrides.java`
+- `DeleteFunctionAt.java`
+- `FindFunctionsAfterPadding.java`
+- `FindFunctionsAfterPaddingAllPrograms.java`
+- `FindFunctionsAtINT3.java`
+- `ProperSizeStringsScript.java`
+- `RemoveOrphanedFunctions.java`
 
-## Development Notes
+### Comment cleanup
 
-### Java Scripts
-Must extend `GhidraScript` class and have these imports:
-```java
-import ghidra.app.script.GhidraScript;
-import ghidra.program.model.listing.*;
-```
+- `ClearAllComments.java`
+- `ClearFunctionComments.java`
+- `ClearPrePostComments.java`
+- `RemoveDecompilerComments.java`
 
-### Python Scripts (Jython)
-Ghidra uses Jython 2.7, not Python 3. In Ghidra 12.1, Jython is shipped
-as an optional extension and is not enabled by default. Install it from
-**File > Install Extensions**, restart Ghidra, then refresh Script Manager
-before running `.py` scripts. Scripts must use:
-```python
-from ghidra.app.script import GhidraScript
-```
+### Datatype and symbol utilities
 
-## Difference from /scripts Directory
+- `ApplyDWORD.java`
+- `ArgumentsUnifier.py`
+- `ConvertNamespaceToClass.java`
+- `CreateFunctionsFromArray.py`
+- `FixIATExternalFunctionAddresses.java`
+- `RestoreLibraryFunctionNamesFromPlateComments.java`
+- `namespacer.py`
 
-- **`/ghidra_scripts`** - Run inside Ghidra GUI (this directory)
-- **repo utilities / MCP bridge** - Run externally from Python-based repo tools
+### Local project maintenance
 
-## Resources
+- `UpgradeAllPrograms.java`
 
-- [Ghidra Script Development Guide](https://ghidra.re/courses/GhidraClass/Intermediate/Scripting.html)
-- [GhidraScript API Documentation](https://ghidra.re/ghidra_docs/api/ghidra/app/script/GhidraScript.html)
+## Running from Ghidra
+
+Open **Window > Script Manager**, add this directory through **Manage Script
+Directories**, refresh, and run the selected script. Java scripts use Ghidra's
+bundled Java APIs. Python scripts require Ghidra's optional Jython extension,
+which uses Python 2.7 syntax.

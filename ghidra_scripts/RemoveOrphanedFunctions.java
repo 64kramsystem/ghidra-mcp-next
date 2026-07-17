@@ -18,7 +18,7 @@
 // Functions created after NULL byte sequences are likely erroneous
 // Whitelisted: thunk functions, functions starting with "_", functions in FunctionsTodo.txt
 //@author Ben Ethington
-//@category Diablo 2
+//@category Analysis
 
 import ghidra.app.script.GhidraScript;
 import ghidra.program.model.address.Address;

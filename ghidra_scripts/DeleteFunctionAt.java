@@ -12,9 +12,21 @@ import ghidra.program.model.address.*;
 public class DeleteFunctionAt extends GhidraScript {
     @Override
     protected void run() throws Exception {
-        // Target address - GetOrCreateCachedBlitCode
-        Address addr = toAddr("0x6ffb5cb8");
-        
+        String[] args = getScriptArgs();
+        Address addr = null;
+        if (args != null && args.length > 0 && args[0] != null && !args[0].isBlank()) {
+            addr = toAddr(args[0].trim());
+        } else if (currentAddress != null) {
+            addr = currentAddress;
+        } else if (!isRunningHeadless()) {
+            addr = askAddress("Delete Function", "Function address:");
+        }
+
+        if (addr == null) {
+            printerr("Function address is required");
+            return;
+        }
+
         FunctionManager funcMgr = currentProgram.getFunctionManager();
         Function func = funcMgr.getFunctionAt(addr);
         
