@@ -47,8 +47,7 @@ param(
     [switch]$NoAutoPrereqs = $false,
     [switch]$DryRun = $false,
     [switch]$Force = $false,
-    [string]$AutoOpen = "",
-    [string]$ServerPassword = ""
+    [string]$AutoOpen = ""
 )
 
 # Color output functions
@@ -80,7 +79,6 @@ function Show-Usage {
     Write-Host "  -SkipBuild       Deploy existing artifact without rebuilding"
     Write-Host "  -SkipRestart     Do not restart Ghidra after deployment"
     Write-Host "  -AutoOpen        Auto-open program on restart (e.g., 'F:\GhidraProjects\diablo2|/LoD/1.00/D2Common.dll')"
-    Write-Host "  -ServerPassword  Auto-fill Ghidra server password dialog on startup"
     Write-Host "  -Force           Reinstall dependencies even if already present"
     Write-Host "  -DryRun          Print actions without executing commands"
     Write-Host "  -Verbose         Verbose logging"
@@ -1278,25 +1276,6 @@ if (Test-Path $destinationPath) {
                     Write-LogWarning "Could not inject auto-open: $($_.Exception.Message)"
                 }
             }
-        }
-
-        # Programmatic server authentication via env var.
-        # Password resolution order: -ServerPassword param > GHIDRA_SERVER_PASSWORD env var > .ghidra-cred file
-        # The GhidraMCPPlugin constructor reads GHIDRA_SERVER_PASSWORD and registers a
-        # ClientAuthenticator that handles server auth without GUI dialogs.
-        $resolvedPassword = $ServerPassword
-        if (-not $resolvedPassword) {
-            $resolvedPassword = $env:GHIDRA_SERVER_PASSWORD
-        }
-        if (-not $resolvedPassword) {
-            $credFile = Join-Path $PSScriptRoot ".ghidra-cred"
-            if (Test-Path $credFile) {
-                $resolvedPassword = (Get-Content $credFile -Raw -ErrorAction SilentlyContinue).Trim()
-            }
-        }
-        if ($resolvedPassword) {
-            $env:GHIDRA_SERVER_PASSWORD = $resolvedPassword
-            Write-LogInfo "Server credentials configured via GHIDRA_SERVER_PASSWORD (auth dialog will be bypassed)"
         }
 
         Write-LogInfo "Starting Ghidra..."

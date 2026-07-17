@@ -14,7 +14,6 @@ import com.xebyte.core.ProgramScriptService;
 import com.xebyte.core.SymbolLabelService;
 import com.xebyte.core.ThreadingStrategy;
 import com.xebyte.core.XrefCallGraphService;
-import com.xebyte.headless.GhidraServerManager;
 import com.xebyte.headless.HeadlessManagementService;
 import com.xebyte.headless.HeadlessProgramProvider;
 
@@ -50,7 +49,7 @@ public final class ServiceFactory {
         EmulationService emulationService = new EmulationService(provider, ts);
 
         HeadlessManagementService headlessManagementService =
-            new HeadlessManagementService(new HeadlessProgramProvider(), new GhidraServerManager());
+            new HeadlessManagementService(new HeadlessProgramProvider());
 
         // DebuggerService uses PluginTool only at runtime; scanner only reflects on
         // method signatures, so a null tool is safe for offline scanning.

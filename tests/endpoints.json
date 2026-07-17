@@ -1,7 +1,7 @@
 {
   "version": "5.15.0",
   "description": "GhidraMCP REST API Endpoint Specification",
-  "total_endpoints": 249,
+  "total_endpoints": 230,
   "categories": {
     "listing": "List program data",
     "getter": "Get specific data",
@@ -14,7 +14,6 @@
     "analysis": "Analysis tools",
     "program": "Program management",
     "project": "Project lifecycle management",
-    "server": "Server connection and version control",
     "script": "Script execution",
     "utility": "Utility endpoints",
     "emulation": "P-code emulation (run functions with controlled inputs)"
@@ -379,17 +378,6 @@
       "category": "utility",
       "params": [],
       "description": "Health check endpoint"
-    },
-    {
-      "path": "/checkin_program",
-      "method": "POST",
-      "category": "headless",
-      "params": [
-        "path",
-        "comment",
-        "keep_checked_out"
-      ],
-      "description": "Check an open program back in to the shared Ghidra Server as a new version"
     },
     {
       "path": "/clear_flow_and_repair",
@@ -2261,179 +2249,6 @@
         "program"
       ],
       "description": "Search defined strings by a regex/substring pattern"
-    },
-    {
-      "path": "/server/admin/set_permissions",
-      "method": "POST",
-      "category": "server",
-      "params": [
-        "repo",
-        "user",
-        "accessLevel"
-      ],
-      "description": "Set user permissions on a repository"
-    },
-    {
-      "path": "/server/admin/terminate_all_checkouts",
-      "method": "POST",
-      "category": "server",
-      "params": [
-        "repo",
-        "path"
-      ],
-      "description": "Terminate all checkouts in a folder recursively"
-    },
-    {
-      "path": "/server/admin/terminate_checkout",
-      "method": "POST",
-      "category": "server",
-      "params": [
-        "repo",
-        "path",
-        "checkoutId",
-        "checkout_id"
-      ],
-      "description": "Terminate all checkouts on a single file"
-    },
-    {
-      "path": "/server/admin/users",
-      "method": "GET",
-      "category": "server",
-      "params": [],
-      "description": "List all users on the server"
-    },
-    {
-      "path": "/server/authenticate",
-      "method": "POST",
-      "category": "server",
-      "params": [
-        "username",
-        "password"
-      ],
-      "description": "Register server credentials for programmatic authentication"
-    },
-    {
-      "path": "/server/checkouts",
-      "method": "GET",
-      "category": "server",
-      "params": [
-        "path"
-      ],
-      "description": "List all checked-out files in a folder, including server-side checkouts"
-    },
-    {
-      "path": "/server/connect",
-      "method": "POST",
-      "category": "server",
-      "params": [
-        "host",
-        "port"
-      ],
-      "description": "Connect to a Ghidra server"
-    },
-    {
-      "path": "/server/disconnect",
-      "method": "POST",
-      "category": "server",
-      "params": [],
-      "description": "Disconnect from the Ghidra server"
-    },
-    {
-      "path": "/server/repositories",
-      "method": "GET",
-      "category": "server",
-      "params": [],
-      "description": "List repositories on the connected server"
-    },
-    {
-      "path": "/server/repository/create",
-      "method": "POST",
-      "category": "server",
-      "params": [
-        "name"
-      ],
-      "description": "Create a new repository on the server"
-    },
-    {
-      "path": "/server/repository/file",
-      "method": "GET",
-      "category": "server",
-      "params": [
-        "repo",
-        "path"
-      ],
-      "description": "Get file info from a server repository"
-    },
-    {
-      "path": "/server/repository/files",
-      "method": "GET",
-      "category": "server",
-      "params": [
-        "repo",
-        "path"
-      ],
-      "description": "List files in a server repository folder"
-    },
-    {
-      "path": "/server/status",
-      "method": "GET",
-      "category": "headless",
-      "params": [],
-      "description": "Check headless server connection status"
-    },
-    {
-      "path": "/server/version_control/add",
-      "method": "POST",
-      "category": "server",
-      "params": [
-        "repo",
-        "path",
-        "comment",
-        "keepCheckedOut"
-      ],
-      "description": "Add a file to version control"
-    },
-    {
-      "path": "/server/version_control/checkin",
-      "method": "POST",
-      "category": "server",
-      "params": [
-        "repo",
-        "path",
-        "comment",
-        "keepCheckedOut"
-      ],
-      "description": "Check in a version-controlled file"
-    },
-    {
-      "path": "/server/version_control/checkout",
-      "method": "POST",
-      "category": "server",
-      "params": [
-        "repo",
-        "path"
-      ],
-      "description": "Check out a version-controlled file"
-    },
-    {
-      "path": "/server/version_control/undo_checkout",
-      "method": "POST",
-      "category": "server",
-      "params": [
-        "repo",
-        "path"
-      ],
-      "description": "Undo a file checkout"
-    },
-    {
-      "path": "/server/version_history",
-      "method": "GET",
-      "category": "server",
-      "params": [
-        "repo",
-        "path"
-      ],
-      "description": "Get version history for a file"
     },
     {
       "path": "/set_bookmark",
