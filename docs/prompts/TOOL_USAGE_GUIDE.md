@@ -113,6 +113,7 @@ debugger_launch(offer=..., arguments=...)
 debugger_status()
 debugger_traces()
 debugger_modules()
+debugger_memory_maps(...)
 debugger_static_to_dynamic(...)
 debugger_set_breakpoint(...)
 debugger_resume()
@@ -129,9 +130,8 @@ Before setting a runtime breakpoint, obtain the module/trace state and use
 `debugger_static_to_dynamic`. After a stop, re-read status rather than assuming
 the last action completed synchronously.
 
-Generic selected-offer/PID attachment is available through `debugger_attach`, and `debugger_wait_for_stop` provides bounded event-driven waiting. Planned additions are:
+Generic selected-offer/PID attachment is available through `debugger_attach`, `debugger_wait_for_stop` provides bounded event-driven waiting, and `debugger_memory_maps` enumerates current trace regions. The planned addition is:
 
-- Process memory-map enumeration.
 - `copy_debugger_memory_to_program`, creating/populating a program block from a trace range.
 
 Do not invent the remaining tool names or emulate them by repeatedly calling unrelated tools. If a workflow requires one today, record the limitation.

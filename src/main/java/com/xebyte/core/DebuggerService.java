@@ -1212,6 +1212,37 @@ public class DebuggerService {
         }
     }
 
+    @McpTool(path = "/debugger/memory_maps",
+            description = "List memory regions at the active trace snapshot, optionally by process PID")
+    public Response memoryMaps(
+            @Param(value = "pid", defaultValue = "0",
+                    description = "Optional process PID; zero lists every process") long pid) {
+        if (pid < 0) {
+            return Response.err("PID must be non-negative");
+        }
+        TraceContext ctx = getContext();
+        if (ctx == null) return noTrace();
+
+        try {
+            Collection<? extends ghidra.trace.model.memory.TraceMemoryRegion> regions =
+                    ctx.trace.getMemoryManager().getRegionsAtSnap(ctx.snap);
+            List<DebuggerMemorySemantics.RegionInfo> regionInfo = regions.stream()
+                    .map(region -> DebuggerMemorySemantics.fromRegion(region, ctx.snap))
+                    .toList();
+            Long requestedPid = pid == 0 ? null : pid;
+            List<Map<String, Object>> described =
+                    DebuggerMemorySemantics.describeRegions(regionInfo, requestedPid);
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("snap", ctx.snap);
+            response.put("pid", requestedPid);
+            response.put("count", described.size());
+            response.put("regions", described);
+            return Response.ok(response);
+        } catch (Exception e) {
+            return Response.err("Failed to list debugger memory maps: " + e.getMessage());
+        }
+    }
+
     // ========================================================================
     // Address translation
     // ========================================================================

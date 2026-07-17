@@ -76,15 +76,15 @@ def test_docs_name_the_retained_dynamic_contract():
     assert "debugger_launch" in text
     assert "debugger_attach" in text
     assert "debugger_wait_for_stop" in text
+    assert "debugger_memory_maps" in text
     assert "debugger_set_breakpoint" in text
     assert "debugger_read_memory" in text
     assert "debugger_resume" in text
     assert "There is no generic TraceRMI attach endpoint" not in text
 
 
-def test_docs_name_the_two_remaining_debugger_gaps():
+def test_docs_name_the_remaining_debugger_gap():
     text = _maintained_text()
-    assert "Process memory-map enumeration" in text
     assert "copy_debugger_memory_to_program" in text
 
 

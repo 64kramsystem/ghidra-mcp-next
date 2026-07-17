@@ -1,7 +1,7 @@
 # MCP catalog context analysis
 
 The authoritative catalog is [`../tests/endpoints.json`](../tests/endpoints.json).
-It currently contains 231 endpoints. Do not maintain a separate hand-count in
+It currently contains 232 endpoints. Do not maintain a separate hand-count in
 analysis tooling: both context-analysis scripts read the catalog at runtime.
 
 ## Reproduce the measurement
@@ -25,7 +25,7 @@ not the only concern. Lazy registration improves discoverability: call
 the returned tool names. This keeps unrelated schemas out of an agent's active
 tool surface while leaving all endpoints available on demand.
 
-The 20 TraceRMI endpoints are in the `debugger` group. Static analysis is split
+The 21 TraceRMI endpoints are in the `debugger` group. Static analysis is split
 across groups such as `function`, `search`, `xref`, `datatype`, and `script`.
 
 ## Maintenance

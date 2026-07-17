@@ -1,7 +1,7 @@
 {
   "version": "5.15.0",
   "description": "GhidraMCP REST API Endpoint Specification",
-  "total_endpoints": 231,
+  "total_endpoints": 232,
   "categories": {
     "listing": "List program data",
     "getter": "Get specific data",
@@ -681,6 +681,15 @@
       "category": "debugger",
       "params": [],
       "description": "List all breakpoints in the current trace"
+    },
+    {
+      "path": "/debugger/memory_maps",
+      "method": "GET",
+      "category": "debugger",
+      "params": [
+        "pid"
+      ],
+      "description": "List memory regions at the active trace snapshot, optionally by process PID"
     },
     {
       "path": "/debugger/modules",
