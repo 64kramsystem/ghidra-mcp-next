@@ -41,7 +41,6 @@ import ghidra.framework.plugintool.PluginInfo;
 import ghidra.framework.plugintool.util.PluginStatus;
 import ghidra.program.util.ProgramLocation;
 import ghidra.util.Msg;
-import ghidra.util.task.ConsoleTaskMonitor;
 import ghidra.trace.model.Trace;
 import ghidra.program.model.pcode.HighVariable;
 import ghidra.program.model.data.DataType;
@@ -72,12 +71,8 @@ import com.xebyte.core.ServerManager;
 
 import ghidra.framework.main.ApplicationLevelPlugin;
 
-import ghidra.framework.model.DomainFile;
-import ghidra.framework.model.DomainFolder;
 import ghidra.framework.model.Project;
 import ghidra.framework.model.ProjectData;
-import ghidra.framework.store.ItemCheckoutStatus;
-import ghidra.framework.client.RepositoryAdapter;
 
 import ghidra.app.plugin.core.analysis.AutoAnalysisManager;
 
@@ -262,9 +257,6 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
     private final FrontEndProgramProvider programProvider;
     private final GuiProjectService guiProjectService;
 
-    // Server authenticator for programmatic login (bypasses GUI password dialog)
-    private com.xebyte.core.GhidraMCPAuthenticator authenticator;
-
     // Service layer for delegated operations
     private final com.xebyte.core.ListingService listingService;
     private final com.xebyte.core.CommentService commentService;
@@ -306,21 +298,6 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
         Msg.info(this, "GhidraMCP " + VersionInfo.getFullVersion());
         Msg.info(this, "Endpoints: " + VersionInfo.getEndpointCount());
         Msg.info(this, "============================================");
-
-        // Server authenticator: ensure credentials are registered before any project opens.
-        // GhidraMCPAuthInitializer implements ModuleInitializer, but that ExtensionPoint
-        // is only reliable for Ghidra's own built-in modules — user extensions may not be
-        // discovered by ClassSearcher in time. Call run() explicitly here as a guaranteed
-        // fallback; it has an idempotency guard so double-invocation is safe.
-        if (!com.xebyte.core.GhidraMCPAuthInitializer.isRegistered()) {
-            new com.xebyte.core.GhidraMCPAuthInitializer().run();
-        }
-        if (com.xebyte.core.GhidraMCPAuthInitializer.isRegistered()) {
-            this.authenticator = com.xebyte.core.GhidraMCPAuthInitializer.getAuthenticator();
-            Msg.info(this, "GhidraMCP: Server authenticator registered — auto-login active");
-        } else {
-            Msg.info(this, "GhidraMCP: No server credentials configured — GUI auth will be used");
-        }
 
         // Register configuration options
         Options options = tool.getOptions(OPTION_CATEGORY_NAME);
@@ -896,136 +873,6 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
         }));
 
         // ==========================================================================
-        // PROJECT VERSION CONTROL ENDPOINTS (16 endpoints)
-        // Uses Ghidra's internal Project/DomainFile API - no separate connection needed
-        // ==========================================================================
-
-        // --- Project Status (4 endpoints) ---
-
-        server.createContext("/server/connect", safeHandler(exchange -> {
-            Project project = tool.getProject();
-            if (project == null) {
-                sendResponse(exchange, "{\"error\": \"No project open in Ghidra\"}");
-                return;
-            }
-            ProjectData data = project.getProjectData();
-            boolean isShared = data.getProjectLocator().isTransient() ? false : (getProjectRepository() != null);
-            sendResponse(exchange, "{\"status\": \"connected\", \"project\": \"" + escapeJson(project.getName()) + "\", " +
-                "\"shared\": " + isShared + ", " +
-                "\"message\": \"GUI plugin uses the open Ghidra project directly. No separate connection needed.\"}");
-        }));
-
-        server.createContext("/server/disconnect", safeHandler(exchange -> {
-            sendResponse(exchange, "{\"status\": \"ok\", \"message\": \"GUI plugin uses the open project. No disconnect needed.\"}");
-        }));
-
-        server.createContext("/server/status", safeHandler(exchange -> {
-            sendResponse(exchange, getProjectStatusJson());
-        }));
-
-        server.createContext("/server/repositories", safeHandler(exchange -> {
-            Project project = tool.getProject();
-            if (project == null) {
-                sendResponse(exchange, "{\"error\": \"No project open\"}");
-                return;
-            }
-            sendResponse(exchange, "{\"repositories\": [\"" + escapeJson(project.getName()) + "\"], \"count\": 1, " +
-                "\"message\": \"GUI mode returns the current project. Use headless mode for multi-repo browsing.\"}");
-        }));
-
-        // --- Repository Browsing (3 endpoints) ---
-
-        server.createContext("/server/repository/files", safeHandler(exchange -> {
-            Map<String, String> params = parseQueryParams(exchange);
-            String folderPath = params.get("path");
-            if (folderPath == null) folderPath = params.get("folder");
-            if (folderPath == null) folderPath = "/";
-            sendResponse(exchange, listProjectFilesJson(folderPath));
-        }));
-
-        server.createContext("/server/repository/file", safeHandler(exchange -> {
-            Map<String, String> params = parseQueryParams(exchange);
-            String filePath = params.get("path");
-            if (filePath == null) {
-                sendResponse(exchange, "{\"error\": \"'path' parameter required\"}");
-                return;
-            }
-            sendResponse(exchange, getProjectFileInfoJson(filePath));
-        }));
-
-        server.createContext("/server/repository/create", safeHandler(exchange -> {
-            sendResponse(exchange, "{\"error\": \"Repository creation not available in GUI mode. Use Ghidra's Project Manager or headless mode.\"}");
-        }));
-
-        // --- Version Control Operations (4 endpoints) ---
-
-        server.createContext("/server/version_control/checkout", safeHandler(exchange -> {
-            Map<String, Object> params = parseJsonParams(exchange);
-            String filePath = params.get("path") != null ? params.get("path").toString() : null;
-            boolean exclusive = Boolean.parseBoolean(params.getOrDefault("exclusive", "true").toString());
-            sendResponse(exchange, checkoutProjectFile(filePath, exclusive));
-        }));
-
-        server.createContext("/server/version_control/checkin", safeHandler(exchange -> {
-            Map<String, Object> params = parseJsonParams(exchange);
-            String filePath = params.get("path") != null ? params.get("path").toString() : null;
-            String comment = params.getOrDefault("comment", "Checked in via GhidraMCP").toString();
-            boolean keepCheckedOut = Boolean.parseBoolean(params.getOrDefault("keepCheckedOut", "false").toString());
-            sendResponse(exchange, checkinProjectFile(filePath, comment, keepCheckedOut));
-        }));
-
-        server.createContext("/server/version_control/undo_checkout", safeHandler(exchange -> {
-            Map<String, Object> params = parseJsonParams(exchange);
-            String filePath = params.get("path") != null ? params.get("path").toString() : null;
-            boolean keep = Boolean.parseBoolean(params.getOrDefault("keep", "false").toString());
-            sendResponse(exchange, undoCheckoutProjectFile(filePath, keep));
-        }));
-
-        server.createContext("/server/version_control/add", safeHandler(exchange -> {
-            Map<String, Object> params = parseJsonParams(exchange);
-            String filePath = params.get("path") != null ? params.get("path").toString() : null;
-            String comment = params.getOrDefault("comment", "Added via GhidraMCP").toString();
-            sendResponse(exchange, addToVersionControl(filePath, comment));
-        }));
-
-        // --- Version History & Checkouts (2 endpoints) ---
-
-        server.createContext("/server/version_history", safeHandler(exchange -> {
-            Map<String, String> params = parseQueryParams(exchange);
-            String filePath = params.get("path");
-            sendResponse(exchange, getProjectFileVersionHistory(filePath));
-        }));
-
-        server.createContext("/server/checkouts", safeHandler(exchange -> {
-            Map<String, String> params = parseQueryParams(exchange);
-            String folderPath = params.get("path");
-            if (folderPath == null) folderPath = "/";
-            sendResponse(exchange, listProjectCheckouts(folderPath));
-        }));
-
-        // --- Admin Operations (3 endpoints) ---
-
-        server.createContext("/server/admin/terminate_checkout", safeHandler(exchange -> {
-            Map<String, Object> params = parseJsonParams(exchange);
-            String filePath = params.get("path") != null ? params.get("path").toString() : null;
-            sendResponse(exchange, terminateFileCheckout(filePath));
-        }));
-
-        server.createContext("/server/admin/terminate_all_checkouts", safeHandler(exchange -> {
-            Map<String, Object> params = parseJsonParams(exchange);
-            String folderPath = params.get("path") != null ? params.get("path").toString() : "/";
-            sendResponse(exchange, terminateAllCheckouts(folderPath));
-        }));
-
-        server.createContext("/server/admin/users", safeHandler(exchange -> {
-            sendResponse(exchange, "{\"error\": \"User listing requires headless mode with direct server connection.\"}");
-        }));
-
-        server.createContext("/server/admin/set_permissions", safeHandler(exchange -> {
-            sendResponse(exchange, "{\"error\": \"Permission management requires headless mode with direct server connection.\"}");
-        }));
-
-        // ==========================================================================
         // PROJECT & TOOL MANAGEMENT ENDPOINTS (4 endpoints)
         // FrontEnd-level operations for project and tool management
         // ==========================================================================
@@ -1054,14 +901,6 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
             Map<String, Object> params = parseJsonParams(exchange);
             sendResponse(exchange, batchApplyDocumentation(params));
         }));
-
-        server.createContext("/server/authenticate", safeHandler(exchange -> {
-            Map<String, Object> params = parseJsonParams(exchange);
-            String username = params.get("username") != null ? params.get("username").toString() : null;
-            String password = params.get("password") != null ? params.get("password").toString() : null;
-            sendResponse(exchange, authenticateServer(username, password));
-        }));
-
 
         // Use a fixed thread pool instead of the default single-thread handler.
         //
@@ -3520,373 +3359,6 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
     }
 
     // ==========================================================================
-    // PROJECT VERSION CONTROL HELPER METHODS
-    // Uses Ghidra's internal DomainFile/DomainFolder API
-    // ==========================================================================
-
-    private RepositoryAdapter getProjectRepository() {
-        try {
-            Project project = tool.getProject();
-            if (project == null) return null;
-            ProjectData data = project.getProjectData();
-            // ProjectData.getRepository() is available on the implementation class
-            java.lang.reflect.Method m = data.getClass().getMethod("getRepository");
-            return (RepositoryAdapter) m.invoke(data);
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    private String getProjectStatusJson() {
-        Project project = tool.getProject();
-        if (project == null) {
-            return "{\"connected\": false, \"error\": \"No project open\"}";
-        }
-        ProjectData data = project.getProjectData();
-        RepositoryAdapter repo = getProjectRepository();
-        StringBuilder sb = new StringBuilder();
-        sb.append("{\"connected\": true");
-        sb.append(", \"project\": \"").append(escapeJson(project.getName())).append("\"");
-        sb.append(", \"shared\": ").append(repo != null);
-        if (repo != null) {
-            try {
-                sb.append(", \"server_connected\": ").append(repo.isConnected());
-                sb.append(", \"server_info\": \"").append(escapeJson(repo.getServerInfo().toString())).append("\"");
-            } catch (Exception e) {
-                sb.append(", \"server_connected\": false");
-            }
-        }
-        sb.append(", \"file_count\": ").append(data.getFileCount());
-        sb.append("}");
-        return sb.toString();
-    }
-
-    private String listProjectFilesJson(String folderPath) {
-        Project project = tool.getProject();
-        if (project == null) return "{\"error\": \"No project open\"}";
-        ProjectData data = project.getProjectData();
-        DomainFolder folder;
-        if (folderPath == null || folderPath.isEmpty() || folderPath.equals("/")) {
-            folder = data.getRootFolder();
-        } else {
-            folder = data.getFolder(folderPath);
-        }
-        if (folder == null) return "{\"error\": \"Folder not found: " + escapeJson(folderPath) + "\"}";
-
-        StringBuilder sb = new StringBuilder();
-        sb.append("{\"folder\": \"").append(escapeJson(folder.getPathname())).append("\", \"files\": [");
-        DomainFile[] files = folder.getFiles();
-        for (int i = 0; i < files.length; i++) {
-            if (i > 0) sb.append(", ");
-            appendFileJson(sb, files[i]);
-        }
-        sb.append("], \"folders\": [");
-        DomainFolder[] folders = folder.getFolders();
-        for (int i = 0; i < folders.length; i++) {
-            if (i > 0) sb.append(", ");
-            sb.append("\"").append(escapeJson(folders[i].getName())).append("\"");
-        }
-        sb.append("], \"file_count\": ").append(files.length);
-        sb.append(", \"folder_count\": ").append(folders.length).append("}");
-        return sb.toString();
-    }
-
-    private void appendFileJson(StringBuilder sb, DomainFile f) {
-        sb.append("{\"name\": \"").append(escapeJson(f.getName())).append("\"");
-        sb.append(", \"path\": \"").append(escapeJson(f.getPathname())).append("\"");
-        sb.append(", \"version\": ").append(f.getVersion());
-        sb.append(", \"latest_version\": ").append(f.getLatestVersion());
-        sb.append(", \"is_versioned\": ").append(f.isVersioned());
-        sb.append(", \"is_checked_out\": ").append(f.isCheckedOut());
-        sb.append(", \"is_checked_out_exclusive\": ").append(f.isCheckedOutExclusive());
-        sb.append(", \"is_read_only\": ").append(f.isReadOnly());
-        if (f.isCheckedOut()) {
-            try {
-                ItemCheckoutStatus status = f.getCheckoutStatus();
-                if (status != null) {
-                    sb.append(", \"checkout_user\": \"").append(escapeJson(status.getUser())).append("\"");
-                    sb.append(", \"checkout_id\": ").append(status.getCheckoutId());
-                    sb.append(", \"checkout_version\": ").append(status.getCheckoutVersion());
-                }
-            } catch (IOException e) {
-                sb.append(", \"checkout_error\": \"").append(escapeJson(e.getMessage())).append("\"");
-            }
-        }
-        sb.append("}");
-    }
-
-    private String getProjectFileInfoJson(String filePath) {
-        Project project = tool.getProject();
-        if (project == null) return "{\"error\": \"No project open\"}";
-        DomainFile file = project.getProjectData().getFile(filePath);
-        if (file == null) return "{\"error\": \"File not found: " + escapeJson(filePath) + "\"}";
-        StringBuilder sb = new StringBuilder();
-        appendFileJson(sb, file);
-        return sb.toString();
-    }
-
-    private String checkoutProjectFile(String filePath, boolean exclusive) {
-        Project project = tool.getProject();
-        if (project == null) return "{\"error\": \"No project open\"}";
-        if (filePath == null) return "{\"error\": \"'path' parameter required\"}";
-        DomainFile file = project.getProjectData().getFile(filePath);
-        if (file == null) return "{\"error\": \"File not found: " + escapeJson(filePath) + "\"}";
-        try {
-            boolean success = file.checkout(exclusive, new ConsoleTaskMonitor());
-            return "{\"status\": \"" + (success ? "checked_out" : "checkout_failed") + "\", " +
-                "\"path\": \"" + escapeJson(filePath) + "\", \"exclusive\": " + exclusive + "}";
-        } catch (Exception e) {
-            return "{\"error\": \"Checkout failed: " + escapeJson(e.getMessage()) + "\"}";
-        }
-    }
-
-    private String checkinProjectFile(String filePath, String comment, boolean keepCheckedOut) {
-        Project project = tool.getProject();
-        if (project == null) return "{\"error\": \"No project open\"}";
-        if (filePath == null) return "{\"error\": \"'path' parameter required\"}";
-        DomainFile file = project.getProjectData().getFile(filePath);
-        if (file == null) return "{\"error\": \"File not found: " + escapeJson(filePath) + "\"}";
-        if (!file.isCheckedOut()) return "{\"error\": \"File is not checked out: " + escapeJson(filePath) + "\"}";
-        try {
-            file.checkin(new ghidra.framework.data.CheckinHandler() {
-                public boolean keepCheckedOut() { return keepCheckedOut; }
-                public String getComment() { return comment; }
-                public boolean createKeepFile() { return false; }
-            }, new ConsoleTaskMonitor());
-            return "{\"status\": \"checked_in\", \"path\": \"" + escapeJson(filePath) + "\", " +
-                "\"comment\": \"" + escapeJson(comment) + "\", \"keep_checked_out\": " + keepCheckedOut + "}";
-        } catch (Exception e) {
-            return "{\"error\": \"Checkin failed: " + escapeJson(e.getMessage()) + "\"}";
-        }
-    }
-
-    private String undoCheckoutProjectFile(String filePath, boolean keep) {
-        Project project = tool.getProject();
-        if (project == null) return "{\"error\": \"No project open\"}";
-        if (filePath == null) return "{\"error\": \"'path' parameter required\"}";
-        DomainFile file = project.getProjectData().getFile(filePath);
-        if (file == null) return "{\"error\": \"File not found: " + escapeJson(filePath) + "\"}";
-        if (!file.isCheckedOut()) return "{\"error\": \"File is not checked out: " + escapeJson(filePath) + "\"}";
-        try {
-            file.undoCheckout(keep);
-            return "{\"status\": \"checkout_undone\", \"path\": \"" + escapeJson(filePath) + "\", \"kept_copy\": " + keep + "}";
-        } catch (Exception e) {
-            return "{\"error\": \"Undo checkout failed: " + escapeJson(e.getMessage()) + "\"}";
-        }
-    }
-
-    private String addToVersionControl(String filePath, String comment) {
-        Project project = tool.getProject();
-        if (project == null) return "{\"error\": \"No project open\"}";
-        if (filePath == null) return "{\"error\": \"'path' parameter required\"}";
-        DomainFile file = project.getProjectData().getFile(filePath);
-        if (file == null) return "{\"error\": \"File not found: " + escapeJson(filePath) + "\"}";
-        if (file.isVersioned()) return "{\"error\": \"File already under version control: " + escapeJson(filePath) + "\"}";
-        try {
-            file.addToVersionControl(comment, false, new ConsoleTaskMonitor());
-            return "{\"status\": \"added\", \"path\": \"" + escapeJson(filePath) + "\", \"comment\": \"" + escapeJson(comment) + "\"}";
-        } catch (Exception e) {
-            return "{\"error\": \"Add to version control failed: " + escapeJson(e.getMessage()) + "\"}";
-        }
-    }
-
-    private String getProjectFileVersionHistory(String filePath) {
-        Project project = tool.getProject();
-        if (project == null) return "{\"error\": \"No project open\"}";
-        if (filePath == null) return "{\"error\": \"'path' parameter required\"}";
-        DomainFile file = project.getProjectData().getFile(filePath);
-        if (file == null) return "{\"error\": \"File not found: " + escapeJson(filePath) + "\"}";
-        try {
-            ghidra.framework.store.Version[] versions = file.getVersionHistory();
-            StringBuilder sb = new StringBuilder();
-            sb.append("{\"path\": \"").append(escapeJson(filePath)).append("\", \"versions\": [");
-            for (int i = 0; i < versions.length; i++) {
-                if (i > 0) sb.append(", ");
-                sb.append("{\"version\": ").append(versions[i].getVersion());
-                sb.append(", \"user\": \"").append(escapeJson(versions[i].getUser())).append("\"");
-                sb.append(", \"comment\": \"").append(escapeJson(versions[i].getComment() != null ? versions[i].getComment() : "")).append("\"");
-                sb.append(", \"date\": \"").append(new java.util.Date(versions[i].getCreateTime())).append("\"");
-                sb.append("}");
-            }
-            sb.append("], \"count\": ").append(versions.length).append("}");
-            return sb.toString();
-        } catch (Exception e) {
-            return "{\"error\": \"Failed to get version history: " + escapeJson(e.getMessage()) + "\"}";
-        }
-    }
-
-    private String listProjectCheckouts(String folderPath) {
-        Project project = tool.getProject();
-        if (project == null) return "{\"error\": \"No project open\"}";
-        ProjectData data = project.getProjectData();
-        DomainFolder folder;
-        if (folderPath == null || folderPath.isEmpty() || folderPath.equals("/")) {
-            folder = data.getRootFolder();
-        } else {
-            folder = data.getFolder(folderPath);
-        }
-        if (folder == null) return "{\"error\": \"Folder not found: " + escapeJson(folderPath) + "\"}";
-
-        RepositoryAdapter repo = getProjectRepository();
-        StringBuilder sb = new StringBuilder();
-        sb.append("{\"checkouts\": [");
-        int count = collectCheckouts(sb, folder, 0, repo);
-        sb.append("], \"count\": ").append(count).append("}");
-        return sb.toString();
-    }
-
-    private int collectCheckouts(StringBuilder sb, DomainFolder folder, int count, RepositoryAdapter repo) {
-        for (DomainFile f : folder.getFiles()) {
-            boolean localCheckout = f.isCheckedOut();
-            ItemCheckoutStatus[] serverCheckouts = null;
-
-            // Check server-side checkouts via RepositoryAdapter
-            if (repo != null && f.isVersioned()) {
-                try {
-                    String path = f.getPathname();
-                    int lastSlash = path.lastIndexOf('/');
-                    String parentPath = lastSlash > 0 ? path.substring(0, lastSlash) : "/";
-                    String fileName = lastSlash >= 0 ? path.substring(lastSlash + 1) : path;
-                    serverCheckouts = repo.getCheckouts(parentPath, fileName);
-                } catch (Exception e) { /* skip */ }
-            }
-            boolean serverCheckout = serverCheckouts != null && serverCheckouts.length > 0;
-
-            if (localCheckout || serverCheckout) {
-                if (count > 0) sb.append(", ");
-                appendFileJson(sb, f);
-                if (serverCheckout) {
-                    sb.setLength(sb.length() - 1); // remove closing }
-                    sb.append(", \"server_checkouts\": [");
-                    for (int i = 0; i < serverCheckouts.length; i++) {
-                        if (i > 0) sb.append(", ");
-                        sb.append("{\"checkout_id\": ").append(serverCheckouts[i].getCheckoutId());
-                        sb.append(", \"user\": \"").append(escapeJson(serverCheckouts[i].getUser())).append("\"");
-                        sb.append(", \"checkout_version\": ").append(serverCheckouts[i].getCheckoutVersion());
-                        sb.append("}");
-                    }
-                    sb.append("]}");
-                }
-                count++;
-            }
-        }
-        for (DomainFolder sub : folder.getFolders()) {
-            count = collectCheckouts(sb, sub, count, repo);
-        }
-        return count;
-    }
-
-    private String terminateFileCheckout(String filePath) {
-        Project project = tool.getProject();
-        if (project == null) return "{\"error\": \"No project open\"}";
-        if (filePath == null) return "{\"error\": \"'path' parameter required\"}";
-        DomainFile file = project.getProjectData().getFile(filePath);
-        if (file == null) return "{\"error\": \"File not found: " + escapeJson(filePath) + "\"}";
-
-        // First try: undo checkout with force via the DomainFile API
-        if (file.isCheckedOut()) {
-            try {
-                file.undoCheckout(false, true);
-                return "{\"status\": \"terminated\", \"path\": \"" + escapeJson(filePath) + "\", \"method\": \"undo_checkout_force\"}";
-            } catch (Exception e) {
-                // Fall through to repository adapter approach
-            }
-        }
-
-        // Second try: use RepositoryAdapter for server-side termination
-        RepositoryAdapter repo = getProjectRepository();
-        if (repo == null) {
-            return "{\"error\": \"Cannot terminate checkout: project has no repository connection\"}";
-        }
-        try {
-            int lastSlash = filePath.lastIndexOf('/');
-            String parentPath = lastSlash > 0 ? filePath.substring(0, lastSlash) : "/";
-            String fileName = lastSlash >= 0 ? filePath.substring(lastSlash + 1) : filePath;
-            ItemCheckoutStatus[] checkouts = repo.getCheckouts(parentPath, fileName);
-            if (checkouts == null || checkouts.length == 0) {
-                return "{\"error\": \"No active checkouts found for: " + escapeJson(filePath) + "\"}";
-            }
-            int terminated = 0;
-            for (ItemCheckoutStatus cs : checkouts) {
-                try {
-                    repo.terminateCheckout(parentPath, fileName, cs.getCheckoutId(), false);
-                    terminated++;
-                } catch (Exception e) {
-                    // continue trying others
-                }
-            }
-            return "{\"status\": \"terminated\", \"path\": \"" + escapeJson(filePath) + "\", " +
-                "\"terminated_count\": " + terminated + ", \"total_checkouts\": " + checkouts.length + "}";
-        } catch (Exception e) {
-            return "{\"error\": \"Terminate checkout failed: " + escapeJson(e.getMessage()) + "\"}";
-        }
-    }
-
-    /**
-     * Terminate ALL server-side checkouts in a folder recursively.
-     * Returns a summary of all terminated checkouts.
-     */
-    private String terminateAllCheckouts(String folderPath) {
-        Project project = tool.getProject();
-        if (project == null) return "{\"error\": \"No project open\"}";
-        ProjectData data = project.getProjectData();
-        DomainFolder folder;
-        if (folderPath == null || folderPath.isEmpty() || folderPath.equals("/")) {
-            folder = data.getRootFolder();
-        } else {
-            folder = data.getFolder(folderPath);
-        }
-        if (folder == null) return "{\"error\": \"Folder not found: " + escapeJson(folderPath) + "\"}";
-
-        RepositoryAdapter repo = getProjectRepository();
-        if (repo == null) {
-            return "{\"error\": \"Cannot terminate checkouts: project has no repository connection\"}";
-        }
-
-        StringBuilder details = new StringBuilder();
-        details.append("[");
-        int[] counts = {0, 0}; // [files_with_checkouts, total_terminated]
-        terminateCheckoutsRecursive(folder, repo, details, counts);
-        details.append("]");
-
-        return "{\"status\": \"terminated\", \"folder\": \"" + escapeJson(folderPath != null ? folderPath : "/") + "\", " +
-            "\"files_with_checkouts\": " + counts[0] + ", " +
-            "\"checkouts_terminated\": " + counts[1] + ", " +
-            "\"details\": " + details.toString() + "}";
-    }
-
-    private void terminateCheckoutsRecursive(DomainFolder folder, RepositoryAdapter repo, StringBuilder details, int[] counts) {
-        for (DomainFile f : folder.getFiles()) {
-            if (!f.isVersioned()) continue;
-            try {
-                String path = f.getPathname();
-                int lastSlash = path.lastIndexOf('/');
-                String parentPath = lastSlash > 0 ? path.substring(0, lastSlash) : "/";
-                String fileName = lastSlash >= 0 ? path.substring(lastSlash + 1) : path;
-                ItemCheckoutStatus[] checkouts = repo.getCheckouts(parentPath, fileName);
-                if (checkouts != null && checkouts.length > 0) {
-                    int terminated = 0;
-                    for (ItemCheckoutStatus cs : checkouts) {
-                        try {
-                            repo.terminateCheckout(parentPath, fileName, cs.getCheckoutId(), false);
-                            terminated++;
-                        } catch (Exception e) { /* continue */ }
-                    }
-                    if (counts[0] > 0) details.append(", ");
-                    details.append("{\"path\": \"").append(escapeJson(path)).append("\"");
-                    details.append(", \"terminated\": ").append(terminated);
-                    details.append(", \"total\": ").append(checkouts.length).append("}");
-                    counts[0]++;
-                    counts[1] += terminated;
-                }
-            } catch (Exception e) { /* skip file */ }
-        }
-        for (DomainFolder sub : folder.getFolders()) {
-            terminateCheckoutsRecursive(sub, repo, details, counts);
-        }
-    }
-
-    // ==========================================================================
     // PROJECT & TOOL MANAGEMENT HELPERS
     // ==========================================================================
 
@@ -3896,18 +3368,11 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
             return "{\"error\": \"No project open\"}";
         }
         ProjectData data = project.getProjectData();
-        RepositoryAdapter repo = getProjectRepository();
         StringBuilder sb = new StringBuilder();
         sb.append("{\"project\": \"").append(escapeJson(project.getName())).append("\"");
-        sb.append(", \"shared\": ").append(repo != null);
-        if (repo != null) {
-            try {
-                sb.append(", \"server_connected\": ").append(repo.isConnected());
-                sb.append(", \"server_info\": \"").append(escapeJson(repo.getServerInfo().toString())).append("\"");
-            } catch (Exception e) {
-                sb.append(", \"server_connected\": false");
-            }
-        }
+        sb.append(", \"project_location\": \"")
+            .append(escapeJson(project.getProjectLocator().getProjectDir().getAbsolutePath()))
+            .append("\"");
         sb.append(", \"file_count\": ").append(data.getFileCount());
 
         // Open programs
@@ -4066,38 +3531,6 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
             }
         } catch (Exception e) {
             return "{\"error\": \"Failed to navigate: " + escapeJson(e.getMessage()) + "\"}";
-        }
-    }
-
-    private String authenticateServer(String username, String password) {
-        try {
-            if (password == null || password.isEmpty()) {
-                return "{\"error\": \"Password is required\"}";
-            }
-            // Resolve username if not provided
-            if (username == null || username.isEmpty()) {
-                username = ghidra.framework.preferences.Preferences.getProperty("PasswordPrompt.Name");
-            }
-            if (username == null || username.isEmpty()) {
-                username = System.getProperty("user.name");
-            }
-
-            char[] passwordChars = password.toCharArray();
-            if (this.authenticator != null) {
-                // Update existing authenticator
-                this.authenticator.updateCredentials(username, passwordChars);
-                Msg.info(this, "GhidraMCP: Updated server credentials for user: " + username);
-            } else {
-                // Create and register new authenticator
-                this.authenticator = new com.xebyte.core.GhidraMCPAuthenticator(username, passwordChars);
-                ghidra.framework.client.ClientUtil.setClientAuthenticator(this.authenticator);
-                Msg.info(this, "GhidraMCP: Registered server authenticator for user: " + username);
-            }
-
-            return "{\"success\": true, \"message\": \"Server credentials registered\", " +
-                "\"username\": \"" + escapeJson(username) + "\"}";
-        } catch (Exception e) {
-            return "{\"error\": \"Failed to register authenticator: " + escapeJson(e.getMessage()) + "\"}";
         }
     }
 
