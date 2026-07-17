@@ -8,6 +8,8 @@ public final class DebuggerTransferSemantics {
 
     public record Chunk(long offset, int length) {}
 
+    public record OffsetRange(long start, long end, long length) {}
+
     public static long rebase(long address, long runtimeBase, long staticBase) {
         if (Long.compareUnsigned(address, runtimeBase) < 0) {
             throw new IllegalArgumentException("address precedes runtime base");
@@ -29,5 +31,17 @@ public final class DebuggerTransferSemantics {
             offset = Math.addExact(offset, chunk);
         }
         return List.copyOf(chunks);
+    }
+
+    public static OffsetRange checkedRange(long start, long length) {
+        if (length <= 0) {
+            throw new IllegalArgumentException("length must be positive");
+        }
+        try {
+            long end = Math.addExact(start, Math.subtractExact(length, 1));
+            return new OffsetRange(start, end, length);
+        } catch (ArithmeticException e) {
+            throw new IllegalArgumentException("range end overflows", e);
+        }
     }
 }

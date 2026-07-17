@@ -1,7 +1,7 @@
 # Ghidra MCP Server
 
 Ghidra MCP connects AI clients to Ghidra through a Java extension and a thin
-Python MCP bridge. Version 5.15.0 exposes 232 tools for local static analysis,
+Python MCP bridge. Version 5.15.0 exposes 233 tools for local static analysis,
 multi-program work, P-code emulation, local comparison, and Ghidra's built-in
 TraceRMI debugger.
 
@@ -163,13 +163,14 @@ debugger_attach(offer=..., pid=..., program=...)
 debugger_status()
 debugger_modules()
 debugger_memory_maps(pid=...)
+copy_debugger_memory_to_program(source_address=..., length=..., program=..., destination_address=..., block_name=...)
 debugger_set_breakpoint(address=...)
 debugger_resume()
 debugger_wait_for_stop(timeout_ms=...)
 debugger_read_memory(address=..., length=...)
 ```
 
-The 21 retained tools are:
+The 22 retained tools are:
 
 - `debugger_launch_offers`, `debugger_launch`, `debugger_attach`, `debugger_status`,
   `debugger_traces`, `debugger_modules`, and `debugger_memory_maps`
@@ -178,7 +179,8 @@ The 21 retained tools are:
 - `debugger_resume`, `debugger_wait_for_stop`, `debugger_interrupt`, `debugger_step_into`,
   `debugger_step_over`, and `debugger_step_out`
 - `debugger_registers`, `debugger_stack_trace`, and `debugger_read_memory`
-- `debugger_static_to_dynamic` and `debugger_dynamic_to_static`
+- `debugger_static_to_dynamic`, `debugger_dynamic_to_static`, and
+  `copy_debugger_memory_to_program`
 
 For a proprietary Windows application under Wine, import the PE into a local
 project, use a suitable Ghidra launch offer for the Wine/GDB environment, break
@@ -187,9 +189,7 @@ using the mapping tools. Debugging a defect in Wine's own open-source code is
 primarily a Wine source, build, GDB, and test-suite task; Ghidra MCP can provide
 supporting disassembly evidence.
 
-Generic selected-offer/PID attach is available through `debugger_attach`, `debugger_wait_for_stop` provides a bounded event-driven wait, and `debugger_memory_maps` enumerates current trace regions with optional PID filtering. This addition remains planned:
-
-- [ ] `copy_debugger_memory_to_program`, creating and populating a block from a trace range.
+Generic selected-offer/PID attach is available through `debugger_attach`, `debugger_wait_for_stop` provides a bounded event-driven wait, and `debugger_memory_maps` enumerates current trace regions with optional PID filtering. Use `copy_debugger_memory_to_program` to create and populate a program block from a known range in the active trace.
 
 ## Optional local BSim
 

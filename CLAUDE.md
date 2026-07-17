@@ -2,7 +2,7 @@
 
 ## Overview
 
-Ghidra MCP 5.15.0 exposes 232 tools through a Java Ghidra extension/headless
+Ghidra MCP 5.15.0 exposes 233 tools through a Java Ghidra extension/headless
 server and a Python MCP bridge.
 
 ```text
@@ -35,7 +35,7 @@ asked.
   handling.
 - `python/bridge_mcp_ghidra/` — discovery, schema normalization, tool groups,
   dispatch, transports, and CLI.
-- `tests/endpoints.json` — authoritative repository catalog (232 endpoints).
+- `tests/endpoints.json` — authoritative repository catalog (233 endpoints).
 - `ghidra_scripts/` — exact reviewed generic-script allowlist.
 - `tools/setup/` — setup, Maven build, deploy, and atomic version management.
 
@@ -99,7 +99,7 @@ is read-only filtering/audit logic and must not reject or rewrite input.
 
 ## TraceRMI
 
-The schema-discovered group is `debugger` and contains 21 tools. In an agent
+The schema-discovered group is `debugger` and contains 22 tools. In an agent
 workflow:
 
 ```text
@@ -109,6 +109,7 @@ debugger_launch(...)
 debugger_attach(...)
 debugger_status()
 debugger_memory_maps(...)
+copy_debugger_memory_to_program(...)
 debugger_static_to_dynamic(...)
 debugger_set_breakpoint(...)
 debugger_resume()
@@ -120,9 +121,7 @@ Load the group once; do not loop on group loading after operation errors.
 Preserve the clean `debugger_*` bridge names and the Ghidra/ghidratrace setup
 path.
 
-`debugger_attach` starts an exact selected attach-only launch offer and invokes its typed PID method. `debugger_wait_for_stop` provides a bounded event-driven wait after resume or interrupt, and `debugger_memory_maps` enumerates current trace regions with optional PID filtering. Remaining planned work is:
-
-- `copy_debugger_memory_to_program` from a trace range.
+`debugger_attach` starts an exact selected attach-only launch offer and invokes its typed PID method. `debugger_wait_for_stop` provides a bounded event-driven wait after resume or interrupt, `debugger_memory_maps` enumerates current trace regions with optional PID filtering, and `copy_debugger_memory_to_program` creates a populated static block from a known trace range.
 
 ## Comparison and BSim
 

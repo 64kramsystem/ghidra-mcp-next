@@ -31,11 +31,14 @@ import ghidra.program.model.address.AddressSet;
 import ghidra.program.model.lang.Language;
 import ghidra.program.model.lang.Register;
 import ghidra.program.model.lang.RegisterValue;
+import ghidra.program.model.listing.Program;
+import ghidra.program.model.mem.Memory;
 import ghidra.trace.model.Trace;
 import ghidra.trace.model.TraceExecutionState;
 import ghidra.trace.model.breakpoint.TraceBreakpointKind;
 import ghidra.trace.model.guest.TracePlatform;
 import ghidra.trace.model.memory.TraceMemoryManager;
+import ghidra.trace.model.memory.TraceMemoryRegion;
 import ghidra.trace.model.memory.TraceMemorySpace;
 import ghidra.trace.model.modules.TraceModule;
 import ghidra.trace.model.stack.TraceStack;
@@ -269,6 +272,20 @@ public class DebuggerService {
                 ? addrStr.substring(2) : addrStr;
         AddressFactory factory = trace.getBaseAddressFactory();
         return factory.getAddress(normalized);
+    }
+
+    private Program resolveExplicitProgram(String requestedName) {
+        if (requestedName == null || requestedName.isBlank()) {
+            return null;
+        }
+        String requested = requestedName.trim();
+        List<Program> matches = Arrays.stream(programProvider.getAllOpenPrograms())
+                .filter(Objects::nonNull)
+                .filter(program -> program.getName().equalsIgnoreCase(requested) ||
+                        program.getDomainFile() != null &&
+                                requested.equals(program.getDomainFile().getPathname()))
+                .toList();
+        return matches.size() == 1 ? matches.get(0) : null;
     }
 
     // ========================================================================
@@ -1240,6 +1257,130 @@ public class DebuggerService {
             return Response.ok(response);
         } catch (Exception e) {
             return Response.err("Failed to list debugger memory maps: " + e.getMessage());
+        }
+    }
+
+    @McpTool(path = "/copy_debugger_memory_to_program", method = "POST",
+            category = "debugger",
+            description = "Create and populate a program memory block from the active trace")
+    public Response copyDebuggerMemoryToProgram(
+            @Param(value = "source_address", source = ParamSource.BODY,
+                    paramType = "address", description = "Trace source address")
+                    String sourceAddress,
+            @Param(value = "length", source = ParamSource.BODY,
+                    description = "Positive byte count") long length,
+            @Param(value = "program", source = ParamSource.BODY,
+                    description = "Explicitly selected open destination program")
+                    String programName,
+            @Param(value = "destination_address", source = ParamSource.BODY,
+                    paramType = "address", description = "Program block start address")
+                    String destinationAddress,
+            @Param(value = "block_name", source = ParamSource.BODY,
+                    description = "Unique destination memory-block name") String blockName) {
+        TraceContext ctx = getContext();
+        if (ctx == null) return noTrace();
+        if (length <= 0) {
+            return Response.err("Length must be positive");
+        }
+        if (programName == null || programName.isBlank()) {
+            return Response.err("An explicit destination program is required");
+        }
+        if (blockName == null || blockName.isBlank()) {
+            return Response.err("Block name must not be blank");
+        }
+        if (!Memory.isValidMemoryBlockName(blockName)) {
+            return Response.err("Invalid memory-block name: " + blockName);
+        }
+
+        try {
+            Program program = resolveExplicitProgram(programName);
+            if (program == null) {
+                return Response.err("Destination program not found or ambiguous: " +
+                        programName);
+            }
+            Address source = parseAddress(ctx.trace, sourceAddress);
+            if (source == null) {
+                return Response.err("Invalid trace source address: " + sourceAddress);
+            }
+            String normalizedDestination = destinationAddress != null &&
+                    destinationAddress.startsWith("0x")
+                            ? destinationAddress.substring(2) : destinationAddress;
+            Address destination = normalizedDestination == null ? null :
+                    program.getAddressFactory().getAddress(normalizedDestination);
+            if (destination == null) {
+                return Response.err("Invalid program destination address: " +
+                        destinationAddress);
+            }
+
+            DebuggerTransferSemantics.OffsetRange extent =
+                    DebuggerTransferSemantics.checkedRange(0, length);
+            AddressRange sourceRange = new AddressRangeImpl(
+                    source, source.addNoWrap(extent.end()));
+            AddressRange destinationRange = new AddressRangeImpl(
+                    destination, destination.addNoWrap(extent.end()));
+            TraceMemoryManager traceMemory = ctx.trace.getMemoryManager();
+            Collection<? extends TraceMemoryRegion> currentRegions =
+                    traceMemory.getRegionsAtSnap(ctx.snap);
+            TraceMemoryRegion region = DebuggerMemorySemantics.requireContainingRegion(
+                    currentRegions, ctx.snap, sourceRange);
+
+            Memory programMemory = program.getMemory();
+            if (programMemory.getBlock(blockName) != null) {
+                return Response.err("Program memory block already exists: " + blockName);
+            }
+            DebuggerMemorySemantics.requireDestinationFree(programMemory, destinationRange);
+
+            List<DebuggerTransferSemantics.Chunk> chunkPlan =
+                    DebuggerTransferSemantics.planChunks(length, MAX_MEMORY_READ);
+            Target target = getTarget(ctx);
+            if (target != null && target.isValid()) {
+                DebuggerStateWaiter.ExecutionState state = DebuggerStateWaiter.state(
+                        target, createTraceActionContext(ctx));
+                if (state != DebuggerStateWaiter.ExecutionState.STOPPED) {
+                    return Response.err("Live target must be stopped before copying memory; " +
+                            "use debugger_wait_for_stop (state: " +
+                            state.name().toLowerCase(Locale.ROOT) + ")");
+                }
+                for (DebuggerTransferSemantics.Chunk chunk : chunkPlan) {
+                    Address chunkStart = source.addNoWrap(chunk.offset());
+                    Address chunkEnd = chunkStart.addNoWrap(chunk.length() - 1L);
+                    target.readMemory(new AddressSet(chunkStart, chunkEnd), TaskMonitor.DUMMY);
+                }
+            }
+
+            DebuggerMemorySemantics.requireKnown(traceMemory, ctx.snap, sourceRange);
+            List<byte[]> chunks = new ArrayList<>(chunkPlan.size());
+            for (DebuggerTransferSemantics.Chunk chunk : chunkPlan) {
+                Address chunkStart = source.addNoWrap(chunk.offset());
+                ByteBuffer buffer = ByteBuffer.allocate(chunk.length());
+                int bytesRead = traceMemory.getBytes(ctx.snap, chunkStart, buffer);
+                if (bytesRead != chunk.length()) {
+                    return Response.err("Short trace-memory read at " + chunkStart +
+                            ": expected " + chunk.length() + ", read " + bytesRead);
+                }
+                chunks.add(buffer.array());
+            }
+
+            DebuggerMemorySemantics.programBlockWriter(TaskMonitor.DUMMY).create(
+                    program, blockName, destination, length,
+                    region.isRead(ctx.snap), region.isWrite(ctx.snap),
+                    region.isExecute(ctx.snap), chunks);
+
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("source_address", source.toString());
+            result.put("destination_address", destination.toString());
+            result.put("length", length);
+            result.put("block_name", blockName);
+            result.put("program", program.getName());
+            result.put("region", region.getPath());
+            result.put("permissions", Map.of(
+                    "read", region.isRead(ctx.snap),
+                    "write", region.isWrite(ctx.snap),
+                    "execute", region.isExecute(ctx.snap)));
+            result.put("chunk_count", chunkPlan.size());
+            return Response.ok(result);
+        } catch (Exception e) {
+            return Response.err("Failed to copy debugger memory: " + e.getMessage());
         }
     }
 

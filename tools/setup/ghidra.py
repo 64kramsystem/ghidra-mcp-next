@@ -109,6 +109,7 @@ LOCAL_COMPARISON_CONTRACT_TOOLS = {
     "diff_functions",
 }
 TRACE_RMI_CONTRACT_TOOLS = {
+    "copy_debugger_memory_to_program",
     "debugger/launch_offers",
     "debugger/launch",
     "debugger/attach",
