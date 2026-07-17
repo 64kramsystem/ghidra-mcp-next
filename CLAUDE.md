@@ -2,7 +2,7 @@
 
 ## Overview
 
-Ghidra MCP 5.15.0 exposes 229 tools through a Java Ghidra extension/headless
+Ghidra MCP 5.15.0 exposes 231 tools through a Java Ghidra extension/headless
 server and a Python MCP bridge.
 
 ```text
@@ -35,7 +35,7 @@ asked.
   handling.
 - `python/bridge_mcp_ghidra/` — discovery, schema normalization, tool groups,
   dispatch, transports, and CLI.
-- `tests/endpoints.json` — authoritative repository catalog (229 endpoints).
+- `tests/endpoints.json` — authoritative repository catalog (231 endpoints).
 - `ghidra_scripts/` — exact reviewed generic-script allowlist.
 - `tools/setup/` — setup, Maven build, deploy, and atomic version management.
 
@@ -99,17 +99,19 @@ is read-only filtering/audit logic and must not reject or rewrite input.
 
 ## TraceRMI
 
-The schema-discovered group is `debugger` and contains 18 tools. In an agent
+The schema-discovered group is `debugger` and contains 20 tools. In an agent
 workflow:
 
 ```text
 load_tool_group("debugger")
 debugger_launch_offers()
 debugger_launch(...)
+debugger_attach(...)
 debugger_status()
 debugger_static_to_dynamic(...)
 debugger_set_breakpoint(...)
 debugger_resume()
+debugger_wait_for_stop(...)
 debugger_read_memory(...)
 ```
 
@@ -117,15 +119,10 @@ Load the group once; do not loop on group loading after operation errors.
 Preserve the clean `debugger_*` bridge names and the Ghidra/ghidratrace setup
 path.
 
-There is no generic TraceRMI attach endpoint. Planned work is:
+`debugger_attach` starts an exact selected attach-only launch offer and invokes its typed PID method. `debugger_wait_for_stop` provides a bounded event-driven wait after resume or interrupt. Remaining planned work is:
 
-- Generic TraceRMI attach using a selected launch offer and PID.
-- `debugger_wait_for_stop(timeout_ms)`.
 - Process memory-map enumeration.
 - `copy_debugger_memory_to_program` from a trace range.
-
-Do not advertise these as implemented before route, schema, bridge, and live
-tests exist.
 
 ## Comparison and BSim
 

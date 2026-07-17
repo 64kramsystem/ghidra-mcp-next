@@ -13,15 +13,12 @@ Complete version history for the Ghidra MCP Server project.
 
 ### Changed
 
-- Streamlined ghidra-mcp around its local GUI/headless analysis stack, with
-  229 cataloged endpoints, schema discovery, TCP/UDS transports, and explicit
-  multi-program selection.
+- Streamlined ghidra-mcp around its local GUI/headless analysis stack, with 231 cataloged endpoints, schema discovery, TCP/UDS transports, and explicit multi-program selection.
 - Made Maven the only Java build backend while retaining the uv-packaged
   Python bridge and setup commands.
 - Kept caller-supplied annotations unrestricted and retained generated-symbol
   filtering without repository-wide naming-policy enforcement.
-- Normalized the retained Ghidra TraceRMI surface around the 18
-  `debugger_*` tools and `debugger_resume`.
+- Normalized the retained Ghidra TraceRMI surface around 20 `debugger_*` tools.
 - Restricted MCP script execution to a reviewed generic allowlist and made
   BSim scripts require an explicit local database URL.
 - Targeted the Java extension at Ghidra 12.1.x and removed compatibility with
@@ -31,10 +28,7 @@ Complete version history for the Ghidra MCP Server project.
 
 ### Fixed
 
-- Kept the live GUI TCP and Unix-socket schemas aligned: both now advertise
-  local project creation/opening plus the retained emulation and 18 TraceRMI
-  debugger tools. Project lifecycle routes are annotation-scanned so their
-  handlers and schema metadata cannot drift apart.
+- Kept the live GUI TCP and Unix-socket schemas aligned: both now advertise local project creation/opening plus the retained emulation and 20 TraceRMI debugger tools. Project lifecycle routes are annotation-scanned so their handlers and schema metadata cannot drift apart.
 - Mirrored Ghidra's FrontEnd project-close notification when MCP switches local
   projects, preventing stale listeners from treating the replacement as a
   second active project.

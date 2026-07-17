@@ -17,16 +17,13 @@ coverage.
 
 ## Planned TraceRMI additions
 
-- [ ] Generic TraceRMI attach using a selected launch offer and PID.
-- [ ] `debugger_wait_for_stop(timeout_ms)`.
+- [x] Generic TraceRMI attach using a selected launch offer and PID.
+- [x] `debugger_wait_for_stop(timeout_ms)`.
 - [ ] Process memory-map enumeration.
 - [ ] `copy_debugger_memory_to_program`, creating and populating a block from a
   trace range.
 
-There is no generic TraceRMI attach endpoint in the current release. Until the
-items above land, use `debugger_launch_offers` plus `debugger_launch`, then the
-existing status, mapping, breakpoint, stepping, register, stack, module, and
-memory-read tools.
+Use `debugger_attach` for exact selected-offer native PID attachment and `debugger_wait_for_stop` for bounded event-driven waiting. The two unchecked items remain unavailable.
 
 ## Quality bar
 

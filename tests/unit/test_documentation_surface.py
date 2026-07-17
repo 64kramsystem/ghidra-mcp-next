@@ -74,16 +74,16 @@ def test_docs_name_the_retained_dynamic_contract():
     assert 'load_tool_group("debugger")' in text
     assert "debugger_launch_offers" in text
     assert "debugger_launch" in text
+    assert "debugger_attach" in text
+    assert "debugger_wait_for_stop" in text
     assert "debugger_set_breakpoint" in text
     assert "debugger_read_memory" in text
     assert "debugger_resume" in text
-    assert "There is no generic TraceRMI attach endpoint" in text
+    assert "There is no generic TraceRMI attach endpoint" not in text
 
 
-def test_docs_name_all_four_planned_debugger_gaps():
+def test_docs_name_the_two_remaining_debugger_gaps():
     text = _maintained_text()
-    assert "Generic TraceRMI attach using a selected launch offer and PID" in text
-    assert "debugger_wait_for_stop(timeout_ms)" in text
     assert "Process memory-map enumeration" in text
     assert "copy_debugger_memory_to_program" in text
 

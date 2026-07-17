@@ -1,7 +1,7 @@
 # Ghidra MCP Server
 
 Ghidra MCP connects AI clients to Ghidra through a Java extension and a thin
-Python MCP bridge. Version 5.15.0 exposes 229 tools for local static analysis,
+Python MCP bridge. Version 5.15.0 exposes 231 tools for local static analysis,
 multi-program work, P-code emulation, local comparison, and Ghidra's built-in
 TraceRMI debugger.
 
@@ -159,20 +159,22 @@ schema-discovered group is named `debugger`; load it once:
 load_tool_group("debugger")
 debugger_launch_offers()
 debugger_launch(offer=..., arguments=...)
+debugger_attach(offer=..., pid=..., program=...)
 debugger_status()
 debugger_modules()
 debugger_set_breakpoint(address=...)
 debugger_resume()
+debugger_wait_for_stop(timeout_ms=...)
 debugger_read_memory(address=..., length=...)
 ```
 
-The 18 retained tools are:
+The 20 retained tools are:
 
-- `debugger_launch_offers`, `debugger_launch`, `debugger_status`,
+- `debugger_launch_offers`, `debugger_launch`, `debugger_attach`, `debugger_status`,
   `debugger_traces`, and `debugger_modules`
 - `debugger_set_breakpoint`, `debugger_list_breakpoints`, and
   `debugger_remove_breakpoint`
-- `debugger_resume`, `debugger_interrupt`, `debugger_step_into`,
+- `debugger_resume`, `debugger_wait_for_stop`, `debugger_interrupt`, `debugger_step_into`,
   `debugger_step_over`, and `debugger_step_out`
 - `debugger_registers`, `debugger_stack_trace`, and `debugger_read_memory`
 - `debugger_static_to_dynamic` and `debugger_dynamic_to_static`
@@ -184,14 +186,10 @@ using the mapping tools. Debugging a defect in Wine's own open-source code is
 primarily a Wine source, build, GDB, and test-suite task; Ghidra MCP can provide
 supporting disassembly evidence.
 
-There is no generic TraceRMI attach endpoint today. These four additions remain
-planned and were deliberately not claimed by the removal work:
+Generic selected-offer/PID attach is available through `debugger_attach`, and `debugger_wait_for_stop` provides a bounded event-driven wait. These additions remain planned:
 
-- [ ] Generic TraceRMI attach using a selected launch offer and PID.
-- [ ] `debugger_wait_for_stop(timeout_ms)`.
 - [ ] Process memory-map enumeration.
-- [ ] `copy_debugger_memory_to_program`, creating and populating a block from a
-  trace range.
+- [ ] `copy_debugger_memory_to_program`, creating and populating a block from a trace range.
 
 ## Optional local BSim
 

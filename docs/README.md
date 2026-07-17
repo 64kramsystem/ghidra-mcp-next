@@ -39,10 +39,9 @@ mvn clean package assembly:single -DskipTests
 
 ## Maintenance rules
 
-- Describe local GUI/headless projects and the current 229-endpoint catalog.
-- Use exact exposed MCP names, especially the 18 `debugger_*` TraceRMI tools.
-- Clearly distinguish implemented behavior from the four planned debugger
-  additions.
+- Describe local GUI/headless projects and the current 231-endpoint catalog.
+- Use exact exposed MCP names, especially the 20 `debugger_*` TraceRMI tools.
+- Clearly distinguish implemented attach/wait behavior from the two remaining planned debugger additions.
 - Treat BSim as optional and explicitly configured.
 - Keep script guidance aligned with the reviewed allowlist and
   `GHIDRA_MCP_ALLOW_SCRIPTS` gate.
