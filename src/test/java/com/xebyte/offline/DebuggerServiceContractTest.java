@@ -37,8 +37,16 @@ public class DebuggerServiceContractTest extends TestCase {
     public void testRemainingFutureEndpointsAreNotFalselyAdvertised() throws Exception {
         String source = Files.readString(Path.of(System.getProperty("user.dir"),
                 "src/main/java/com/xebyte/core/DebuggerService.java"));
-        assertFalse(source.contains("/debugger/wait_for_stop"));
         assertFalse(source.contains("/debugger/memory_maps"));
         assertFalse(source.contains("/debugger/copy_memory_to_program"));
+    }
+
+    public void testWaitForStopUsesEventDrivenStateWaiter() throws Exception {
+        String source = Files.readString(Path.of(System.getProperty("user.dir"),
+                "src/main/java/com/xebyte/core/DebuggerService.java"));
+        assertTrue(source.contains("path = \"/debugger/wait_for_stop\""));
+        assertTrue(source.contains("DebuggerStateWaiter.waitForStop"));
+        assertTrue(source.contains("ctx.trace.addListener"));
+        assertTrue(source.contains("ctx.trace.removeListener"));
     }
 }

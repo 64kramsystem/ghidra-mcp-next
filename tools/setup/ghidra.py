@@ -112,6 +112,7 @@ TRACE_RMI_CONTRACT_TOOLS = {
     "debugger/launch_offers",
     "debugger/launch",
     "debugger/attach",
+    "debugger/wait_for_stop",
     "debugger/status",
     "debugger/resume",
     "debugger/interrupt",

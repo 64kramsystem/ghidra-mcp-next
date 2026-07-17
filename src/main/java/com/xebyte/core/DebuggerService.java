@@ -1,11 +1,13 @@
 package com.xebyte.core;
 
+import docking.ActionContext;
 import ghidra.app.services.DebuggerLogicalBreakpointService;
 import ghidra.app.services.DebuggerStaticMappingService;
 import ghidra.app.services.DebuggerTargetService;
 import ghidra.app.services.DebuggerTraceManagerService;
 import ghidra.app.services.TraceRmiLauncherService;
 import ghidra.debug.api.ValStr;
+import ghidra.debug.api.model.DebuggerSingleObjectPathActionContext;
 import ghidra.debug.api.target.ActionName;
 import ghidra.debug.api.target.Target;
 import ghidra.debug.api.tracermi.LaunchParameter;
@@ -16,6 +18,7 @@ import ghidra.debug.api.tracermi.TraceRmiLaunchOffer.LaunchResult;
 import ghidra.debug.api.tracermi.TraceRmiLaunchOffer.RelPrompt;
 import ghidra.debug.api.tracemgr.DebuggerCoordinates;
 import ghidra.framework.model.Project;
+import ghidra.framework.model.DomainObjectListener;
 import ghidra.framework.model.ToolManager;
 import ghidra.framework.model.ToolTemplate;
 import ghidra.framework.model.Workspace;
@@ -38,6 +41,7 @@ import ghidra.trace.model.modules.TraceModule;
 import ghidra.trace.model.stack.TraceStack;
 import ghidra.trace.model.stack.TraceStackFrame;
 import ghidra.trace.model.thread.TraceThread;
+import ghidra.trace.model.target.path.KeyPath;
 import ghidra.util.Msg;
 import ghidra.util.task.ConsoleTaskMonitor;
 import ghidra.util.task.TaskMonitor;
@@ -251,6 +255,12 @@ public class DebuggerService {
                 ctx.tool.getService(DebuggerTargetService.class);
         if (targetSvc == null) return null;
         return targetSvc.getTarget(ctx.trace);
+    }
+
+    private ActionContext createTraceActionContext(TraceContext ctx) {
+        KeyPath path = ctx.coords == null ? null : ctx.coords.getPath();
+        return new DebuggerSingleObjectPathActionContext(
+                path == null ? KeyPath.of() : path);
     }
 
     private Address parseAddress(Trace trace, String addrStr) {
@@ -692,6 +702,52 @@ public class DebuggerService {
         }
 
         return Response.ok(status);
+    }
+
+    @McpTool(path = "/debugger/wait_for_stop", method = "POST",
+            description = "Wait until the active debugger target stops or a timeout expires")
+    public Response waitForStop(
+            @Param(value = "timeout_ms", source = ParamSource.BODY,
+                    description = "Maximum wait in milliseconds; zero performs a state check") long timeoutMs) {
+        if (timeoutMs < 0) {
+            return Response.err("Timeout must be non-negative");
+        }
+        TraceContext ctx = getContext();
+        if (ctx == null) return noTrace();
+        Target initialTarget = getTarget(ctx);
+        if (initialTarget == null || !initialTarget.isValid()) return noTarget();
+
+        ActionContext actionContext = createTraceActionContext(ctx);
+        DebuggerStateWaiter.EventSource events = new DebuggerStateWaiter.EventSource() {
+            @Override
+            public void addListener(DomainObjectListener listener) {
+                ctx.trace.addListener(listener);
+            }
+
+            @Override
+            public void removeListener(DomainObjectListener listener) {
+                ctx.trace.removeListener(listener);
+            }
+        };
+        try {
+            DebuggerStateWaiter.WaitResult result = DebuggerStateWaiter.waitForStop(
+                    events,
+                    () -> DebuggerStateWaiter.state(getTarget(ctx), actionContext),
+                    timeoutMs);
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("state", result.state().name());
+            response.put("stopped", result.stopped());
+            response.put("terminated",
+                    result.state() == DebuggerStateWaiter.ExecutionState.TERMINATED);
+            response.put("timed_out", result.timedOut());
+            response.put("timeout_ms", timeoutMs);
+            return Response.ok(response);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return Response.err("Debugger stop wait was interrupted");
+        } catch (Exception e) {
+            return Response.err("Failed while waiting for debugger stop: " + e.getMessage());
+        }
     }
 
     @McpTool(path = "/debugger/traces",
