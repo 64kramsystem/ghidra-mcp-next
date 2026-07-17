@@ -38,3 +38,45 @@ def test_standalone_debugger_proxy_is_absent():
     )
     assert "GHIDRA_DEBUGGER_URL" not in maintained
     assert "DEBUGGER_TOOL_NAMES" not in maintained
+
+
+def test_removed_subsystems_are_absent_from_tracked_configuration():
+    mcp_config = (ROOT / ".mcp.json").read_text(encoding="utf-8")
+    env_template = (ROOT / ".env.template").read_text(encoding="utf-8")
+
+    assert "GHIDRA_DEBUGGER_URL" not in mcp_config
+    for forbidden in (
+        "Fun-Doc",
+        "FUNDOC_",
+        "Knowledge Database",
+        "KNOWLEDGE_DB_",
+        "10.0.10.30",
+        "store_function_knowledge",
+        "query_knowledge_context",
+    ):
+        assert forbidden not in env_template
+
+
+def test_removed_documentation_endpoints_are_absent_from_live_tests_and_timeouts():
+    maintained = "\n".join(
+        (ROOT / path).read_text(encoding="utf-8")
+        for path in (
+            "python/bridge_mcp_ghidra/config.py",
+            "tests/integration/test_readonly_endpoints.py",
+            "tests/integration/test_safe_write_endpoints.py",
+        )
+    )
+    for removed in (
+        "compare_programs_documentation",
+        "get_function_documentation",
+        "apply_function_documentation",
+    ):
+        assert removed not in maintained
+
+
+def test_schema_builder_fixtures_use_retained_endpoint_names():
+    fixtures = (ROOT / "tests/unit/test_mcp_tool_functions.py").read_text(
+        encoding="utf-8"
+    )
+    assert "archive_ingest_program" not in fixtures
+    assert "merge_program_documentation" not in fixtures

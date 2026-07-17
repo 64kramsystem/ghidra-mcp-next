@@ -30,7 +30,6 @@ ENDPOINT_TIMEOUTS = {
     "rename_function_by_address": 45,
     "consolidate_duplicate_types": 60,
     "batch_analyze_completeness": 120,
-    "apply_function_documentation": 60,
     "default": 30,
 }
 
