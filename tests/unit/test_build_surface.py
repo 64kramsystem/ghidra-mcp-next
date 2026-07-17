@@ -38,6 +38,19 @@ def test_pom_has_no_docker_build_profile():
     assert "docker/Dockerfile" not in pom
 
 
+def test_maven_enforces_warning_free_java_build():
+    pom = (ROOT / "pom.xml").read_text(encoding="utf-8")
+    assert "<showWarnings>true</showWarnings>" in pom
+    assert "<arg>-Xlint:all</arg>" in pom
+    assert "<arg>-Werror</arg>" in pom
+
+
+def test_mockito_is_loaded_as_a_test_agent():
+    pom = (ROOT / "pom.xml").read_text(encoding="utf-8")
+    assert "-javaagent:" in pom
+    assert "mockito-core" in pom
+
+
 def test_test_runner_has_no_docker_mode():
     runner = (ROOT / "tests/run_tests.py").read_text(encoding="utf-8")
     assert "--docker" not in runner
