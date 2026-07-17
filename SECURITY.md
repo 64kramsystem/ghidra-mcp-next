@@ -1,47 +1,49 @@
 # Security Policy
 
-## Reporting a Vulnerability
+## Reporting a vulnerability
 
-Please do **not** open a public GitHub issue with technical details for a suspected security vulnerability.
+Please use GitHub's private security-advisory flow for vulnerabilities. Include
+the affected version, deployment mode, reproduction steps, expected impact,
+and any proposed mitigation. Do not publish an exploitable issue before the
+maintainers have had a reasonable opportunity to respond.
 
-Use GitHub's **Private Vulnerability Reporting** for this repository instead:
+## Deployment model
 
-- Go to the repository's **Security** tab.
-- Select **Report a vulnerability**.
-- Include the affected version, environment, proof of concept, impact, and any recommended mitigation.
+Ghidra MCP is designed for a trusted single-user workstation. Keep both the
+Ghidra HTTP service and the Python bridge on loopback unless you have explicitly
+secured every client and transport.
 
-If GitHub Private Vulnerability Reporting is unavailable for you, open a public issue that contains **no technical details** and asks for a private disclosure route.
+The supported project model is a local project. Treat imported binaries,
+symbols, decompiler output, script output, and model-generated tool arguments as
+untrusted data.
 
-## Scope
+## Security controls
 
-Security reports are in scope when they affect the confidentiality, integrity, or availability of users running Ghidra MCP, including:
+| Variable | Purpose |
+| --- | --- |
+| `GHIDRA_MCP_AUTH_TOKEN` | Requires a bearer token for non-health HTTP requests. |
+| `GHIDRA_MCP_FILE_ROOT` | Restricts filesystem endpoints to a canonical directory tree. |
+| `GHIDRA_MCP_ALLOW_SCRIPTS` | Enables arbitrary-code script endpoints; disabled by default. |
+| `GHIDRA_MCP_REQUIRE_PROGRAM_SELECTORS` | Prevents program-scoped calls from silently targeting the active tab. |
 
-- unintended command execution or script execution paths;
-- path traversal or unsafe file access;
-- unsafe exposure across Ghidra project, program, or server boundaries;
-- bypasses of intended hardening, validation, or scope-boundary controls;
-- denial-of-service conditions caused by malformed MCP requests or analysis inputs;
-- vulnerabilities in release packaging, install scripts, or bridge/server communication.
+Use a high-entropy token, avoid logging it, and rotate it if exposure is
+suspected. Do not place untrusted inputs inside the allowed file root merely to
+bypass a rejected path.
 
-Out of scope:
+## Script execution
 
-- issues that require already-compromised local administrator/root access without increasing impact;
-- social engineering;
-- spam or rate-limit-only reports;
-- vulnerabilities only present in unsupported local modifications.
+`run_ghidra_script` and `run_script_inline` execute code in the Ghidra process.
+Only enable them for trusted local clients, review scripts before execution, and
+prefer the native MCP endpoints when possible. The reviewed repository scripts
+are an allowlist, not a sandbox.
 
-## Supported Versions
+## Dynamic analysis
 
-The latest released version and the `main` branch receive security review and fixes. Older releases may receive fixes when the issue is severe and the patch can be applied safely.
+TraceRMI debugger operations can control a live process and read its memory.
+Confirm the launch offer, target, mapped address, and active trace before a
+mutation. Do not expose debugger agents to untrusted networks.
 
-## Disclosure Process
+## Supported versions
 
-After receiving a private report, the maintainer will aim to:
-
-1. acknowledge the report;
-2. reproduce and assess severity;
-3. prepare a fix or mitigation;
-4. coordinate disclosure timing with the reporter when appropriate;
-5. publish release notes or an advisory once users have a safe upgrade path.
-
-Please give the project reasonable time to investigate and remediate before public disclosure.
+Security fixes target the current release line. Older releases may contain
+known issues and should be upgraded before use in a network-reachable setup.

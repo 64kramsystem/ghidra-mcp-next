@@ -56,8 +56,9 @@ PLUGIN_EXTENSION_NAME = "GhidraMCP"
 DEFAULT_MCP_URL = "http://127.0.0.1:8089"
 DEFAULT_MCP_WAIT_SECONDS = 120
 DEFAULT_GHIDRA_EXIT_WAIT_SECONDS = 15
-DEFAULT_BENCHMARK_DLL = Path("fun-doc") / "benchmark" / "build" / "Benchmark.dll"
-DEFAULT_BENCHMARK_DEBUG_EXE = Path("fun-doc") / "benchmark" / "build" / "BenchmarkDebug.exe"
+BENCHMARK_FIXTURE_ROOT = Path("tests") / "fixtures" / "ghidra_benchmark"
+DEFAULT_BENCHMARK_DLL = BENCHMARK_FIXTURE_ROOT / "build" / "Benchmark.dll"
+DEFAULT_BENCHMARK_DEBUG_EXE = BENCHMARK_FIXTURE_ROOT / "build" / "BenchmarkDebug.exe"
 LEGACY_BENCHMARK_PROGRAM = "/benchmark/Benchmark.dll"
 DEFAULT_BENCHMARK_FOLDER = "/testing/benchmark"
 DEFAULT_BENCHMARK_PROGRAM = f"{DEFAULT_BENCHMARK_FOLDER}/Benchmark.dll"
@@ -74,40 +75,80 @@ BENCHMARK_DEPLOY_TEST_MODES = {
     "debugger-live",
     "multi-program",
 }
-SMOKE_REQUIRED_TOOLS = {
-    "decompile_function",
-    "get_function_variables",
-    "analyze_function_completeness",
-    "batch_set_comments",
-    "set_local_variable_type",
-    "rename_variables",
-    "prompt_policy",
-    "save_program",
-    "save_all_programs",
-    "set_function_prototype",
-    "rename_function_by_address",
-    "search_data_types",
-    "create_struct",
-    "get_struct_layout",
-    "list_open_programs",
-    "debugger/launch",
-}
-RELEASE_CONTRACT_TOOLS = SMOKE_REQUIRED_TOOLS | {
-    "analysis_status",
-    "create_folder",
-    "delete_file",
+FILEZILLA_CONTRACT_TOOLS = {
+    "create_project",
+    "open_project",
     "import_file",
-    "list_project_files",
-    "list_functions",
+    "list_open_programs",
+    "switch_program",
+    "save_program",
+    "search_strings",
     "search_functions",
-    "get_address_spaces",
-    "list_imports",
-    "list_exports",
-    "list_strings",
+    "search_byte_patterns",
+    "search_instructions",
+    "get_xrefs_to",
+    "get_xrefs_from",
+    "decompile_function",
+    "disassemble_bytes",
+    "clear_flow_and_repair",
+    "rename_function",
+    "rename_label",
+    "set_disassembly_comment",
+    "create_struct",
+    "add_struct_field",
+    "create_memory_block",
+    "run_ghidra_script",
+    "run_script_inline",
+}
+LOCAL_COMPARISON_CONTRACT_TOOLS = {
+    "get_function_hash",
+    "get_bulk_function_hashes",
+    "get_function_signature",
+    "find_similar_functions_fuzzy",
+    "bulk_fuzzy_match",
+    "diff_functions",
+}
+TRACE_RMI_CONTRACT_TOOLS = {
+    "debugger/launch_offers",
     "debugger/launch",
     "debugger/status",
+    "debugger/resume",
+    "debugger/interrupt",
+    "debugger/set_breakpoint",
+    "debugger/read_memory",
+    "debugger/registers",
+    "debugger/stack_trace",
     "debugger/modules",
+    "debugger/static_to_dynamic",
+    "debugger/dynamic_to_static",
 }
+RELEASE_CONTRACT_TOOLS = (
+    FILEZILLA_CONTRACT_TOOLS
+    | LOCAL_COMPARISON_CONTRACT_TOOLS
+    | TRACE_RMI_CONTRACT_TOOLS
+)
+GENERIC_SMOKE_TOOLS = {
+    "analysis_status",
+    "analyze_function_completeness",
+    "batch_set_comments",
+    "create_folder",
+    "delete_file",
+    "get_address_spaces",
+    "get_function_variables",
+    "get_struct_layout",
+    "list_exports",
+    "list_functions",
+    "list_imports",
+    "list_project_files",
+    "list_strings",
+    "rename_function_by_address",
+    "rename_variables",
+    "save_all_programs",
+    "search_data_types",
+    "set_function_prototype",
+    "set_local_variable_type",
+}
+SMOKE_REQUIRED_TOOLS = RELEASE_CONTRACT_TOOLS | GENERIC_SMOKE_TOOLS
 
 
 def ghidra_user_base_dir() -> Path:
@@ -465,29 +506,24 @@ def find_ghidra_executable(ghidra_path: Path) -> Path:
 
 def find_plugin_archive(repo_root: Path) -> Path:
     version = read_pom_versions(repo_root).project_version
-    # Prefer the freshest current-version output. Both backends may leave artifacts behind,
-    # so fixed backend priority can silently deploy a stale archive.
+    target_dir = repo_root / "target"
     candidates = [
-        repo_root / "build" / "distributions" / f"GhidraMCP-{version}.zip",
-        repo_root / "target" / f"GhidraMCP-{version}.zip",
-        repo_root / "target" / "GhidraMCP.zip",
+        target_dir / f"GhidraMCP-{version}.zip",
+        target_dir / "GhidraMCP.zip",
     ]
     existing_candidates = [candidate for candidate in candidates if candidate.is_file()]
     if existing_candidates:
         return max(existing_candidates, key=lambda path: path.stat().st_mtime)
 
-    for search_dir in [repo_root / "build" / "distributions", repo_root / "target"]:
-        archives = sorted(
-            search_dir.glob("GhidraMCP*.zip"),
-            key=lambda path: path.stat().st_mtime,
-            reverse=True,
-        )
-        if archives:
-            return archives[0]
-
-    raise FileNotFoundError(
-        "No GhidraMCP plugin archive found in build/distributions/ or target/"
+    archives = sorted(
+        target_dir.glob("GhidraMCP*.zip"),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
     )
+    if archives:
+        return archives[0]
+
+    raise FileNotFoundError("No GhidraMCP plugin archive found in target/")
 
 
 def print_command(command: list[str]) -> None:
@@ -955,7 +991,7 @@ def reset_benchmark_fixture(repo_root: Path, mcp_url: str) -> None:
     if not benchmark_dll.is_file() or not benchmark_debug_exe.is_file():
         print("Benchmark binary output missing; building it now.")
         subprocess.run(
-            [sys.executable, str(repo_root / "fun-doc" / "benchmark" / "build.py")],
+            [sys.executable, str(repo_root / BENCHMARK_FIXTURE_ROOT / "build.py")],
             cwd=repo_root,
             check=True,
         )
@@ -1482,8 +1518,7 @@ def run_debugger_live_test(repo_root: Path, mcp_url: str) -> None:
                     f"Debugger backend unavailable on this machine: "
                     f"{launch_err}. Install the Windows Debugger Toolkit "
                     "(WDK) and ensure the matching ghidratrace wheel is "
-                    "installed against the active Python (see the "
-                    "`debugger` dependency group: `uv sync --group debugger`) "
+                    "installed into the selected Ghidra debugger Python "
                     "to enable this test."
                 ) from launch_err
             raise
@@ -1586,7 +1621,7 @@ def run_selected_endpoint_contract_test(repo_root: Path, mcp_url: str) -> None:
 
 
 def _benchmark_regression_dir(repo_root: Path) -> Path:
-    return repo_root / "fun-doc" / "benchmark" / "regression"
+    return repo_root / BENCHMARK_FIXTURE_ROOT / "regression"
 
 
 def _bench_get(repo_root: Path, mcp_url: str, path: str, params: dict | None = None,
@@ -1848,7 +1883,7 @@ def _bench_ensure_full_analysis(repo_root: Path, mcp_url: str, program_path: str
 def run_benchmark_yaml_regression(repo_root: Path, mcp_url: str) -> None:
     """Run YAML-driven assertions against the imported benchmark binaries.
 
-    Reads every fun-doc/benchmark/regression/*.yaml file and verifies its
+    Reads every tests/fixtures/ghidra_benchmark/regression/*.yaml file and verifies its
     contents end-to-end against the live MCP server. Failures are collected
     across the whole pass and raised as a single RuntimeError so a single
     deploy run reports every regression at once.
@@ -1933,15 +1968,6 @@ def run_release_regression_tests(repo_root: Path, mcp_url: str) -> None:
 
 def run_deploy_tests(repo_root: Path, mcp_url: str, test_modes: list[str]) -> None:
     run_default_smoke_test(repo_root, mcp_url)
-    if _deploy_tests_use_benchmark(test_modes):
-        _mcp_request(
-            repo_root,
-            mcp_url,
-            "/prompt_policy",
-            data={"action": "enable", "reason": "deploy_tests", "seconds": 300},
-            method="POST",
-            timeout=10,
-        )
     for mode in test_modes:
         if mode == "endpoint-catalog":
             run_endpoint_catalog_test(repo_root, mcp_url)
@@ -2011,8 +2037,7 @@ def install_ghidratrace_for_debugger(
     pip-installed in the launcher's Python, TraceRmi negotiation fails
     with ``VersionMismatchError: Front-end: 12.1, back-end: 12.0`` —
     observed twice in this release cycle. The wheel lives inside the
-    Ghidra install (not on PyPI), so a plain ``uv sync --group debugger``
-    can't cover it.
+    Ghidra install (not on PyPI), so the bridge environment cannot provide it.
 
     Returns 0 on success / no-op, nonzero on installer failure.
     """
@@ -2123,60 +2148,10 @@ def test_write_access(path_to_test: Path) -> bool:
         return False
 
 
-def _has_dependency_group(pyproject: Path, group: str) -> bool:
-    """Return True if ``pyproject.toml`` defines ``group`` under
-    ``[dependency-groups]``.
-
-    A plain substring scan is too loose — the word could appear in a comment or
-    an unrelated section — and too strict, since it wouldn't confirm the entry
-    is one ``uv sync --group <group>`` can actually resolve. Parse the TOML and
-    look for the real key.
-    """
-    if not pyproject.is_file():
-        return False
-
-    try:
-        import tomllib  # Python 3.11+
-    except ModuleNotFoundError:
-        try:
-            import tomli as tomllib  # type: ignore[no-redef]
-        except ModuleNotFoundError:
-            tomllib = None  # type: ignore[assignment]
-
-    if tomllib is not None:
-        try:
-            with pyproject.open("rb") as handle:
-                data = tomllib.load(handle)
-        except (OSError, ValueError):
-            return False
-        groups = data.get("dependency-groups")
-        return isinstance(groups, dict) and group in groups
-
-    # Python 3.10 without tomli: fall back to a section-scoped scan so the word
-    # only counts when it's a key inside [dependency-groups].
-    try:
-        text = pyproject.read_text(encoding="utf-8")
-    except OSError:
-        return False
-    in_section = False
-    key_re = re.compile(rf"^\s*(?:{re.escape(group)}|[\"']{re.escape(group)}[\"'])\s*=")
-    for raw in text.splitlines():
-        line = raw.split("#", 1)[0]
-        stripped = line.strip()
-        if stripped.startswith("[") and stripped.endswith("]"):
-            in_section = stripped == "[dependency-groups]"
-            continue
-        if in_section and key_re.match(line):
-            return True
-    return False
-
-
 def collect_preflight_issues(
     repo_root: Path,
     ghidra_path: Path,
-    python_executable: Path,
     *,
-    install_debugger: bool,
     strict: bool = False,
     user_base_dir: Path | None = None,
 ) -> list[str]:
@@ -2202,14 +2177,6 @@ def collect_preflight_issues(
         jar_path = ghidra_path / relative_path
         if not jar_path.is_file():
             issues.append(f"Missing required Ghidra dependency: {jar_path}")
-
-    if install_debugger:
-        pyproject = repo_root / "pyproject.toml"
-        if not _has_dependency_group(pyproject, "debugger"):
-            issues.append(
-                "Debugger dependency group not found in pyproject.toml "
-                "(expected a [dependency-groups] 'debugger' entry)"
-            )
 
     extensions_dir = ghidra_path / "Extensions" / "Ghidra"
     if not test_write_access(extensions_dir):

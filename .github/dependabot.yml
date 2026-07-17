@@ -4,10 +4,8 @@
 #
 # Covers every package ecosystem in the repo:
 #   * GitHub Actions used by the workflows under .github/workflows/
-#   * Python requirements at the repo root (bridge runtime + test + debugger)
-#   * Python requirements under fun-doc/ (the documentation workflow)
+#   * Python requirements at the repo root (bridge runtime + tests)
 #   * Maven (pom.xml) for the Java plugin
-#   * Gradle (build.gradle) for the alternate Gradle build path
 #
 # Schedule: weekly per ecosystem to keep noise manageable but stay
 # inside most CVE advisory windows. open-pull-requests-limit keeps
@@ -36,16 +34,6 @@ updates:
       - dependencies
       - python
 
-  - package-ecosystem: pip
-    directory: "/fun-doc"
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
-    labels:
-      - dependencies
-      - python
-      - fun-doc
-
   - package-ecosystem: maven
     directory: "/"
     schedule:
@@ -60,13 +48,3 @@ updates:
     # nonsensical upgrades. Ignore them.
     ignore:
       - dependency-name: "ghidra:*"
-
-  - package-ecosystem: gradle
-    directory: "/"
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
-    labels:
-      - dependencies
-      - java
-      - gradle

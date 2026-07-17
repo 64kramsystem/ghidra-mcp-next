@@ -1,7 +1,7 @@
 {
   "version": "5.15.0",
   "description": "GhidraMCP REST API Endpoint Specification",
-  "total_endpoints": 257,
+  "total_endpoints": 229,
   "categories": {
     "listing": "List program data",
     "getter": "Get specific data",
@@ -14,7 +14,6 @@
     "analysis": "Analysis tools",
     "program": "Program management",
     "project": "Project lifecycle management",
-    "server": "Server connection and version control",
     "script": "Script execution",
     "utility": "Utility endpoints",
     "emulation": "P-code emulation (run functions with controlled inputs)"
@@ -202,41 +201,6 @@
       "description": "Apply data type"
     },
     {
-      "path": "/apply_function_documentation",
-      "method": "POST",
-      "category": "utility",
-      "params": [
-        "json_body",
-        "program"
-      ],
-      "description": "Apply function documentation"
-    },
-    {
-      "path": "/archive_ingest_function",
-      "method": "POST",
-      "category": "documentation",
-      "params": [
-        "address",
-        "program",
-        "version_override",
-        "dry_run"
-      ],
-      "description": "Ingest a single function's documentation into the cross-version archive (re_kb.functions on bsim Postgres). Idempotent; field-level merge resolution happens on the archive side. Use archive_ingest_program for bulk."
-    },
-    {
-      "path": "/archive_ingest_program",
-      "method": "POST",
-      "category": "documentation",
-      "params": [
-        "program",
-        "version_override",
-        "limit",
-        "skip_default_named",
-        "dry_run"
-      ],
-      "description": "Bulk-ingest every function in a program into the cross-version documentation archive. Posts each to /v1/doc_archive/upsert. Returns per-binary counts (created / updated / conflicts_enqueued / errors)."
-    },
-    {
       "path": "/archive_project",
       "method": "POST",
       "category": "headless",
@@ -385,16 +349,6 @@
       "description": "Set multiple variable types"
     },
     {
-      "path": "/batch_string_anchor_report",
-      "method": "GET",
-      "category": "documentation",
-      "params": [
-        "pattern",
-        "program"
-      ],
-      "description": "Report of source file strings and their FUN_* functions"
-    },
-    {
       "path": "/bulk_fuzzy_match",
       "method": "GET",
       "category": "documentation",
@@ -424,17 +378,6 @@
       "category": "utility",
       "params": [],
       "description": "Health check endpoint"
-    },
-    {
-      "path": "/checkin_program",
-      "method": "POST",
-      "category": "headless",
-      "params": [
-        "path",
-        "comment",
-        "keep_checked_out"
-      ],
-      "description": "Check an open program back in to the shared Ghidra Server as a new version"
     },
     {
       "path": "/clear_flow_and_repair",
@@ -496,15 +439,6 @@
       "category": "headless",
       "params": [],
       "description": "Close the currently open project"
-    },
-    {
-      "path": "/compare_programs_documentation",
-      "method": "GET",
-      "category": "utility",
-      "params": [
-        "program"
-      ],
-      "description": "Compare documentation across programs"
     },
     {
       "path": "/configure_analyzer",
@@ -1127,16 +1061,6 @@
       "description": "Cross-binary fuzzy function matching. On programs with multiple address spaces (e.g., embedded targets), prefix addresses with the space name (mem:1000) to avoid ambiguous resolution."
     },
     {
-      "path": "/find_undocumented_by_string",
-      "method": "GET",
-      "category": "utility",
-      "params": [
-        "address",
-        "program"
-      ],
-      "description": "Find undocumented functions referencing string"
-    },
-    {
       "path": "/force_decompile",
       "method": "GET",
       "category": "decompile",
@@ -1339,16 +1263,6 @@
         "program"
       ],
       "description": "Return the number of functions in the loaded program"
-    },
-    {
-      "path": "/get_function_documentation",
-      "method": "GET",
-      "category": "utility",
-      "params": [
-        "address",
-        "program"
-      ],
-      "description": "Export function documentation"
     },
     {
       "path": "/get_function_hash",
@@ -1890,17 +1804,6 @@
       "description": "Machine-readable API schema with endpoint metadata"
     },
     {
-      "path": "/merge_program_documentation",
-      "method": "POST",
-      "category": "documentation",
-      "params": [
-        "source",
-        "target",
-        "dry_run"
-      ],
-      "description": "Bulk merge: copy all RE documentation (function names, signatures, plate comments, instruction comments at EOL/PRE/POST, non-default labels & global symbols) from one program to another at matching addresses. Server-side iteration in a single transaction. Designed for the orphan-rescue workflow: source is typically '<name>_recovered', target is the original '<name>.dll'. Set dry_run=true to count without writing."
-    },
-    {
       "path": "/modify_struct_field",
       "method": "POST",
       "category": "datatype",
@@ -1983,17 +1886,6 @@
       "category": "project",
       "params": [],
       "description": "Get detailed project info including running tools and open programs"
-    },
-    {
-      "path": "/prompt_policy",
-      "method": "POST",
-      "category": "system",
-      "params": [
-        "action",
-        "reason",
-        "seconds"
-      ],
-      "description": "Temporarily enable, disable, or query scoped automation prompt handling"
     },
     {
       "path": "/read_memory",
@@ -2348,179 +2240,6 @@
       "description": "Search defined strings by a regex/substring pattern"
     },
     {
-      "path": "/server/admin/set_permissions",
-      "method": "POST",
-      "category": "server",
-      "params": [
-        "repo",
-        "user",
-        "accessLevel"
-      ],
-      "description": "Set user permissions on a repository"
-    },
-    {
-      "path": "/server/admin/terminate_all_checkouts",
-      "method": "POST",
-      "category": "server",
-      "params": [
-        "repo",
-        "path"
-      ],
-      "description": "Terminate all checkouts in a folder recursively"
-    },
-    {
-      "path": "/server/admin/terminate_checkout",
-      "method": "POST",
-      "category": "server",
-      "params": [
-        "repo",
-        "path",
-        "checkoutId",
-        "checkout_id"
-      ],
-      "description": "Terminate all checkouts on a single file"
-    },
-    {
-      "path": "/server/admin/users",
-      "method": "GET",
-      "category": "server",
-      "params": [],
-      "description": "List all users on the server"
-    },
-    {
-      "path": "/server/authenticate",
-      "method": "POST",
-      "category": "server",
-      "params": [
-        "username",
-        "password"
-      ],
-      "description": "Register server credentials for programmatic authentication"
-    },
-    {
-      "path": "/server/checkouts",
-      "method": "GET",
-      "category": "server",
-      "params": [
-        "path"
-      ],
-      "description": "List all checked-out files in a folder, including server-side checkouts"
-    },
-    {
-      "path": "/server/connect",
-      "method": "POST",
-      "category": "server",
-      "params": [
-        "host",
-        "port"
-      ],
-      "description": "Connect to a Ghidra server"
-    },
-    {
-      "path": "/server/disconnect",
-      "method": "POST",
-      "category": "server",
-      "params": [],
-      "description": "Disconnect from the Ghidra server"
-    },
-    {
-      "path": "/server/repositories",
-      "method": "GET",
-      "category": "server",
-      "params": [],
-      "description": "List repositories on the connected server"
-    },
-    {
-      "path": "/server/repository/create",
-      "method": "POST",
-      "category": "server",
-      "params": [
-        "name"
-      ],
-      "description": "Create a new repository on the server"
-    },
-    {
-      "path": "/server/repository/file",
-      "method": "GET",
-      "category": "server",
-      "params": [
-        "repo",
-        "path"
-      ],
-      "description": "Get file info from a server repository"
-    },
-    {
-      "path": "/server/repository/files",
-      "method": "GET",
-      "category": "server",
-      "params": [
-        "repo",
-        "path"
-      ],
-      "description": "List files in a server repository folder"
-    },
-    {
-      "path": "/server/status",
-      "method": "GET",
-      "category": "headless",
-      "params": [],
-      "description": "Check headless server connection status"
-    },
-    {
-      "path": "/server/version_control/add",
-      "method": "POST",
-      "category": "server",
-      "params": [
-        "repo",
-        "path",
-        "comment",
-        "keepCheckedOut"
-      ],
-      "description": "Add a file to version control"
-    },
-    {
-      "path": "/server/version_control/checkin",
-      "method": "POST",
-      "category": "server",
-      "params": [
-        "repo",
-        "path",
-        "comment",
-        "keepCheckedOut"
-      ],
-      "description": "Check in a version-controlled file"
-    },
-    {
-      "path": "/server/version_control/checkout",
-      "method": "POST",
-      "category": "server",
-      "params": [
-        "repo",
-        "path"
-      ],
-      "description": "Check out a version-controlled file"
-    },
-    {
-      "path": "/server/version_control/undo_checkout",
-      "method": "POST",
-      "category": "server",
-      "params": [
-        "repo",
-        "path"
-      ],
-      "description": "Undo a file checkout"
-    },
-    {
-      "path": "/server/version_history",
-      "method": "GET",
-      "category": "server",
-      "params": [
-        "repo",
-        "path"
-      ],
-      "description": "Get version history for a file"
-    },
-    {
       "path": "/set_bookmark",
       "method": "POST",
       "category": "comment",
@@ -2624,7 +2343,7 @@
         "program",
         "strict_mode"
       ],
-      "description": "Atomically apply name + type + plate-comment + array length to a global variable. Single-transaction; rejects on validation failure with no partial write. Replaces the 4-tool chain (apply_data_type → rename_data → batch_set_comments → create_label)."
+      "description": "Atomically apply name + type + plate-comment + array length to a global variable. Caller-supplied names and comments are passed to Ghidra unchanged; structural type and array validation remains. Replaces the 4-tool chain (apply_data_type → rename_data → batch_set_comments → create_label)."
     },
     {
       "path": "/set_image_base",
@@ -2692,7 +2411,7 @@
         "variables",
         "program"
       ],
-      "description": "Set types and names for multiple variables atomically. Types are applied first, then renames, in a single transaction. Hungarian prefix validation is enforced: the new name's prefix must match the type. On programs with multiple address spaces, prefix addresses with the space name."
+      "description": "Set types and names for multiple variables atomically. Types are applied first, then renames, in a single transaction. Caller-supplied names are passed to Ghidra unchanged. On programs with multiple address spaces, prefix addresses with the space name."
     },
     {
       "path": "/suggest_field_names",

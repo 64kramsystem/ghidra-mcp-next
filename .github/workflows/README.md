@@ -1,52 +1,34 @@
 # GitHub Workflows
 
-This directory contains the maintained CI, release, and live-regression
-workflows for GhidraMCP.
+| File | Purpose |
+| --- | --- |
+| `tests.yml` | Pull-request and push gates for Python, Java/Maven, catalog, packaging, and documentation contracts. |
+| `release-regression.yml` | Optional live deployment/regression on a prepared self-hosted Windows runner. |
+| `release.yml` | Stable release validation and artifact publication. |
+| `pre-release.yml` | Manually initiated prerelease validation and artifacts. |
+| `codeql.yml` | CodeQL security analysis. |
+| `scorecard.yml` | OpenSSF Scorecard analysis. |
 
-## Workflows
+## Pull requests
 
-| Workflow | Trigger | Runner | Purpose |
-|----------|---------|--------|---------|
-| `tests.yml` | Push and pull request to `main`/`develop` | GitHub-hosted Ubuntu/Windows | Merge-gating build, unit, offline Java, Pester, and docs checks. |
-| `build.yml` | Project build triggers | GitHub-hosted | Build-focused CI path. |
-| `release-regression.yml` | Manual, reusable workflow call, PR label | Self-hosted Windows | Live Ghidra deploy and benchmark regression. |
-| `release.yml` | Version tags or manual dispatch | GitHub-hosted, optional self-hosted regression | Stable release artifact creation. |
-| `pre-release.yml` | Manual dispatch | GitHub-hosted, optional self-hosted regression | Pre-release artifact creation. |
+`tests.yml` is the normal merge gate. The live Ghidra workflow is opt-in because
+hosted runners do not have a prepared Ghidra installation and local project.
+When a trusted self-hosted runner is available, the `live-ghidra-regression`
+label can request the live path configured by the workflow.
 
-## Pull Request Gates
+The supported build used in CI is Maven:
 
-`tests.yml` runs automatically on pull requests and is the default merge gate.
-Configure branch protection to require its status checks.
-
-The live Ghidra regression is opt-in on pull requests. Add this PR label:
-
-```text
-live-ghidra-regression
+```bash
+python -m tools.setup build
+mvn clean package assembly:single -DskipTests
 ```
 
-When the label is present, `release-regression.yml` runs on a self-hosted
-Windows runner and executes:
+## Live runner expectations
 
-```text
-python -m tools.setup deploy --ghidra-path <path> --test release
-```
+A live regression runner needs Java 21, Maven, Python/uv, a compatible Ghidra
+installation, and a disposable local project/fixture. Secrets should use
+GitHub's protected secret store and must not be written into workflow logs.
 
-This is not enabled for every PR by default because public GitHub-hosted runners
-do not have the required active Ghidra project, and external PRs should not hang
-waiting for a private self-hosted runner.
-
-## Release Gates
-
-`release.yml` and `pre-release.yml` expose a `run_live_regression` input. Enable
-it when a self-hosted Windows runner is available and you want the release job to
-wait for the live regression before publishing.
-
-The release regression workflow expects:
-
-- Ghidra installed on the self-hosted runner.
-- Java 21, Python 3.13, and Maven.
-- Access to the target Ghidra project.
-- Any `.env` credentials needed by the project or Ghidra Server.
-
-See [docs/TESTING.md](../../docs/TESTING.md) for the full testing model,
-commands, side effects, and runner/container notes.
+See [`../../docs/TESTING.md`](../../docs/TESTING.md) for local equivalents and
+for the distinction between offline gates, expected skips, and executed live
+coverage.

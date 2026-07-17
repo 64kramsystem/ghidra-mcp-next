@@ -17,7 +17,7 @@
 // Runs FindFunctionsAfterPadding analysis on every binary in the current Ghidra project
 // Iterates through all programs in the project and applies padding-based function discovery
 //@author Ben Ethington
-//@category Diablo 2
+//@category Analysis
 
 import ghidra.app.script.GhidraScript;
 import ghidra.framework.model.DomainFile;

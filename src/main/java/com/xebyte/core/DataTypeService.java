@@ -679,19 +679,10 @@ public class DataTypeService {
                     // Add the enumeration to the data type manager
                     dtm.addDataType(enumDt, null);
 
-                    // Validate enum member naming (UPPERCASE_SNAKE_CASE)
-                    List<String> enumWarnings = new ArrayList<>();
-                    for (String memberName : values.keySet()) {
-                        enumWarnings.addAll(NamingConventions.validateEnumMemberName(memberName));
-                    }
-
                     Map<String, Object> resultMap = new LinkedHashMap<>();
                     resultMap.put("status", "success");
                     resultMap.put("message", "Successfully created enumeration '" + name + "' with " + values.size() +
                                    " values, size: " + size + " bytes");
-                    if (!enumWarnings.isEmpty()) {
-                        resultMap.put("warnings", enumWarnings);
-                    }
                     return Response.ok(resultMap);
                 });
             } catch (Exception e) {
@@ -1150,7 +1141,7 @@ public class DataTypeService {
             @Param(value = "clear_existing", source = ParamSource.BODY, defaultValue = "true") boolean clearExisting,
             @Param(value = "program", description = "Target program name", defaultValue = "") String programName,
             @Param(value = "strict_mode", source = ParamSource.BODY, defaultValue = "",
-                   description = "Optional per-call override for naming enforcement: 'enforce' / 'warn' / 'off'. Omit to use the project/global setting.")
+                   description = "Deprecated compatibility input; ignored because Ghidra validation is authoritative.")
                     String strictModeArg) {
         ServiceUtils.ProgramOrError pe = ServiceUtils.getProgramOrError(programProvider, programName);
         if (pe.hasError()) return pe.error();
@@ -1164,72 +1155,32 @@ public class DataTypeService {
             return Response.text("Data type name is required");
         }
 
-        try (AutoCloseable scopedMode = NamingPolicy.getInstance().scopedRequestMode(strictModeArg)) {
-            Address address = ServiceUtils.parseAddress(program, addressStr);
-            if (address == null) {
-                return Response.text(ServiceUtils.getLastParseError());
-            }
+        Address address = ServiceUtils.parseAddress(program, addressStr);
+        if (address == null) {
+            return Response.text(ServiceUtils.getLastParseError());
+        }
 
-            DataTypeManager dtm = program.getDataTypeManager();
-            DataType dataType = ServiceUtils.resolveDataType(dtm, typeName);
+        DataTypeManager dtm = program.getDataTypeManager();
+        DataType dataType = ServiceUtils.resolveDataType(dtm, typeName);
 
-            if (dataType == null) {
-                return Response.text("ERROR: Unknown data type: " + typeName + ". " +
-                       "For arrays, use syntax 'basetype[count]' (e.g., 'dword[10]'). " +
-                       "Or create the type first using create_struct, create_enum, or mcp_ghidra_create_array_type.");
-            }
+        if (dataType == null) {
+            return Response.text("ERROR: Unknown data type: " + typeName + ". " +
+                   "For arrays, use syntax 'basetype[count]' (e.g., 'dword[10]'). " +
+                   "Or create the type first using create_struct, create_enum, or mcp_ghidra_create_array_type.");
+        }
 
-            Listing listing = program.getListing();
-            List<String> enforcementWarnings = new ArrayList<>();
+        Listing listing = program.getListing();
 
-            // Check if address is in a valid memory block
-            if (!program.getMemory().contains(address)) {
-                return Response.text("Address is not in program memory: " + addressStr);
-            }
+        // Check if address is in a valid memory block
+        if (!program.getMemory().contains(address)) {
+            return Response.text("Address is not in program memory: " + addressStr);
+        }
 
-            // Hungarian-vs-name cross-check (option A enforcement gate).
-            // When the address already has a `g_*` named symbol, applying a
-            // type that contradicts the name's Hungarian prefix produces a
-            // silently-lying global (e.g., `g_dwActiveQuestState` typed as
-            // `byte`). This is the only escape hatch around `set_global`'s
-            // upfront validation, so we close it here too. Only fires on
-            // the type-mismatch issue — other name issues (missing g_,
-            // short descriptor, etc.) belong to the rename path's gate
-            // and would be over-zealous to re-check on type writes against
-            // grandfathered names.
-            SymbolTable preCheckSymTable = program.getSymbolTable();
-            Symbol preCheckSym = preCheckSymTable.getPrimarySymbol(address);
-            if (preCheckSym != null) {
-                String existingName = preCheckSym.getName();
-                if (existingName != null && existingName.startsWith("g_")) {
-                    NamingConventions.GlobalNameResult preCheckResult =
-                            NamingConventions.checkGlobalNameQuality(existingName, typeName);
-                    if (!preCheckResult.ok && "prefix_type_mismatch".equals(preCheckResult.issue)) {
-                        Map<String, Object> rejection = JsonHelper.mapOf(
-                                "status", "rejected",
-                                "error", "prefix_type_mismatch",
-                                "address", addressStr,
-                                "current_name", existingName,
-                                "rejected_type", typeName,
-                                "message", preCheckResult.message,
-                                "suggestion", "Either rename the global to match '" + typeName
-                                        + "' first (use rename_data / rename_global_variable), "
-                                        + "or apply the type+name change atomically with set_global "
-                                        + "to avoid the silently-lying-name state."
-                        );
-                        if (NamingPolicy.getInstance().isStrictNamingEnforcement()) {
-                            return Response.ok(rejection);
-                        }
-                        enforcementWarnings.add(disabledGlobalEnforcementWarning(rejection));
-                    }
-                }
-            }
-
-            // Apply the data type under the injected threading strategy so the
-            // mutation runs on the EDT (GUI) or under the global write lock (headless)
-            // with transaction commit/rollback handled centrally.
-            try {
-                return threadingStrategy.executeWrite(program, "Apply Data Type: " + typeName, () -> {
+        // Apply the data type under the injected threading strategy so the
+        // mutation runs on the EDT (GUI) or under the global write lock (headless)
+        // with transaction commit/rollback handled centrally.
+        try {
+            return threadingStrategy.executeWrite(program, "Apply Data Type: " + typeName, () -> {
                     // Clear existing code/data if requested
                     if (clearExisting) {
                         CodeUnit existingCU = listing.getCodeUnitAt(address);
@@ -1258,18 +1209,10 @@ public class DataTypeService {
                     if (data != null && data.getValue() != null) {
                         resultText += "\nValue: " + data.getValue().toString();
                     }
-                    for (String warning : enforcementWarnings) {
-                        resultText += "\nWarning: " + warning;
-                    }
-
                     return Response.text(resultText);
-                });
-            } catch (Exception e) {
-                return Response.err("Error applying data type: " + e.getMessage());
-            }
-
+            });
         } catch (Exception e) {
-            return Response.err("Error processing request: " + e.getMessage());
+            return Response.err("Error applying data type: " + e.getMessage());
         }
     }
 
@@ -1431,12 +1374,10 @@ public class DataTypeService {
                     struct.replace(targetComponent.getOrdinal(), newDataType, newDataType.getLength());
                 }
 
-                // If new name is specified, apply the configured field naming policy.
+                // If new name is specified, pass it unchanged to Ghidra.
                 if (newName != null && !newName.isEmpty()) {
                     targetComponent = struct.getComponent(targetComponent.getOrdinal()); // Refresh component
-                    String fieldTypeName = targetComponent.getDataType().getName();
-                    String fixedName = NamingConventions.applyStructFieldNamingPolicy(newName, fieldTypeName);
-                    targetComponent.setFieldName(fixedName);
+                    targetComponent.setFieldName(newName);
                 }
 
                 result.append("Successfully modified field '").append(fieldName).append("' in structure '").append(structName).append("'");
@@ -1875,9 +1816,6 @@ public class DataTypeService {
         if (structName == null || structName.isEmpty()) return Response.text("Structure name is required");
         if (fieldName == null || fieldName.isEmpty()) return Response.text("Field name is required");
         if (fieldType == null || fieldType.isEmpty()) return Response.text("Field type is required");
-
-        // Apply configured struct-field naming policy.
-        fieldName = NamingConventions.applyStructFieldNamingPolicy(fieldName, fieldType);
 
         AtomicBoolean success = new AtomicBoolean(false);
         StringBuilder result = new StringBuilder();
@@ -3136,11 +3074,6 @@ public class DataTypeService {
             Msg.error(this, "Error parsing JSON object: " + e.getMessage());
         }
 
-        // Apply configured struct-field naming policy.
-        if (name != null && type != null) {
-            name = NamingConventions.applyStructFieldNamingPolicy(name, type);
-        }
-
         return new FieldDefinition(name, type, offset);
     }
 
@@ -3393,64 +3326,15 @@ public class DataTypeService {
             );
         }
 
-        // OS-canonical labels (TIB/PEB/KUSER) are fully exempt from the
-        // audit — the Microsoft name + the OS-applied type are canonical,
-        // and asking the user to write a plate comment for "ExceptionList"
-        // is wrong. Mark the response so callers (worker, scorer) know
-        // why the issue list is empty.
-        boolean osCanonical = NamingConventions.isOsCanonicalGlobalName(name);
-        if (osCanonical) {
-            return JsonHelper.mapOf(
-                    "address", addr.toString(),
-                    "name", name,
-                    "type", typeName,
-                    "length", length,
-                    "plate_comment", plateComment,
-                    "xref_count", xrefCount,
-                    "issues", issues,
-                    "fully_documented", true,
-                    "os_canonical", true
-            );
-        }
-
         // Per-issue severity tracker. Hard + medium count toward
         // `fully_documented`; soft are surfaced for human review but
         // don't block "completion." Mirrors the function-side rubric
         // where structural deductions are forgiven in `effective_score`.
         Map<String, String> severityByIssue = new java.util.LinkedHashMap<>();
 
-        boolean autoGen = NamingConventions.isAutoGeneratedGlobalName(name) || name.isEmpty();
-        if (autoGen) {
+        if (GeneratedSymbolNames.isGenerated(name)) {
             issues.add("generic_name");
             severityByIssue.put("generic_name", "hard");
-        } else {
-            // IDA reserved prefix (sub_, loc_, byte_, etc.) — hard issue,
-            // breaks downstream tools that rely on these as "untouched"
-            // sentinels.
-            if (NamingConventions.hasIdaReservedPrefix(name)) {
-                issues.add("ida_reserved_prefix");
-                severityByIssue.put("ida_reserved_prefix", "hard");
-            }
-            NamingConventions.GlobalNameResult q =
-                    NamingConventions.checkGlobalNameQuality(name, typeName.isEmpty() ? null : typeName);
-            if (!q.ok) {
-                String code = "name_" + q.issue;
-                issues.add(code);
-                // missing_g_prefix / prefix_type_mismatch / etc. are all
-                // hard — they violate the project naming convention and
-                // were already gated by checkGlobalNameQuality at write
-                // time (set_global rejects them).
-                severityByIssue.put(code, "hard");
-            } else {
-                // Name passed the quality check. Check the descriptor
-                // portion for low-information generic words.
-                // Strip g_ + Hungarian prefix to isolate the descriptor.
-                String descriptor = extractDescriptorPart(name);
-                if (descriptor != null && NamingConventions.isGenericDescriptor(descriptor)) {
-                    issues.add("generic_descriptor");
-                    severityByIssue.put("generic_descriptor", "soft");
-                }
-            }
         }
 
         if (data == null || hasUndefinedType) {
@@ -3485,11 +3369,6 @@ public class DataTypeService {
             issues.add("missing_plate_comment");
             severityByIssue.put("missing_plate_comment", "hard");
         } else {
-            String[] plateIssue = NamingConventions.checkGlobalPlateComment(plateComment);
-            if (plateIssue != null) {
-                issues.add(plateIssue[0]);
-                severityByIssue.put(plateIssue[0], "medium");
-            }
             // Xref-summary missing — when xref_count > 5, we expect the
             // plate to mention writers/readers somehow. Heuristic: look
             // for "Set by", "Read by", "Used by", or "Modified by".
@@ -3549,20 +3428,6 @@ public class DataTypeService {
                     severityByIssue.put("callback_signature_missing", "medium");
                 }
             }
-            // Plate-line wrap check (soft) — Ghidra's listing column clips
-            // pre-comment lines past ~80 chars with a truncation ellipsis,
-            // so an unwrapped `Set by: A, B, C, ... 19 names` line displays
-            // as `Set by: A, B, C, Pro.` even though the stored text is
-            // intact. Reading the plate in the listing (the most common
-            // surface) becomes lossy. Surface this as a soft issue so the
-            // worker hard-wraps long lines on the next visit; doesn't
-            // block completion. Helper + threshold live in
-            // NamingConventions so the offline test suite covers them.
-            int maxLineLen = NamingConventions.longestPlateLineLength(plateComment);
-            if (maxLineLen > NamingConventions.PLATE_LINE_CLIP_THRESHOLD) {
-                issues.add("plate_line_too_long");
-                severityByIssue.put("plate_line_too_long", "soft");
-            }
         }
 
         // Severity-aware completion check (Q1=A): soft issues never block
@@ -3614,23 +3479,6 @@ public class DataTypeService {
                 "applicable_axes", applicableAxes,
                 "fully_documented", fullyDocumented
         );
-    }
-
-    /** Strip g_ + Hungarian prefix off a global name to isolate the
-     *  descriptor portion for `generic_descriptor` checking. Returns
-     *  null when the name doesn't follow the project convention well
-     *  enough to safely identify the descriptor. */
-    private static String extractDescriptorPart(String name) {
-        if (name == null || !name.startsWith("g_") || name.length() < 4) return null;
-        String afterG = name.substring(2);
-        // Strip a 1-4 char lowercase Hungarian prefix that ends at the
-        // first uppercase letter (where the descriptor starts).
-        int i = 0;
-        while (i < afterG.length() && i < 5 && Character.isLowerCase(afterG.charAt(i))) {
-            i++;
-        }
-        if (i == 0 || i >= afterG.length()) return null;
-        return afterG.substring(i);
     }
 
     /** Whether {@code typeName} represents an integer-like type that
@@ -3773,22 +3621,22 @@ public class DataTypeService {
     }
 
     @McpTool(path = "/set_global", method = "POST",
-            description = "Atomically apply name + type + plate-comment + array length to a global variable. Single-transaction; rejects on validation failure with no partial write. Replaces the 4-tool chain (apply_data_type → rename_data → batch_set_comments → create_label).",
+            description = "Atomically apply name + type + plate-comment + array length to a global variable. Caller-supplied names and comments are passed to Ghidra unchanged; structural type and array validation remains. Replaces the 4-tool chain (apply_data_type → rename_data → batch_set_comments → create_label).",
             category = "datatype")
     public Response setGlobal(
             @Param(value = "address", paramType = "address", source = ParamSource.BODY,
                    description = "Address of the global. Accepts 0x<hex> (default space) or <space>:<hex>.") String addressStr,
             @Param(value = "name", source = ParamSource.BODY,
-                   description = "New name. Must follow g_ + Hungarian + descriptor convention (e.g., g_dwActiveQuestState, g_pUnitList).") String newName,
+                   description = "New name passed unchanged to Ghidra. Pass empty to leave the name unchanged.") String newName,
             @Param(value = "type_name", source = ParamSource.BODY,
                    description = "Ghidra data type to apply (e.g., uint, byte, UnitAny *, char *, MyStruct). Use create_struct/create_array_type first if the type doesn't exist. Pass empty to leave type unchanged.") String typeName,
             @Param(value = "array_length", source = ParamSource.BODY, defaultValue = "0",
                    description = "If >0, applied as an array of array_length elements of type_name. Required when documenting an array of fixed length (e.g., a 100-entry data table).") int arrayLength,
             @Param(value = "plate_comment", source = ParamSource.BODY,
-                   description = "Plate comment for the address. First line must be a meaningful one-line summary (≥4 words). Optional sectioned details (Used by:, Layout:, Source:, Bitfield:) follow when applicable. Pass empty to leave plate comment unchanged.") String plateComment,
+                   description = "Plate comment passed unchanged to Ghidra. Pass empty to leave the plate comment unchanged.") String plateComment,
             @Param(value = "program", description = "Target program name", defaultValue = "") String programName,
             @Param(value = "strict_mode", source = ParamSource.BODY, defaultValue = "",
-                   description = "Optional per-call override for naming enforcement: 'enforce' / 'warn' / 'off'. Omit to use the project/global setting.")
+                   description = "Deprecated compatibility input; ignored because Ghidra validation is authoritative.")
                     String strictModeArg) {
         ServiceUtils.ProgramOrError pe = ServiceUtils.getProgramOrError(programProvider, programName);
         if (pe.hasError()) return pe.error();
@@ -3797,51 +3645,6 @@ public class DataTypeService {
         if (addressStr == null || addressStr.isEmpty()) return Response.err("address is required");
         Address addr = ServiceUtils.parseAddress(program, addressStr);
         if (addr == null) return Response.err(ServiceUtils.getLastParseError());
-
-        try (AutoCloseable scopedMode = NamingPolicy.getInstance().scopedRequestMode(strictModeArg)) {
-        // Pre-flight validation. Strict naming enforcement preserves the
-        // no-partial-write behavior for name-quality failures; when disabled,
-        // the write proceeds and reports the same issue as a warning.
-        List<String> enforcementWarnings = new ArrayList<>();
-        if (newName != null && !newName.isEmpty()) {
-            String typeForCheck = (typeName != null && !typeName.isEmpty()) ? typeName : null;
-            // If type isn't being set, fall back to whatever's already at the address.
-            if (typeForCheck == null) {
-                Data existing = program.getListing().getDefinedDataAt(addr);
-                if (existing != null && existing.getDataType() != null) {
-                    typeForCheck = existing.getDataType().getName();
-                }
-            }
-            NamingConventions.GlobalNameResult quality =
-                    NamingConventions.checkGlobalNameQuality(newName, typeForCheck);
-            if (!quality.ok) {
-                Map<String, Object> rejection = JsonHelper.mapOf(
-                        "status", "rejected",
-                        "error", "name_quality",
-                        "issue", quality.issue,
-                        "rejected_name", newName,
-                        "address", addressStr,
-                        "message", quality.message,
-                        "suggestion", quality.suggestion
-                );
-                if (NamingPolicy.getInstance().isStrictNamingEnforcement()) {
-                    return Response.ok(rejection);
-                }
-                enforcementWarnings.add(disabledGlobalEnforcementWarning(rejection));
-            }
-        }
-
-        // Use the shared helper so audit_global and set_global agree on rule.
-        String[] plateIssue = NamingConventions.checkGlobalPlateComment(plateComment);
-        if (plateIssue != null) {
-            return Response.ok(JsonHelper.mapOf(
-                    "status", "rejected",
-                    "error", plateIssue[0],
-                    "first_line", plateIssue[1],
-                    "message", "Plate-comment first line must be a >=4-word summary describing what the global represents.",
-                    "suggestion", "Replace with a one-liner like 'Bitmap of currently-active quests for the player' or 'Pointer to the head of the linked unit list.'"
-            ));
-        }
 
         DataType resolvedType = null;
         if (typeName != null && !typeName.isEmpty()) {
@@ -4020,28 +3823,12 @@ public class DataTypeService {
         }
 
         if (success.get()) {
-            Map<String, Object> result = JsonHelper.mapOf(
+            return Response.ok(JsonHelper.mapOf(
                     "status", "success",
                     "address", addr.toString(),
                     "applied", applied
-            );
-            if (!enforcementWarnings.isEmpty()) {
-                result.put("warnings", enforcementWarnings);
-            }
-            return Response.ok(result);
+            ));
         }
         return Response.err(errorMsg.get() != null ? errorMsg.get() : "Unknown failure");
-        } catch (Exception e) {
-            // try-with-resources close() is declared as throws Exception;
-            // re-wrap since the body never raises a checked exception.
-            throw new RuntimeException(e);
-        }
-    }
-
-    private static String disabledGlobalEnforcementWarning(Map<String, Object> rejection) {
-        Object issue = rejection.containsKey("issue") ? rejection.get("issue") : rejection.get("error");
-        return "Strict naming enforcement disabled: would have rejected "
-                + rejection.get("error") + "/" + issue + " - "
-                + rejection.get("message");
     }
 }

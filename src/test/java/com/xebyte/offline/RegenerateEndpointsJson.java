@@ -44,7 +44,7 @@ import java.util.TreeMap;
  *       for manual review. Silent loss is the failure mode this prevents.</li>
  *   <li>For every existing catalog entry that is NOT annotation-scanned
  *       (e.g. hand-registered routes like {@code /check_connection} or
- *       {@code /server/checkouts}): kept verbatim.</li>
+ *       {@code /open_project}): kept verbatim.</li>
  *   <li>Output is sorted by path for a stable diff.</li>
  * </ul>
  */

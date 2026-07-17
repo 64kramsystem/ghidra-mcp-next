@@ -1,7 +1,7 @@
 """GhidraMCP Bridge — thin MCP↔HTTP multiplexer.
 
-On startup: exposes list_instances + connect_instance (plus tool-group and
-debugger proxy tools). On connect_instance: fetches /mcp/schema from the Ghidra
+On startup: exposes list_instances + connect_instance plus tool-group tools.
+On connect_instance: fetches /mcp/schema from the Ghidra
 server and dynamically registers every analysis tool as a generic HTTP
 dispatcher.
 
@@ -15,8 +15,8 @@ runtime state lives in :mod:`bridge_mcp_ghidra.state` and must be read/written
 through that module.
 """
 
-# Import submodules in dependency order. Importing static_tools and debugger
-# runs their mcp tool decorators, registering the static tools on the server
+# Import submodules in dependency order. Importing static_tools runs its MCP
+# tool decorators, registering the management tools on the server
 # — matching the original single-module import-time behavior.
 from . import config  # noqa: F401
 from . import state  # noqa: F401
@@ -28,22 +28,18 @@ from . import schema  # noqa: F401
 from . import dispatch  # noqa: F401
 from . import registry  # noqa: F401
 from . import static_tools  # noqa: F401
-from . import debugger  # noqa: F401
 from . import cli  # noqa: F401
 
 # --- Public re-exports (backwards-compatible flat API) --------------------
 
 from .config import (  # noqa: F401
     CORE_GROUPS,
-    DEBUGGER_URL,
-    DEBUGGER_TOOL_NAMES,
     DEFAULT_TCP_PORT,
     DEFAULT_TCP_URL,
     ENDPOINT_TIMEOUTS,
     MANAGEMENT_TOOL_NAMES,
     STATIC_TOOL_NAMES,
     TCP_PORT_SCAN_RANGE,
-    _ALL_STATIC_TOOL_NAMES,
     logger,
 )
 from .server import Context, mcp  # noqa: F401
@@ -105,35 +101,6 @@ from .static_tools import (  # noqa: F401
     search_tools,
     unload_tool_group,
 )
-from .debugger import (  # noqa: F401
-    _DEBUGGER_ACTIVE,
-    _debugger_enabled,
-    _debugger_request,
-    _debugger_tool,
-    debugger_attach,
-    debugger_continue,
-    debugger_detach,
-    debugger_list_breakpoints,
-    debugger_modules,
-    debugger_read_args,
-    debugger_read_memory,
-    debugger_registers,
-    debugger_remove_breakpoint,
-    debugger_resolve_ordinal,
-    debugger_set_breakpoint,
-    debugger_stack_trace,
-    debugger_status,
-    debugger_step_into,
-    debugger_step_over,
-    debugger_trace_function,
-    debugger_trace_list,
-    debugger_trace_log,
-    debugger_trace_stop,
-    debugger_watch_log,
-    debugger_watch_memory,
-    debugger_watch_stop,
-)
-
 # These two are only ever mutated in place (clear/append/add/discard), so the
 # re-exported references stay valid. Reassigned state (_transport_mode,
 # _active_socket, _full_schema, _lazy_mode, …) is intentionally NOT re-exported

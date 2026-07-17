@@ -71,9 +71,6 @@ public class GhidraMCPHeadlessServer implements GhidraLaunchable {
     private HeadlessManagementService managementService;
     private int registeredEndpointCount;
 
-    // Ghidra server connection manager
-    private GhidraServerManager serverManager;
-
     public static void main(String[] args) {
         GhidraMCPHeadlessServer server = new GhidraMCPHeadlessServer();
         try {
@@ -100,10 +97,7 @@ public class GhidraMCPHeadlessServer implements GhidraLaunchable {
         // Create endpoint handler
         endpointHandler = new HeadlessEndpointHandler(programProvider, threadingStrategy);
 
-        // Create server manager for shared Ghidra server support
-        serverManager = new GhidraServerManager();
-
-        managementService = new HeadlessManagementService(programProvider, serverManager);
+        managementService = new HeadlessManagementService(programProvider);
 
         // Load initial programs if specified
         loadInitialPrograms(args);
@@ -398,7 +392,7 @@ public class GhidraMCPHeadlessServer implements GhidraLaunchable {
             endpointHandler.getListingService(), endpointHandler.getFunctionService(),
             endpointHandler.getCommentService(), endpointHandler.getSymbolLabelService(),
             endpointHandler.getXrefCallGraphService(), endpointHandler.getDataTypeService(),
-            endpointHandler.getAnalysisService(), endpointHandler.getDocumentationHashService(),
+            endpointHandler.getAnalysisService(), endpointHandler.getBinaryComparisonService(),
             endpointHandler.getMalwareSecurityService(), endpointHandler.getProgramScriptService(),
             endpointHandler.getEmulationService(), managementService);
 
@@ -480,106 +474,6 @@ public class GhidraMCPHeadlessServer implements GhidraLaunchable {
             sendResponse(exchange, endpointHandler.moveFolder(params.get("sourcePath"), params.get("destPath")));
         });
 
-        // --- Server Endpoints ---
-
-        safeContext("/server/connect", exchange -> {
-            sendResponse(exchange, serverManager.connect());
-        });
-
-        // /server/status registered via HeadlessManagementService
-
-        safeContext("/server/repositories", exchange -> {
-            sendResponse(exchange, serverManager.listRepositories());
-        });
-
-        safeContext("/server/disconnect", exchange -> {
-            sendResponse(exchange, serverManager.disconnect());
-        });
-
-        safeContext("/server/repository/files", exchange -> {
-            Map<String, String> params = parseQueryParams(exchange);
-            String repo = params.get("repo");
-            String path = params.get("path");
-            if (path == null) path = "/";
-            sendResponse(exchange, serverManager.listRepositoryFiles(repo, path));
-        });
-
-        safeContext("/server/repository/file", exchange -> {
-            Map<String, String> params = parseQueryParams(exchange);
-            String repo = params.get("repo");
-            String path = params.get("path");
-            sendResponse(exchange, serverManager.getFileInfo(repo, path));
-        });
-
-        safeContext("/server/repository/create", exchange -> {
-            Map<String, String> params = parsePostParams(exchange);
-            sendResponse(exchange, serverManager.createRepository(params.get("name")));
-        });
-
-        // --- Version Control ---
-
-        safeContext("/server/version_control/checkout", exchange -> {
-            Map<String, String> params = parsePostParams(exchange);
-            sendResponse(exchange, serverManager.checkoutFile(params.get("repo"), params.get("path")));
-        });
-
-        safeContext("/server/version_control/checkin", exchange -> {
-            Map<String, String> params = parsePostParams(exchange);
-            boolean keepCheckedOut = parseBooleanOrDefault(params.get("keepCheckedOut"), false);
-            sendResponse(exchange, serverManager.checkinFile(
-                params.get("repo"), params.get("path"), params.get("comment"), keepCheckedOut));
-        });
-
-        safeContext("/server/version_control/undo_checkout", exchange -> {
-            Map<String, String> params = parsePostParams(exchange);
-            sendResponse(exchange, serverManager.undoCheckout(params.get("repo"), params.get("path")));
-        });
-
-        safeContext("/server/version_control/add", exchange -> {
-            Map<String, String> params = parsePostParams(exchange);
-            sendResponse(exchange, serverManager.addToVersionControl(
-                params.get("repo"), params.get("path"), params.get("comment")));
-        });
-
-        safeContext("/server/version_history", exchange -> {
-            Map<String, String> params = parseQueryParams(exchange);
-            sendResponse(exchange, serverManager.getVersionHistory(params.get("repo"), params.get("path")));
-        });
-
-        safeContext("/server/checkouts", exchange -> {
-            Map<String, String> params = parseQueryParams(exchange);
-            sendResponse(exchange, serverManager.getCheckouts(params.get("repo"), params.get("path")));
-        });
-
-        // --- Admin ---
-
-        safeContext("/server/admin/terminate_checkout", exchange -> {
-            Map<String, String> params = parsePostParams(exchange);
-            String checkoutIdParam = params.getOrDefault("checkoutId", params.getOrDefault("checkout_id", "0"));
-            long checkoutId = Long.parseLong(checkoutIdParam);
-            sendResponse(exchange, serverManager.terminateCheckout(
-                params.get("repo"), params.get("path"), checkoutId));
-        });
-
-        safeContext("/server/admin/terminate_all_checkouts", exchange -> {
-            Map<String, String> params = parsePostParams(exchange);
-            String folderPath = params.get("path");
-            if (folderPath == null) folderPath = "/";
-            sendResponse(exchange, serverManager.terminateAllCheckouts(
-                params.get("repo"), folderPath));
-        });
-
-        safeContext("/server/admin/users", exchange -> {
-            sendResponse(exchange, serverManager.listServerUsers());
-        });
-
-        safeContext("/server/admin/set_permissions", exchange -> {
-            Map<String, String> params = parsePostParams(exchange);
-            int accessLevel = parseIntOrDefault(params.get("accessLevel"), 1);
-            sendResponse(exchange, serverManager.setUserPermissions(
-                params.get("repo"), params.get("user"), accessLevel));
-        });
-
         // --- Analysis Control ---
 
         safeContext("/configure_analyzer", exchange -> {
@@ -610,10 +504,8 @@ public class GhidraMCPHeadlessServer implements GhidraLaunchable {
 
     private int countEndpoints() {
         // registeredEndpointCount = annotation-scanned (shared services + HeadlessManagementService)
-        // 30 = infrastructure + schema + remaining manual createContext registrations
-        // (was 31; -2 after #180 dropped /create_folder + /delete_file as duplicates)
-        // (was 29; +1 after adding /server/admin/terminate_all_checkouts for GUI parity)
-        return registeredEndpointCount + 30;
+        // 14 = infrastructure + schema + remaining manual createContext registrations
+        return registeredEndpointCount + 14;
     }
 
     public void stop() {
@@ -626,11 +518,6 @@ public class GhidraMCPHeadlessServer implements GhidraLaunchable {
             System.out.println("Stopping HTTP server...");
             server.stop(2);
             server = null;
-        }
-
-        if (serverManager != null && serverManager.isConnected()) {
-            System.out.println("Disconnecting from Ghidra server...");
-            serverManager.disconnect();
         }
 
         if (programProvider != null) {
@@ -804,33 +691,11 @@ public class GhidraMCPHeadlessServer implements GhidraLaunchable {
         return params;
     }
 
-    private int parseIntOrDefault(String value, int defaultValue) {
-        if (value == null || value.isEmpty()) {
-            return defaultValue;
-        }
-        try {
-            return Integer.parseInt(value);
-        } catch (NumberFormatException e) {
-            return defaultValue;
-        }
-    }
-
     private boolean parseBooleanOrDefault(String value, boolean defaultValue) {
         if (value == null || value.isEmpty()) {
             return defaultValue;
         }
         return Boolean.parseBoolean(value);
-    }
-
-    private double parseDoubleOrDefault(String value, double defaultValue) {
-        if (value == null || value.isEmpty()) {
-            return defaultValue;
-        }
-        try {
-            return Double.parseDouble(value);
-        } catch (NumberFormatException e) {
-            return defaultValue;
-        }
     }
 
     // ==========================================================================

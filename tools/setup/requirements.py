@@ -44,27 +44,14 @@ class InstallPlan:
 
     repo_root: Path
     groups: tuple[str, ...]
-    install_debugger: bool
 
 
 def make_install_plan(
     repo_root: Path,
-    install_debugger: bool,
     base_groups: tuple[str, ...] = ("dev",),
 ) -> InstallPlan:
-    """Build the dependency-group install plan.
-
-    The ``dev`` group (which includes ``test``) is always synced; the optional
-    ``debugger`` group is added when requested (Windows debugger backend).
-    """
-    groups = list(base_groups)
-    if install_debugger and "debugger" not in groups:
-        groups.append("debugger")
-    return InstallPlan(
-        repo_root=repo_root,
-        groups=tuple(groups),
-        install_debugger=install_debugger,
-    )
+    """Build the dependency-group install plan."""
+    return InstallPlan(repo_root=repo_root, groups=base_groups)
 
 
 def uv_sync_command(plan: InstallPlan) -> list[str]:

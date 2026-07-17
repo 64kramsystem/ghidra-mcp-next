@@ -1,32 +1,22 @@
-# Ghidra scripts
+# User-installable Ghidra scripts
 
-User-installable Ghidra scripts that pair with GhidraMCP workflows.
+These scripts are optional helpers used directly from Ghidra's Script Manager.
+They are separate from the allowlisted scripts exposed through the MCP
+`run_ghidra_script` endpoint in [`../../ghidra_scripts/`](../../ghidra_scripts/).
 
-## Installation
+Copy a script into the Ghidra user script directory and refresh the Script
+Manager:
 
-Copy any `.java` file in this directory into your Ghidra user scripts
-directory:
-
-| Platform | Path |
+| Platform | Directory |
 |---|---|
-| Windows | `%USERPROFILE%\ghidra_scripts\` |
-| macOS / Linux | `~/ghidra_scripts/` |
+| Windows | `%USERPROFILE%\\ghidra_scripts\\` |
+| macOS/Linux | `~/ghidra_scripts/` |
 
-In Ghidra: `Window > Script Manager > refresh`. The script appears under
-the category in its `@category` annotation.
+## `ImportMSDLPDB.java`
 
-## Scripts
+Downloads the matching PDB for the current PE program from Microsoft's symbol
+server and applies it through Ghidra's PDB Universal Analyzer.
 
-### `ImportMSDLPDB.java`
-
-Downloads the matching PDB for the current program from Microsoft's symbol
-server and applies it via Ghidra's PDB Universal Analyzer. Pairs with
-`fun-doc/library_code_detector.py` — PDB handles symbols Microsoft
-published (CRT / MSVCRT / MFC), the heuristic detector catches the rest.
-
-One-time Ghidra setup: `Edit > Symbol Server Config` → point at
-`https://msdl.microsoft.com/download/symbols` with a local cache dir.
-
-Skips gracefully (returns an empty JSON result) when the binary has no
-`PdbInformation` header (no `/DEBUG` link flag, common for third-party
-DLLs).
+Configure `https://msdl.microsoft.com/download/symbols` and a local cache in
+Ghidra under **Edit > Symbol Server Config**. The script exits without changing
+the program when the PE has no `PdbInformation` record.

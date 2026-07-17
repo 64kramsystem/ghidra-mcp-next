@@ -1,4 +1,4 @@
-//Upgrade all programs in the current project to the latest Ghidra version format
+// Upgrade all programs in the current local project to the latest Ghidra version format
 //@category Project
 //@menupath Tools.Upgrade All Programs
 //@author Ben Ethington
@@ -91,15 +91,6 @@ public class UpgradeAllPrograms extends GhidraScript {
         String fileName = file.getName();
         
         try {
-            // Check out the file exclusively for upgrade if versioned
-            if (file.isVersioned() && !file.isCheckedOut()) {
-                if (!file.checkout(true, monitor)) { // exclusive checkout
-                    println(indent + "[WARN] " + fileName + " - Could not checkout (may be locked)");
-                    errorCount++;
-                    return;
-                }
-            }
-
             // Open the program (this triggers the upgrade)
             DomainObject domainObj = file.getDomainObject(this, true, false, monitor);
             
@@ -124,10 +115,6 @@ public class UpgradeAllPrograms extends GhidraScript {
                 // Always release the domain object
                 domainObj.release(this);
             }
-
-            // Note: Files left checked out - user can check in manually via Project window
-            // Right-click -> Check In to commit changes to repository
-
         } catch (Exception e) {
             println(indent + "[FAIL] " + fileName + " - Error: " + e.getMessage());
             errorCount++;

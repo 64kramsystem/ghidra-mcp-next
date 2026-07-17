@@ -98,8 +98,8 @@ jobs:
 
         echo "✅ Installed Ghidra JARs to Maven local repository"
 
-    - name: Build with Maven
-      run: mvn clean package assembly:single -q -DskipTests
+    - name: Build extension
+      run: mvn clean package assembly:single -DskipTests
 
     - name: Run offline Java tests
       run: |
@@ -182,7 +182,7 @@ jobs:
 
   python-tests-windows:
     # The bridge has real platform forks (no AF_UNIX in Windows CPython, the
-    # drive-letter socket sweep, debugger proxy gating). The ubuntu matrix job
+    # drive-letter socket sweep, and Windows transport behavior). The ubuntu matrix job
     # only ever executes the POSIX half — this leg executes the Windows half
     # so both sides of every `os.name == "nt"` branch run on each PR.
     name: Python Tests (pytest, Windows)
@@ -196,15 +196,6 @@ jobs:
       with:
         enable-cache: true
 
-    - name: Set up JDK 21
-      # A unit test shells out to `gradlew deploy --dry-run`, which needs a Java
-      # 21 toolchain; windows-latest doesn't provide one Gradle can auto-detect
-      # (the ubuntu runner ships JAVA_HOME_21 by default, Windows does not).
-      uses: actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a  # v5.5.0
-      with:
-        java-version: '21'
-        distribution: 'temurin'
-
     - name: Set up Python
       run: uv python install 3.12
 
@@ -213,60 +204,6 @@ jobs:
       # so the ubuntu job owns the ratchet; this leg gates on pass/fail only.
       run: |
         uv run --python 3.12 --group test pytest tests/unit/ -v --no-cov --tb=short
-
-  python-offline-regression:
-    name: Python Offline Regression (fun-doc)
-    runs-on: ubuntu-latest
-
-    steps:
-    - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
-
-    - name: Install uv
-      uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
-      with:
-        enable-cache: true
-
-    - name: Set up Python
-      run: uv python install 3.12
-
-    - name: Run offline performance/regression tests
-      env:
-        UV_RUN: uv run --python 3.12 --group test --group fun-doc
-      run: |
-        # These suites guard fun-doc (fun_doc.py, storage/, audit/, library detector,
-        # selector, etc.) and run without a live Ghidra server. The autouse fixture in
-        # tests/performance/conftest.py isolates every test from the real fun-doc DB
-        # (forces FUN_DOC_DB_URL to a per-test SQLite + resets the repo singleton), so the
-        # whole suite is collectible in a single process — no per-file isolation needed.
-        #
-        # Excluded from this CI tier:
-        #   * the four live-Ghidra files (need http://127.0.0.1:8089) — integration tier
-        #     (batch_scoring_consistency, health_endpoint, http_concurrency, listing_consistency)
-        #   * the benchmark tests — "manual only" by design (CLAUDE.md); they depend on local
-        #     benchmark assets not tracked in the repo (e.g. fun-doc/benchmark/extract_truth.py),
-        #     a live Ghidra (Benchmark.dll), or an LLM judge, none of which exist in CI.
-        # --cov=fun-doc adds the fun-doc tree to the default coverage sources.
-        # The fail-under floor is a RATCHET: measured baseline was 29% on
-        # 2026-07-03 with these exclusions — raise it as fun_doc.py/web.py
-        # subsystems get extracted and tested, never lower it.
-        $UV_RUN python -m pytest tests/performance/ -q --cov=fun-doc --cov-fail-under=26 \
-          --ignore=tests/performance/test_batch_scoring_consistency.py \
-          --ignore=tests/performance/test_health_endpoint.py \
-          --ignore=tests/performance/test_http_concurrency.py \
-          --ignore=tests/performance/test_listing_consistency.py \
-          --ignore=tests/performance/test_benchmark_extract_truth.py \
-          --ignore=tests/performance/test_benchmark_ghidra_bridge.py \
-          --ignore=tests/performance/test_benchmark_haiku_judge.py \
-          --ignore=tests/performance/test_benchmark_scorer.py
-        echo "✅ Offline regression suite passed"
-
-    - name: Upload coverage
-      if: ${{ always() && hashFiles('tests/coverage.xml') != '' }}
-      uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f  # v5
-      with:
-        files: ./tests/coverage.xml
-        flags: fundoc
-        fail_ci_if_error: false
 
   code-quality:
     # ADVISORY / non-blocking: every step below ends in `|| true` (or an echo
@@ -327,13 +264,13 @@ jobs:
   build-status:
     name: Build Status
     runs-on: ubuntu-latest
-    needs: [ java-build, python-tests, python-tests-windows, python-offline-regression, pester-tests ]
+    needs: [ java-build, python-tests, python-tests-windows, pester-tests ]
     if: always()
 
     steps:
     - name: Report Status
       run: |
-        if [ "${{ needs.java-build.result }}" = "success" ] && [ "${{ needs.python-tests.result }}" = "success" ] && [ "${{ needs.python-tests-windows.result }}" = "success" ] && [ "${{ needs.python-offline-regression.result }}" = "success" ] && [ "${{ needs.pester-tests.result }}" = "success" ]; then
+        if [ "${{ needs.java-build.result }}" = "success" ] && [ "${{ needs.python-tests.result }}" = "success" ] && [ "${{ needs.python-tests-windows.result }}" = "success" ] && [ "${{ needs.pester-tests.result }}" = "success" ]; then
           echo "✅ All tests passed"
           exit 0
         else

@@ -10,7 +10,6 @@
       ],
       "env": {
         "GHIDRA_MCP_URL": "http://127.0.0.1:8089",
-        "GHIDRA_DEBUGGER_URL": "http://127.0.0.1:8099",
         "PYTHONIOENCODING": "utf-8"
       }
     }

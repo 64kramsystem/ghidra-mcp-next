@@ -55,7 +55,7 @@ public class HeadlessEndpointHandler {
     private final com.xebyte.core.XrefCallGraphService xrefCallGraphService;
     private final com.xebyte.core.DataTypeService dataTypeService;
     private final com.xebyte.core.AnalysisService analysisService;
-    private final com.xebyte.core.DocumentationHashService documentationHashService;
+    private final com.xebyte.core.BinaryComparisonService binaryComparisonService;
     private final com.xebyte.core.MalwareSecurityService malwareSecurityService;
     private final com.xebyte.core.ProgramScriptService programScriptService;
     private final com.xebyte.core.EmulationService emulationService;
@@ -73,8 +73,7 @@ public class HeadlessEndpointHandler {
         this.xrefCallGraphService = new com.xebyte.core.XrefCallGraphService(programProvider, threadingStrategy);
         this.dataTypeService = new com.xebyte.core.DataTypeService(programProvider, threadingStrategy);
         this.analysisService = new com.xebyte.core.AnalysisService(programProvider, threadingStrategy, this.functionService);
-        this.documentationHashService = new com.xebyte.core.DocumentationHashService(programProvider, threadingStrategy, new com.xebyte.core.BinaryComparisonService());
-        this.documentationHashService.setFunctionService(this.functionService);
+        this.binaryComparisonService = new com.xebyte.core.BinaryComparisonService(programProvider, threadingStrategy);
         this.malwareSecurityService = new com.xebyte.core.MalwareSecurityService(programProvider, threadingStrategy);
         this.programScriptService = new com.xebyte.core.ProgramScriptService(programProvider, threadingStrategy);
         this.emulationService = new com.xebyte.core.EmulationService(programProvider, threadingStrategy);
@@ -91,7 +90,7 @@ public class HeadlessEndpointHandler {
     public com.xebyte.core.XrefCallGraphService getXrefCallGraphService() { return xrefCallGraphService; }
     public com.xebyte.core.DataTypeService getDataTypeService() { return dataTypeService; }
     public com.xebyte.core.AnalysisService getAnalysisService() { return analysisService; }
-    public com.xebyte.core.DocumentationHashService getDocumentationHashService() { return documentationHashService; }
+    public com.xebyte.core.BinaryComparisonService getBinaryComparisonService() { return binaryComparisonService; }
     public com.xebyte.core.MalwareSecurityService getMalwareSecurityService() { return malwareSecurityService; }
     public com.xebyte.core.ProgramScriptService getProgramScriptService() { return programScriptService; }
     public com.xebyte.core.EmulationService getEmulationService() { return emulationService; }
@@ -1562,14 +1561,14 @@ public class HeadlessEndpointHandler {
      * Compute a normalized hash for a function
      */
     public String getFunctionHash(String addressStr, String programName) {
-        return documentationHashService.getFunctionHash(addressStr, programName).toJson();
+        return binaryComparisonService.getFunctionHash(addressStr, programName).toJson();
     }
 
     /**
      * Get hashes for multiple functions
      */
     public String getBulkFunctionHashes(int offset, int limit, String filter, String programName) {
-        return documentationHashService.getBulkFunctionHashes(offset, limit, filter, programName).toJson();
+        return binaryComparisonService.getBulkFunctionHashes(offset, limit, filter, programName).toJson();
     }
 
     /**
@@ -1644,7 +1643,7 @@ public class HeadlessEndpointHandler {
      * Get function signature (feature vector) for fuzzy matching
      */
     public String getFunctionSignature(String addressStr, String programName) {
-        return documentationHashService.handleGetFunctionSignature(addressStr, programName).toJson();
+        return binaryComparisonService.getFunctionSignature(addressStr, programName).toJson();
     }
 
     /**
@@ -1652,7 +1651,7 @@ public class HeadlessEndpointHandler {
      */
     public String findSimilarFunctionsFuzzy(String addressStr, String sourceProgramName,
             String targetProgramName, double threshold, int limit) {
-        return documentationHashService.handleFindSimilarFunctionsFuzzy(addressStr, sourceProgramName, targetProgramName, threshold, limit).toJson();
+        return binaryComparisonService.findSimilarFunctionsFuzzy(addressStr, sourceProgramName, targetProgramName, threshold, limit).toJson();
     }
 
     /**
@@ -1660,7 +1659,7 @@ public class HeadlessEndpointHandler {
      */
     public String bulkFuzzyMatch(String sourceProgramName, String targetProgramName,
             double threshold, int offset, int limit, String filter) {
-        return documentationHashService.handleBulkFuzzyMatch(sourceProgramName, targetProgramName, threshold, offset, limit, filter).toJson();
+        return binaryComparisonService.bulkFuzzyMatch(sourceProgramName, targetProgramName, threshold, offset, limit, filter).toJson();
     }
 
     /**
@@ -1668,7 +1667,7 @@ public class HeadlessEndpointHandler {
      */
     public String diffFunctions(String addressA, String addressB,
             String programAName, String programBName) {
-        return documentationHashService.handleDiffFunctions(addressA, addressB, programAName, programBName).toJson();
+        return binaryComparisonService.diffFunctions(addressA, addressB, programAName, programBName).toJson();
     }
 
     // ==========================================================================
@@ -2100,10 +2099,6 @@ public class HeadlessEndpointHandler {
         }
     }
 
-    public String batchStringAnchorReport(String pattern, String programName) {
-        return documentationHashService.batchStringAnchorReport(pattern, programName).toJson();
-    }
-
     // ==========================================================================
     // VALIDATION AND DISASSEMBLY ENDPOINTS
     // ==========================================================================
@@ -2122,25 +2117,6 @@ public class HeadlessEndpointHandler {
     }
 
     // ==========================================================================
-    // DOCUMENTATION ENDPOINTS (missing methods)
-    // ==========================================================================
-
-    public String getFunctionDocumentation(String functionAddress, String programName) {
-        return documentationHashService.getFunctionDocumentation(functionAddress, programName).toJson();
-    }
-
-    public String applyFunctionDocumentation(String jsonBody, String programName) {
-        return documentationHashService.applyFunctionDocumentation(jsonBody, programName).toJson();
-    }
-
-    public String compareProgramsDocumentation(String programName) {
-        return documentationHashService.compareProgramsDocumentation(programName).toJson();
-    }
-
-    public String findUndocumentedByString(String stringAddress, String programName) {
-        return documentationHashService.findUndocumentedByString(stringAddress, programName).toJson();
-    }
-
     public String detectCryptoConstants(String programName) {
         return analysisService.detectCryptoConstants(programName).toJson();
     }
