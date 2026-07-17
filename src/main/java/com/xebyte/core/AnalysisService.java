@@ -1755,7 +1755,7 @@ public class AnalysisService {
                     while (disasmIter.hasNext()) {
                         ghidra.program.model.listing.Instruction instr = disasmIter.next();
                         String eolComment = program.getListing().getComment(
-                            ghidra.program.model.listing.CodeUnit.EOL_COMMENT, instr.getAddress());
+                            CommentType.EOL, instr.getAddress());
                         boolean hasComment = eolComment != null && !eolComment.isEmpty();
                         if (hasComment) {
                             disasmCommentCount++;
@@ -3297,7 +3297,7 @@ public class AnalysisService {
                     "tool", "set_local_variable_type",
                     "params_template", JsonHelper.mapOf("function_address", func.getEntryPoint().toString(), "name", "<variable_name>", "data_type", "<StructName> *"),
                     "evidence", new ArrayList<>(localIssues.subList(0, Math.min(5, localIssues.size()))),
-                    "estimated_gain", (int) Math.min(20, localIssues.size() * 10)
+                    "estimated_gain", Math.min(20, localIssues.size() * 10)
             ));
         }
 
@@ -3341,7 +3341,7 @@ public class AnalysisService {
                     "tool", "batch_set_comments",
                     "params_template", JsonHelper.mapOf("function_address", func.getEntryPoint().toString(), "eol_comments", Collections.singletonList(JsonHelper.mapOf("address", "<instr_address>", "comment", "<constant_meaning>"))),
                     "evidence", new ArrayList<>(undocumentedMagicNumbers.subList(0, Math.min(5, undocumentedMagicNumbers.size()))),
-                    "estimated_gain", (int) Math.min(10, undocumentedMagicNumbers.size() * 2)
+                    "estimated_gain", Math.min(10, undocumentedMagicNumbers.size() * 2)
             ));
         }
 
@@ -3352,7 +3352,7 @@ public class AnalysisService {
                     "tool", "create_struct",
                     "params_template", JsonHelper.mapOf("name", "<StructName>", "fields", Collections.singletonList(JsonHelper.mapOf("name", "<field_name>", "type", "<field_type>", "offset", "<hex_offset>"))),
                     "evidence", new ArrayList<>(unresolvedStructAccesses.subList(0, Math.min(5, unresolvedStructAccesses.size()))),
-                    "estimated_gain", (int) Math.min(10, unresolvedStructAccesses.size() * 2)
+                    "estimated_gain", Math.min(10, unresolvedStructAccesses.size() * 2)
             ));
         }
 
@@ -5092,7 +5092,6 @@ public class AnalysisService {
         return Response.ok(out);
     }
 }
-
 
 
 

@@ -1,6 +1,7 @@
 package com.xebyte.core;
 
 import ghidra.app.services.ProgramManager;
+import ghidra.app.script.ScriptControls;
 import ghidra.framework.plugintool.PluginTool;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressSpace;
@@ -9,8 +10,9 @@ import ghidra.program.model.listing.*;
 import ghidra.program.model.mem.Memory;
 import ghidra.program.model.mem.MemoryBlock;
 import ghidra.app.plugin.core.analysis.AutoAnalysisManager;
-import ghidra.app.util.importer.AutoImporter;
 import ghidra.app.util.importer.MessageLog;
+import ghidra.app.util.importer.ProgramLoader;
+import ghidra.app.util.opinion.BinaryLoader;
 import ghidra.app.util.opinion.LoadResults;
 import ghidra.util.Msg;
 import ghidra.util.task.ConsoleTaskMonitor;
@@ -893,6 +895,33 @@ public class ProgramScriptService {
     // ========================================================================
     // Import & Analysis
 
+    /**
+     * Load and save an imported program, retaining one temporary consumer reference for this
+     * service after the loader results are closed.
+     */
+    private Program loadImportedProgram(File file, ghidra.framework.model.Project project,
+                                        String projectFolder,
+                                        ghidra.program.model.lang.Language language,
+                                        ghidra.program.model.lang.CompilerSpec compilerSpec,
+                                        MessageLog log) throws Exception {
+        ProgramLoader.Builder loader = ProgramLoader.builder()
+            .source(file)
+            .project(project)
+            .projectFolderPath(projectFolder)
+            .log(log)
+            .monitor(ghidra.util.task.TaskMonitor.DUMMY);
+        if (language != null) {
+            loader.loaders(BinaryLoader.class)
+                .language(language)
+                .compiler(compilerSpec);
+        }
+
+        try (LoadResults<Program> results = loader.load()) {
+            results.save(ghidra.util.task.TaskMonitor.DUMMY);
+            return results.getPrimaryDomainObject(this);
+        }
+    }
+
     @McpTool(path = "/import_file", method = "POST",
             description = "Import a binary file from disk into the current Ghidra project and open it. "
                 + "For raw firmware binaries, specify language (e.g. 'ARM:LE:32:Cortex') and optionally compiler_spec (e.g. 'default').",
@@ -934,57 +963,30 @@ public class ProgramScriptService {
         }
 
         boolean hasLanguage = languageId != null && !languageId.isEmpty();
+        Program program = null;
 
         try {
             MessageLog log = new MessageLog();
-            Program program;
+            ghidra.program.model.lang.Language language = null;
+            ghidra.program.model.lang.CompilerSpec compilerSpec = null;
 
             if (hasLanguage) {
                 // Resolve language and compiler spec
                 ghidra.program.model.lang.LanguageService langService =
                     ghidra.program.util.DefaultLanguageService.getLanguageService();
-                ghidra.program.model.lang.Language language = langService.getLanguage(
+                language = langService.getLanguage(
                     new ghidra.program.model.lang.LanguageID(languageId));
 
-                ghidra.program.model.lang.CompilerSpec compilerSpec;
                 if (compilerSpecId != null && !compilerSpecId.isEmpty()) {
                     compilerSpec = language.getCompilerSpecByID(
                         new ghidra.program.model.lang.CompilerSpecID(compilerSpecId));
                 } else {
                     compilerSpec = language.getDefaultCompilerSpec();
                 }
-
-                // Import as raw binary with explicit language/compiler spec
-                ghidra.app.util.opinion.Loaded<Program> loaded = AutoImporter.importAsBinary(
-                    file, project, projectFolder, language, compilerSpec,
-                    this, log, ghidra.util.task.TaskMonitor.DUMMY);
-
-                if (loaded == null) {
-                    return Response.err("Import failed: no results. Log: " + log);
-                }
-                // getDomainObject(consumer) registers us as a consumer so the program stays open
-                program = loaded.getDomainObject(this);
-                if (program == null) {
-                    return Response.err("Import failed: no primary program. Log: " + log);
-                }
-                // Save to project folder (creates DomainFile)
-                loaded.save(ghidra.util.task.TaskMonitor.DUMMY);
-            } else {
-                // Auto-detect format
-                LoadResults<Program> loadResults = AutoImporter.importByUsingBestGuess(
-                    file, project, projectFolder,
-                    this, log, ghidra.util.task.TaskMonitor.DUMMY);
-
-                if (loadResults == null) {
-                    return Response.err("Import failed: no load spec found. Specify 'language' for raw binaries. Log: " + log);
-                }
-                program = loadResults.getPrimaryDomainObject();
-                if (program == null) {
-                    return Response.err("Import failed: no primary program. Log: " + log);
-                }
-                // Save to project folder before releasing (prevents "Database is closed")
-                loadResults.save(ghidra.util.task.TaskMonitor.DUMMY);
             }
+
+            program = loadImportedProgram(
+                file, project, projectFolder, language, compilerSpec, log);
 
             // Suppress the "Analysis Options" dialog — we handle analysis programmatically
             ghidra.program.util.GhidraProgramUtilities.markProgramNotToAskToAnalyze(program);
@@ -1032,6 +1034,14 @@ public class ProgramScriptService {
             }
             Msg.error(this, "Import failed", e);
             return Response.err("Import failed: " + msg);
+        } finally {
+            if (program != null) {
+                try {
+                    program.release(this);
+                } catch (Exception e) {
+                    Msg.warn(this, "Failed to release temporary import consumer: " + e.getMessage());
+                }
+            }
         }
     }
 
@@ -1391,7 +1401,8 @@ public class ProgramScriptService {
 
                     ghidra.util.task.TaskMonitor scriptMonitor = new ghidra.util.task.ConsoleTaskMonitor();
 
-                    script.set(scriptState, scriptMonitor, scriptPrintWriter);
+                    script.set(scriptState,
+                        new ScriptControls(scriptPrintWriter, scriptPrintWriter, scriptMonitor));
 
                     // Issue #1 + #5 fix: Parse and set script args BEFORE execution,
                     // so getScriptArgs() returns them instead of falling through to askString()

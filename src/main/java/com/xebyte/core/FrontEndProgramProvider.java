@@ -141,7 +141,7 @@ public class FrontEndProgramProvider implements ProgramProvider {
      * Create a FrontEndProgramProvider for the given tool.
      *
      * @param tool The Ghidra PluginTool (FrontEnd tool)
-     * @param consumer The consumer object for DomainObject tracking (typically the plugin instance)
+     * @param consumer The consumer token for DomainObject reference tracking
      */
     public FrontEndProgramProvider(PluginTool tool, Object consumer) {
         this.tool = tool;
