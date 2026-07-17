@@ -28,6 +28,10 @@ public class DebuggerServiceContractTest extends TestCase {
         assertTrue(source.contains("path = \"/debugger/attach\""));
         assertTrue(source.contains("DebuggerAttachSemantics.selectOffer"));
         assertTrue(source.contains("DebuggerAttachSemantics.selectAttachMethod"));
+        String attach = source.substring(source.indexOf("public Response attach("),
+                source.indexOf("public Response getStatus("));
+        assertTrue(attach.indexOf("method.invokeAsync(arguments)") <
+                attach.indexOf("DebuggerCoordinates postAttachCoordinates"));
     }
 
     public void testRemainingFutureEndpointsAreNotFalselyAdvertised() throws Exception {

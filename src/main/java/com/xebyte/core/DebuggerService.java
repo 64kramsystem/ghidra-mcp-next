@@ -574,13 +574,19 @@ public class DebuggerService {
 
             RemoteMethod method = DebuggerAttachSemantics.selectAttachMethod(
                     result.connection().getMethods().getByAction(ActionName.ATTACH));
-            DebuggerCoordinates coordinates = traceMgr.getCurrentFor(result.trace());
+            DebuggerCoordinates launchCoordinates = traceMgr.getCurrentFor(result.trace());
             var objectManager = result.trace().getObjectManager();
-            var currentObject = coordinates == null ? null : coordinates.getObject();
+            var rootSchema = objectManager.getRootSchema();
+            if (rootSchema == null) {
+                return Response.err("Debugger backend '" + offer.getTitle() +
+                        "' created a trace without an object schema");
+            }
+            var currentObject = launchCoordinates == null ? null :
+                    launchCoordinates.getObject();
             var rootObject = objectManager.getRootObject();
             Map<String, Object> arguments = DebuggerAttachSemantics.buildArguments(
                     method,
-                    objectManager.getRootSchema().getContext(),
+                    rootSchema.getContext(),
                     schema -> currentObject == null ? null :
                             currentObject.findSuitableSchema(schema),
                     schema -> rootObject == null ? null : rootObject.findSuitableSchema(schema),
@@ -589,11 +595,13 @@ public class DebuggerService {
                     remainingAttachNanos(startedNanos, timeoutNanos),
                     TimeUnit.NANOSECONDS);
 
+            DebuggerCoordinates postAttachCoordinates =
+                    traceMgr.getCurrentFor(result.trace());
             DebuggerTargetService targetSvc = tool.getService(DebuggerTargetService.class);
             Target target = targetSvc == null ? null : targetSvc.getTarget(result.trace());
-            TraceExecutionState state = target == null || coordinates == null ||
-                    coordinates.getThread() == null ? null :
-                    target.getThreadExecutionState(coordinates.getThread());
+            TraceExecutionState state = target == null || postAttachCoordinates == null ||
+                    postAttachCoordinates.getThread() == null ? null :
+                    target.getThreadExecutionState(postAttachCoordinates.getThread());
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("status", "attached");
             response.put("pid", pid);
