@@ -9,6 +9,7 @@ import ghidra.debug.api.ValStr;
 import ghidra.debug.api.target.ActionName;
 import ghidra.debug.api.target.Target;
 import ghidra.debug.api.tracermi.LaunchParameter;
+import ghidra.debug.api.tracermi.RemoteMethod;
 import ghidra.debug.api.tracermi.TraceRmiLaunchOffer;
 import ghidra.debug.api.tracermi.TraceRmiLaunchOffer.LaunchConfigurator;
 import ghidra.debug.api.tracermi.TraceRmiLaunchOffer.LaunchResult;
@@ -339,6 +340,23 @@ public class DebuggerService {
         action.invokeAsync(false).get(ACTION_TIMEOUT_MS, TimeUnit.MILLISECONDS);
     }
 
+    private long remainingAttachNanos(long startedNanos, long timeoutNanos)
+            throws TimeoutException {
+        long remaining = timeoutNanos - (System.nanoTime() - startedNanos);
+        if (remaining <= 0) {
+            throw new TimeoutException("Attach timeout expired");
+        }
+        return remaining;
+    }
+
+    private void closeLaunchResult(LaunchResult result) {
+        try {
+            result.close();
+        } catch (Exception e) {
+            Msg.warn(this, "Failed to close incomplete debugger launch: " + e.getMessage());
+        }
+    }
+
     @McpTool(path = "/debugger/launch", method = "POST",
             description = "Launch an executable through Ghidra's Trace RMI debugger launcher")
     public Response launch(
@@ -459,6 +477,149 @@ public class DebuggerService {
             return Response.ok(response);
         } catch (Exception e) {
             return Response.err("Debugger launch failed: " + e.getMessage());
+        }
+    }
+
+    @McpTool(path = "/debugger/attach", method = "POST",
+            description = "Attach a selected TraceRMI backend to a native process by PID")
+    public Response attach(
+            @Param(value = "offer", source = ParamSource.BODY,
+                    description = "Exact launcher title or configuration name") String requestedOffer,
+            @Param(value = "pid", source = ParamSource.BODY,
+                    description = "Positive operating-system process ID") int pid,
+            @Param(value = "program", source = ParamSource.BODY,
+                    description = "Open Ghidra program used to discover launch offers") String programName,
+            @Param(value = "timeout_seconds", source = ParamSource.BODY, defaultValue = "60",
+                    description = "Overall backend launch and attach timeout") int timeoutSeconds) {
+        if (pid <= 0) {
+            return Response.err("PID must be positive");
+        }
+        if (programName == null || programName.isBlank()) {
+            return Response.err("An explicit open program is required for debugger attach");
+        }
+        if (timeoutSeconds <= 0) {
+            return Response.err("Attach timeout must be positive");
+        }
+
+        PluginTool tool;
+        try {
+            tool = getOrStartDebuggerTool(60);
+        } catch (TimeoutException e) {
+            return Response.err("Timed out while auto-starting Ghidra's Debugger tool");
+        }
+        if (tool == null) return noDebugger();
+
+        TraceRmiLauncherService launcherSvc = tool.getService(TraceRmiLauncherService.class);
+        DebuggerTraceManagerService traceMgr =
+                tool.getService(DebuggerTraceManagerService.class);
+        if (launcherSvc == null || traceMgr == null) {
+            return Response.err("Trace RMI launcher services are not available");
+        }
+
+        LaunchResult result = null;
+        CompletableFuture<LaunchResult> launchFuture = null;
+        ConsoleTaskMonitor monitor = new ConsoleTaskMonitor();
+        boolean attached = false;
+        long startedNanos = System.nanoTime();
+        long timeoutNanos = TimeUnit.SECONDS.toNanos(timeoutSeconds);
+        try {
+            ghidra.program.model.listing.Program program =
+                    programProvider.resolveProgram(programName);
+            if (program == null) {
+                return Response.err("Open program not found: " + programName);
+            }
+
+            Collection<TraceRmiLaunchOffer> offers = launcherSvc.getOffers(program);
+            TraceRmiLaunchOffer offer =
+                    DebuggerAttachSemantics.selectOffer(offers, requestedOffer);
+            DebuggerAttachSemantics.requireAttachOnlyOffer(offer);
+            LaunchParameter<?> imageParameter = offer.imageParameter();
+
+            launchFuture = CompletableFuture.supplyAsync(() ->
+                    offer.launchProgram(monitor, new LaunchConfigurator() {
+                        @Override
+                        public Map<String, ValStr<?>> configureLauncher(
+                                TraceRmiLaunchOffer launchOffer,
+                                Map<String, ValStr<?>> launchArgs,
+                                RelPrompt relPrompt) {
+                            if (imageParameter == null) {
+                                return launchArgs;
+                            }
+                            Map<String, ValStr<?>> configured =
+                                    new LinkedHashMap<>(launchArgs);
+                            configured.put(imageParameter.name(),
+                                    decodeLaunchValue(imageParameter, ""));
+                            return configured;
+                        }
+                    }));
+            try {
+                result = launchFuture.get(
+                        remainingAttachNanos(startedNanos, timeoutNanos),
+                        TimeUnit.NANOSECONDS);
+            } catch (TimeoutException e) {
+                monitor.cancel();
+                launchFuture.thenAccept(this::closeLaunchResult);
+                return Response.err("Debugger attach timed out while starting '" +
+                        offer.getTitle() + "'");
+            }
+
+            if (result.exception() != null) {
+                return Response.err("Debugger backend failed using '" + offer.getTitle() +
+                        "': " + result.exception().getMessage());
+            }
+            if (result.connection() == null || result.trace() == null) {
+                return Response.err("Debugger backend '" + offer.getTitle() +
+                        "' did not create a Trace RMI connection and trace");
+            }
+
+            RemoteMethod method = DebuggerAttachSemantics.selectAttachMethod(
+                    result.connection().getMethods().getByAction(ActionName.ATTACH));
+            DebuggerCoordinates coordinates = traceMgr.getCurrentFor(result.trace());
+            var objectManager = result.trace().getObjectManager();
+            var currentObject = coordinates == null ? null : coordinates.getObject();
+            var rootObject = objectManager.getRootObject();
+            Map<String, Object> arguments = DebuggerAttachSemantics.buildArguments(
+                    method,
+                    objectManager.getRootSchema().getContext(),
+                    schema -> currentObject == null ? null :
+                            currentObject.findSuitableSchema(schema),
+                    schema -> rootObject == null ? null : rootObject.findSuitableSchema(schema),
+                    pid);
+            method.invokeAsync(arguments).get(
+                    remainingAttachNanos(startedNanos, timeoutNanos),
+                    TimeUnit.NANOSECONDS);
+
+            DebuggerTargetService targetSvc = tool.getService(DebuggerTargetService.class);
+            Target target = targetSvc == null ? null : targetSvc.getTarget(result.trace());
+            TraceExecutionState state = target == null || coordinates == null ||
+                    coordinates.getThread() == null ? null :
+                    target.getThreadExecutionState(coordinates.getThread());
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("status", "attached");
+            response.put("pid", pid);
+            response.put("offer_title", offer.getTitle());
+            response.put("offer_config_name", offer.getConfigName());
+            response.put("trace_name", result.trace().getName());
+            response.put("method", method.name());
+            response.put("target_description", target == null ? null : target.describe());
+            response.put("execution_state", state == null ? "UNKNOWN" : state.name());
+            attached = true;
+            return Response.ok(response);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            monitor.cancel();
+            if (result == null && launchFuture != null) {
+                launchFuture.thenAccept(this::closeLaunchResult);
+            }
+            return Response.err("Debugger attach was interrupted");
+        } catch (TimeoutException e) {
+            return Response.err("Debugger attach timed out after " + timeoutSeconds + "s");
+        } catch (Exception e) {
+            return Response.err("Debugger attach failed: " + e.getMessage());
+        } finally {
+            if (!attached && result != null) {
+                closeLaunchResult(result);
+            }
         }
     }
 

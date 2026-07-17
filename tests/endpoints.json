@@ -624,6 +624,18 @@
       "description": "Create union"
     },
     {
+      "path": "/debugger/attach",
+      "method": "POST",
+      "category": "debugger",
+      "params": [
+        "offer",
+        "pid",
+        "program",
+        "timeout_seconds"
+      ],
+      "description": "Attach a selected TraceRMI backend to a native process by PID"
+    },
+    {
       "path": "/debugger/dynamic_to_static",
       "method": "GET",
       "category": "debugger",

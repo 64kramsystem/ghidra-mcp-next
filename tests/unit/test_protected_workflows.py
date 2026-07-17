@@ -17,7 +17,8 @@ FILEZILLA_ENDPOINTS = {
 }
 
 TRACE_RMI_ENDPOINTS = {
-    "/debugger/launch_offers", "/debugger/launch", "/debugger/status",
+    "/debugger/launch_offers", "/debugger/launch", "/debugger/attach",
+    "/debugger/status",
     "/debugger/traces", "/debugger/resume", "/debugger/interrupt",
     "/debugger/step_into", "/debugger/step_over", "/debugger/step_out",
     "/debugger/set_breakpoint", "/debugger/remove_breakpoint",
@@ -53,6 +54,7 @@ REMOVED_DOCUMENTATION_ENDPOINTS = {
 TRACE_RMI_CONTRACT_TOOLS = {
     "debugger/launch_offers",
     "debugger/launch",
+    "debugger/attach",
     "debugger/status",
     "debugger/resume",
     "debugger/interrupt",
