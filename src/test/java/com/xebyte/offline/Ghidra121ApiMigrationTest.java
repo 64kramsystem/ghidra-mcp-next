@@ -45,4 +45,23 @@ public class Ghidra121ApiMigrationTest extends TestCase {
                     source.contains(forbidden));
         }
     }
+
+    public void testProgramLoaderResultsHaveExplicitOwnership() throws Exception {
+        for (String relativePath : List.of(
+                "com/xebyte/headless/HeadlessProgramProvider.java",
+                "com/xebyte/core/ProgramScriptService.java")) {
+            String source = Files.readString(MAIN_SOURCE.resolve(relativePath));
+            assertTrue(relativePath + " must use the Ghidra 12.1 ProgramLoader builder",
+                    source.contains("ProgramLoader.builder()"));
+            assertTrue(relativePath + " must close LoadResults with try-with-resources",
+                    source.contains("try (LoadResults<Program>"));
+            assertTrue(relativePath + " must add an explicit retained Program consumer",
+                    source.contains("getPrimaryDomainObject("));
+        }
+
+        String guiSource = Files.readString(
+                MAIN_SOURCE.resolve("com/xebyte/core/ProgramScriptService.java"));
+        assertTrue("GUI imports must release their temporary service consumer",
+                guiSource.contains("program.release(this)"));
+    }
 }
