@@ -32,4 +32,4 @@ comment style; Ghidra validates model constraints.
 6. Save the explicitly selected program after verification.
 
 For dynamic work, load `load_tool_group("debugger")` once and use the retained
-TraceRMI attach, launch, status, wait, mapping, breakpoint, stepping, register, stack, module, and read-memory tools.
+TraceRMI attach, launch, status, wait, memory-map, mapping, breakpoint, stepping, register, stack, module, and read-memory tools.

@@ -1,7 +1,7 @@
 # Ghidra MCP Server
 
 Ghidra MCP connects AI clients to Ghidra through a Java extension and a thin
-Python MCP bridge. Version 5.15.0 exposes 231 tools for local static analysis,
+Python MCP bridge. Version 5.15.0 exposes 232 tools for local static analysis,
 multi-program work, P-code emulation, local comparison, and Ghidra's built-in
 TraceRMI debugger.
 
@@ -162,16 +162,17 @@ debugger_launch(offer=..., arguments=...)
 debugger_attach(offer=..., pid=..., program=...)
 debugger_status()
 debugger_modules()
+debugger_memory_maps(pid=...)
 debugger_set_breakpoint(address=...)
 debugger_resume()
 debugger_wait_for_stop(timeout_ms=...)
 debugger_read_memory(address=..., length=...)
 ```
 
-The 20 retained tools are:
+The 21 retained tools are:
 
 - `debugger_launch_offers`, `debugger_launch`, `debugger_attach`, `debugger_status`,
-  `debugger_traces`, and `debugger_modules`
+  `debugger_traces`, `debugger_modules`, and `debugger_memory_maps`
 - `debugger_set_breakpoint`, `debugger_list_breakpoints`, and
   `debugger_remove_breakpoint`
 - `debugger_resume`, `debugger_wait_for_stop`, `debugger_interrupt`, `debugger_step_into`,
@@ -186,9 +187,8 @@ using the mapping tools. Debugging a defect in Wine's own open-source code is
 primarily a Wine source, build, GDB, and test-suite task; Ghidra MCP can provide
 supporting disassembly evidence.
 
-Generic selected-offer/PID attach is available through `debugger_attach`, and `debugger_wait_for_stop` provides a bounded event-driven wait. These additions remain planned:
+Generic selected-offer/PID attach is available through `debugger_attach`, `debugger_wait_for_stop` provides a bounded event-driven wait, and `debugger_memory_maps` enumerates current trace regions with optional PID filtering. This addition remains planned:
 
-- [ ] Process memory-map enumeration.
 - [ ] `copy_debugger_memory_to_program`, creating and populating a block from a trace range.
 
 ## Optional local BSim

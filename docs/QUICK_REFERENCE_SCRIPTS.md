@@ -99,7 +99,7 @@ debugger_stack_trace(...)
 debugger_read_memory(...)
 ```
 
-Use `debugger_attach` for exact selected-offer/PID attachment, `debugger_resume` for continuing execution, and `debugger_wait_for_stop` for a bounded event-driven wait. Planned gaps are Process memory-map enumeration and `copy_debugger_memory_to_program`.
+Use `debugger_attach` for exact selected-offer/PID attachment, `debugger_resume` for continuing execution, `debugger_wait_for_stop` for a bounded event-driven wait, and `debugger_memory_maps` for current trace regions. The planned gap is `copy_debugger_memory_to_program`.
 
 ## Optional local BSim scripts
 

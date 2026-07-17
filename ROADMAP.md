@@ -19,11 +19,11 @@ coverage.
 
 - [x] Generic TraceRMI attach using a selected launch offer and PID.
 - [x] `debugger_wait_for_stop(timeout_ms)`.
-- [ ] Process memory-map enumeration.
+- [x] Process memory-map enumeration.
 - [ ] `copy_debugger_memory_to_program`, creating and populating a block from a
   trace range.
 
-Use `debugger_attach` for exact selected-offer native PID attachment and `debugger_wait_for_stop` for bounded event-driven waiting. The two unchecked items remain unavailable.
+Use `debugger_attach` for exact selected-offer native PID attachment, `debugger_wait_for_stop` for bounded event-driven waiting, and `debugger_memory_maps` for current trace-region enumeration. The unchecked item remains unavailable.
 
 ## Quality bar
 

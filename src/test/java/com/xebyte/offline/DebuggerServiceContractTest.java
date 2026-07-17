@@ -37,7 +37,6 @@ public class DebuggerServiceContractTest extends TestCase {
     public void testRemainingFutureEndpointsAreNotFalselyAdvertised() throws Exception {
         String source = Files.readString(Path.of(System.getProperty("user.dir"),
                 "src/main/java/com/xebyte/core/DebuggerService.java"));
-        assertFalse(source.contains("/debugger/memory_maps"));
         assertFalse(source.contains("/debugger/copy_memory_to_program"));
     }
 
@@ -48,5 +47,14 @@ public class DebuggerServiceContractTest extends TestCase {
         assertTrue(source.contains("DebuggerStateWaiter.waitForStop"));
         assertTrue(source.contains("ctx.trace.addListener"));
         assertTrue(source.contains("ctx.trace.removeListener"));
+    }
+
+    public void testMemoryMapsUseCurrentTraceRegions() throws Exception {
+        String source = Files.readString(Path.of(System.getProperty("user.dir"),
+                "src/main/java/com/xebyte/core/DebuggerService.java"));
+        assertTrue(source.contains("path = \"/debugger/memory_maps\""));
+        assertTrue(source.contains("getRegionsAtSnap(ctx.snap)"));
+        assertTrue(source.contains("DebuggerMemorySemantics.fromRegion"));
+        assertTrue(source.contains("DebuggerMemorySemantics.describeRegions"));
     }
 }
