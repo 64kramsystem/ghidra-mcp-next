@@ -503,7 +503,7 @@ public class FunctionService {
                 if (instr.getAddress().compareTo(end) > 0) {
                     break; // Stop if we've gone past the end of the function
                 }
-                String comment = listing.getComment(CodeUnit.EOL_COMMENT, instr.getAddress());
+                String comment = listing.getComment(CommentType.EOL, instr.getAddress());
                 comment = (comment != null) ? "; " + comment : "";
 
                 sb.append(String.format("%s: %s %s\n",
@@ -2882,6 +2882,8 @@ public class FunctionService {
 
     /** Command failure inside the write transaction; thrown so executeWrite rolls back. */
     private static final class ClearFlowFailedException extends RuntimeException {
+        private static final long serialVersionUID = 1L;
+
         ClearFlowFailedException(String message) {
             super(message);
         }

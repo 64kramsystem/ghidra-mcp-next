@@ -856,6 +856,8 @@ public class HeadlessProgramProvider implements ProgramProvider {
      * so resolving it would have to guess which one the caller meant.
      */
     private static final class AmbiguousProgramException extends Exception {
+        private static final long serialVersionUID = 1L;
+
         AmbiguousProgramException(String ident, int matchCount) {
             super("'" + ident + "' is ambiguous: " + matchCount
                 + " programs share this filename in different project folders. "
