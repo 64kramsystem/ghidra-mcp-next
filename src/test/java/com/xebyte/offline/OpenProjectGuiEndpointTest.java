@@ -32,47 +32,45 @@ public class OpenProjectGuiEndpointTest extends TestCase {
                 StandardCharsets.UTF_8);
     }
 
-    public void testPluginRegistersOpenProjectRoute() throws IOException {
-        String src = readUtf8("src/main/java/com/xebyte/GhidraMCPPlugin.java");
+    public void testGuiServiceRegistersOpenProjectRoute() throws IOException {
+        String src = readUtf8("src/main/java/com/xebyte/core/GuiProjectService.java");
         Pattern p = Pattern.compile(
-                "server\\.createContext\\s*\\(\\s*\"/open_project\"",
+                "@McpTool\\s*\\(\\s*path\\s*=\\s*\"/open_project\"",
                 Pattern.MULTILINE);
         assertTrue(
-                "GhidraMCPPlugin.java must register a route handler for "
-                        + "/open_project so the GUI server exposes the same tool "
-                        + "name the headless server does.",
+                "GuiProjectService must annotation-register /open_project so its "
+                        + "handler and schema cannot drift.",
                 p.matcher(src).find());
     }
 
-    public void testPluginRegistersCreateProjectRouteAndParameters() throws IOException {
-        String src = readUtf8("src/main/java/com/xebyte/GhidraMCPPlugin.java");
+    public void testGuiServiceRegistersCreateProjectRouteAndParameters() throws IOException {
+        String src = readUtf8("src/main/java/com/xebyte/core/GuiProjectService.java");
         Pattern routeBlock = Pattern.compile(
-                "server\\.createContext\\(\\s*\"/create_project\"[\\s\\S]*?"
-                        + "guiProjectService\\.createProject\\s*\\(",
+                "@McpTool\\s*\\(\\s*path\\s*=\\s*\"/create_project\"[\\s\\S]*?"
+                        + "public\\s+Response\\s+createProject\\s*\\(",
                 Pattern.MULTILINE);
         Matcher m = routeBlock.matcher(src);
-        assertTrue("Expected TCP /create_project to delegate to GuiProjectService.",
+        assertTrue("Expected annotation-scanned /create_project on GuiProjectService.",
                 m.find());
 
-        String block = src.substring(m.start(), Math.min(src.length(), m.end() + 200));
+        String block = src.substring(m.start(), Math.min(src.length(), m.end() + 600));
         assertTrue("Route must read parentDir.", block.contains("\"parentDir\""));
         assertTrue("Route must read name.", block.contains("\"name\""));
     }
 
     public void testOpenProjectHandlerReadsHeadlessAndProgramParams() throws IOException {
-        String src = readUtf8("src/main/java/com/xebyte/GhidraMCPPlugin.java");
-        // The route registration block should parse the body, default
-        // `headless` to true (option C semantics), and forward the
-        // optional `program` to launchCodeBrowser when the user asked
-        // for a non-headless open.
+        String src = readUtf8("src/main/java/com/xebyte/core/GuiProjectService.java");
+        // The annotation-scanned endpoint should bind the body, default
+        // `headless` to true, and forward the optional `program` to the
+        // existing project-opening helper.
         Pattern routeBlock = Pattern.compile(
-                "server\\.createContext\\(\\s*\"/open_project\"[\\s\\S]*?"
-                        + "guiProjectService\\.openProject\\s*\\(",
+                "@McpTool\\s*\\(\\s*path\\s*=\\s*\"/open_project\"[\\s\\S]*?"
+                        + "public\\s+Response\\s+openProjectEndpoint\\s*\\(",
                 Pattern.MULTILINE);
         Matcher m = routeBlock.matcher(src);
-        assertTrue("Expected /open_project route block to call openProject(...)",
+        assertTrue("Expected annotation-scanned /open_project endpoint",
                 m.find());
-        String block = src.substring(m.start(), Math.min(src.length(), m.end() + 200));
+        String block = src.substring(m.start(), Math.min(src.length(), m.end() + 900));
 
         assertTrue(
                 "Route must read the `headless` body param (with true as the default).",
@@ -80,8 +78,7 @@ public class OpenProjectGuiEndpointTest extends TestCase {
         assertTrue(
                 "Default for headless must be true so existing automation "
                         + "doesn't spontaneously start launching CodeBrowsers.",
-                block.contains("== null")
-                        || block.contains("getOrDefault"));
+                block.contains("defaultValue = \"true\""));
         assertTrue(
                 "Route must read the optional `program` param so non-headless "
                         + "opens can auto-launch CodeBrowser for a specific file.",
@@ -127,27 +124,22 @@ public class OpenProjectGuiEndpointTest extends TestCase {
                 body.contains("already_open"));
     }
 
-    public void testUdsRegistersBothProjectLifecycleRoutes() throws IOException {
+    public void testLegacyManualUdsProjectRoutesAreRemoved() throws IOException {
         String src = readUtf8("src/main/java/com/xebyte/core/GuiProjectService.java");
-        assertTrue("GuiProjectService must provide a UDS endpoint registrar.",
+        assertFalse("Project routes must have one annotation-scanned implementation.",
                 src.contains("registerUdsEndpoints"));
-        assertTrue("UDS must expose /create_project.",
-                src.contains("server.createContext(\"/create_project\""));
-        assertTrue("UDS must expose /open_project.",
-                src.contains("server.createContext(\"/open_project\""));
-        assertTrue("UDS handlers must resolve the active tool at request time.",
-                src.contains("ServerManager.getInstance().getActiveTool()"));
+        assertFalse("Project routes must not retain manual UDS contexts.",
+                src.contains("server.createContext"));
     }
 
     public void testBothUdsStartupPathsInstallGuiProjectRoutes() throws IOException {
         String src = readUtf8("src/main/java/com/xebyte/GhidraMCPPlugin.java");
         Pattern registration = Pattern.compile(
-                "registerTool\\s*\\(\\s*tool\\s*,\\s*"
-                        + "GuiProjectService::registerUdsEndpoints\\s*\\)");
-        assertEquals("Initial startup and menu-driven restart must install GUI routes.",
+                "\\bregisterTool\\s*\\(\\s*tool\\s*\\)");
+        assertEquals("Initial startup and menu restart must use scanned UDS routes.",
                 2, countMatches(src, registration));
-        assertFalse("Project lifecycle routes must not be omitted from UDS startup.",
-                src.contains("registerTool(tool, null)"));
+        assertFalse("UDS startup must not overlay manual project routes on scanned routes.",
+                src.contains("GuiProjectService::registerUdsEndpoints"));
     }
 
     public void testCreateProjectHasOneCatalogEntry() throws IOException {

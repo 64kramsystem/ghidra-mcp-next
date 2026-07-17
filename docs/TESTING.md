@@ -90,6 +90,20 @@ port. GUI and headless parity is asserted offline where possible; behavior that
 depends on a real Ghidra process must be reported as unexecuted if that process
 was unavailable.
 
+For a local GUI installation, the deploy contract check verifies the live
+schema and protected workflow routes on the installed extension:
+
+```bash
+uv run python -m tools.setup deploy \
+  --ghidra-path /path/to/ghidra \
+  --test selected-contract
+```
+
+When project lifecycle code changes, additionally switch between disposable
+projects once through TCP and once through the Unix socket. Both schemas must
+contain the same paths, and reopening the original project must succeed without
+Ghidra reporting multiple active projects.
+
 ## TraceRMI testing
 
 Offline tests protect the 18 route names, address-mapping/copy semantics, and
