@@ -44,6 +44,11 @@ public class EmulationServiceValidationTest extends TestCase {
         String batchSource = source.substring(source.indexOf("public Response emulateHashBatch"));
         assertTrue("Batch emulation must apply a hard step cap",
             batchSource.contains("DEFAULT_MAX_STEPS"));
+        for (String additiveField : new String[]{
+                "failed", "max_steps_per_candidate", "failure_samples"}) {
+            assertFalse("warning cleanup must not change the batch response schema: " + additiveField,
+                batchSource.contains("result.put(\"" + additiveField + "\""));
+        }
     }
 
     public void testSingleEmulationResponseContractRemainsDocumented() throws Exception {
