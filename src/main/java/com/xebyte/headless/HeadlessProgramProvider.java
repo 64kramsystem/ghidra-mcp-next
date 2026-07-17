@@ -18,9 +18,9 @@ package com.xebyte.headless;
 import com.xebyte.core.ProgramProvider;
 import ghidra.app.plugin.core.analysis.AutoAnalysisManager;
 import ghidra.app.plugin.core.archive.HeadlessArchiveBridge;
-import ghidra.app.util.importer.AutoImporter;
 import ghidra.app.util.importer.MessageLog;
-import ghidra.app.util.opinion.Loaded;
+import ghidra.app.util.importer.ProgramLoader;
+import ghidra.app.util.opinion.BinaryLoader;
 import ghidra.app.util.opinion.LoadResults;
 import ghidra.base.project.GhidraProject;
 import ghidra.framework.model.DomainFile;
@@ -201,6 +201,32 @@ public class HeadlessProgramProvider implements ProgramProvider {
     }
 
     /**
+     * Load and optionally save a program while transferring one explicit consumer reference
+     * from the short-lived loader results to this provider.
+     */
+    private Program loadImportedProgram(File file, Language language,
+                                        CompilerSpec compilerSpec, MessageLog log) throws Exception {
+        ProgramLoader.Builder loader = ProgramLoader.builder()
+            .source(file)
+            .project(project)
+            .projectFolderPath("/")
+            .log(log)
+            .monitor(monitor);
+        if (language != null) {
+            loader.loaders(BinaryLoader.class)
+                .language(language)
+                .compiler(compilerSpec);
+        }
+
+        try (LoadResults<Program> results = loader.load()) {
+            if (project != null) {
+                results.save(monitor);
+            }
+            return results.getPrimaryDomainObject(this);
+        }
+    }
+
+    /**
      * Load a program from a binary file.
      *
      * @param file The binary file to import
@@ -214,7 +240,7 @@ public class HeadlessProgramProvider implements ProgramProvider {
 
         try {
             // When a project is open, prefer opening an existing DomainFile with
-            // the same name (idempotent re-load) over re-importing — AutoImporter
+            // the same name (idempotent re-load) over re-importing with ProgramLoader
             // would otherwise throw DuplicateNameException on subsequent calls.
             if (project != null) {
                 Program existing = openExistingByName(file.getName());
@@ -226,29 +252,7 @@ public class HeadlessProgramProvider implements ProgramProvider {
             }
 
             MessageLog log = new MessageLog();
-            LoadResults<Program> loadResults = AutoImporter.importByUsingBestGuess(
-                file,
-                project,  // pass active project so the DomainFile has a real location
-                          // (was null → DomainFileProxy → df.save() throws
-                          // "Location does not exist for a save operation!")
-                "/",   // folder path (ignored when project is null → in-memory)
-                this,  // consumer
-                log,
-                monitor
-            );
-
-            // AutoImporter returns Loaded<T> wrappers whose DomainFile is still a
-            // transient proxy until save() materialises them into the project tree.
-            // Without this step, /save_all_programs later throws ReadOnlyException:
-            // "Location does not exist for a save operation!".
-            if (loadResults != null && project != null) {
-                loadResults.save(monitor);
-            }
-
-            Program program = null;
-            if (loadResults != null) {
-                program = loadResults.getPrimaryDomainObject();
-            }
+            Program program = loadImportedProgram(file, null, null, log);
 
             if (program != null) {
                 registerProgram(program);
@@ -274,7 +278,7 @@ public class HeadlessProgramProvider implements ProgramProvider {
     /**
      * Load a raw binary with an explicit language / compiler spec.
      *
-     * Used for firmware blobs and other raw images where AutoImporter's best-guess
+     * Used for firmware blobs and other raw images where best-guess loading
      * format detection has no header to latch onto (e.g. ARM Cortex-M .mem dumps).
      * Mirrors {@link #loadProgramFromFile(File)} for openPrograms / currentProgram
      * bookkeeping so subsequent /list_functions, /decompile_function, etc. resolve
@@ -324,29 +328,7 @@ public class HeadlessProgramProvider implements ProgramProvider {
             }
 
             MessageLog log = new MessageLog();
-            Loaded<Program> loaded = AutoImporter.importAsBinary(
-                file,
-                project, // pass active project so the DomainFile has a real location
-                         // (was null → DomainFileProxy → df.save() throws
-                         // "Location does not exist for a save operation!")
-                "/",    // folder path (ignored when project is null → in-memory)
-                language,
-                compilerSpec,
-                this,   // consumer
-                log,
-                monitor
-            );
-
-            // Materialise the Loaded into the project tree — see twin block in
-            // loadProgramFromFile for the full rationale.
-            if (loaded != null && project != null) {
-                loaded.save(monitor);
-            }
-
-            Program program = null;
-            if (loaded != null) {
-                program = loaded.getDomainObject(this);
-            }
+            Program program = loadImportedProgram(file, language, compilerSpec, log);
 
             if (program != null) {
                 registerProgram(program);
