@@ -8,6 +8,7 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assume.assumeTrue;
 
+import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -588,6 +589,157 @@ public class MemoryBlockServiceGhidraTest {
     }
 
     @Test
+    public void deleteCollectorReportsEveryLiveCollateralKindInNaturalOrder()
+            throws Exception {
+        create("collector_source", "0x2000", 0x10L, null, null, null,
+            false, 0, true, false, false, false, null, false);
+        create("collector_target", "0x3000", 0x20L, null, null, null,
+            false, 0xea, true, false, true, false, null, false);
+        builder.disassemble("0x3000", 1);
+        Address sourceOne = ServiceUtils.parseAddress(program, "0x2001");
+        Address sourceTwo = ServiceUtils.parseAddress(program, "0x2002");
+        Address sourceThree = ServiceUtils.parseAddress(program, "0x2003");
+        Address definedAddress =
+            ServiceUtils.parseAddress(program, "0x3002");
+        Address shiftedTarget =
+            ServiceUtils.parseAddress(program, "0x3004");
+        Address plainTarget =
+            ServiceUtils.parseAddress(program, "0x3006");
+        Address offsetTarget =
+            ServiceUtils.parseAddress(program, "0x3008");
+        Address commentAddress =
+            ServiceUtils.parseAddress(program, "0x300c");
+        int transaction = program.startTransaction("all collateral");
+        try {
+            program.getListing().createData(
+                definedAddress, WordDataType.dataType);
+            program.getSymbolTable().createLabel(
+                definedAddress, "DEFINED_DATA", SourceType.USER_DEFINED);
+            for (CommentType type : CommentType.values()) {
+                program.getListing().setComment(
+                    commentAddress, type, type.name());
+            }
+            program.getBookmarkManager().setBookmark(
+                ServiceUtils.parseAddress(program, "0x300f"),
+                "Info", "later", "later");
+            program.getBookmarkManager().setBookmark(
+                ServiceUtils.parseAddress(program, "0x300e"),
+                "Analysis", "earlier", "earlier");
+            program.getReferenceManager().addShiftedMemReference(
+                sourceThree, shiftedTarget, 2, RefType.DATA,
+                SourceType.USER_DEFINED, 2);
+            program.getReferenceManager().addOffsetMemReference(
+                sourceTwo, offsetTarget, false, 10, RefType.DATA,
+                SourceType.USER_DEFINED, 1);
+            program.getReferenceManager().addMemoryReference(
+                sourceOne, plainTarget, RefType.DATA,
+                SourceType.USER_DEFINED, 0);
+        }
+        finally {
+            program.endTransaction(transaction, true);
+        }
+
+        JsonObject preview = ok(memory.deleteMemoryBlock(
+            "collector_target", "keep", true, ""));
+        JsonObject counts = preview.getAsJsonObject("counts");
+        assertEquals(4, counts.get("symbols").getAsInt());
+        assertEquals(1, counts.get("instructions").getAsInt());
+        assertEquals(1, counts.get("defined_data").getAsInt());
+        assertEquals(2, counts.get("bookmarks").getAsInt());
+        assertEquals(3, counts.get("inbound_references").getAsInt());
+        for (CommentType type : CommentType.values()) {
+            assertEquals(
+                1,
+                counts.getAsJsonObject("comments")
+                    .get(type.name().toLowerCase()).getAsInt());
+        }
+
+        assertEquals(
+            java.util.List.of("3002", "3004", "3006", "3008"),
+            preview.getAsJsonArray("symbols").asList().stream()
+                .map(item -> item.getAsJsonObject()
+                    .get("address").getAsString()
+                    .replaceFirst("^.*::", ""))
+                .toList());
+        assertEquals(
+            java.util.List.of(false, true, true, true),
+            preview.getAsJsonArray("symbols").asList().stream()
+                .map(item -> item.getAsJsonObject()
+                    .get("dynamic").getAsBoolean())
+                .toList());
+        assertEquals(
+            java.util.List.of(
+                "eol", "plate", "post", "pre", "repeatable"),
+            preview.getAsJsonArray("comments").asList().stream()
+                .map(item -> item.getAsJsonObject()
+                    .get("comment_type").getAsString())
+                .toList());
+        assertEquals(
+            java.util.List.of("300e", "300f"),
+            preview.getAsJsonArray("bookmarks").asList().stream()
+                .map(item -> item.getAsJsonObject()
+                    .get("address").getAsString()
+                    .replaceFirst("^.*::", ""))
+                .toList());
+
+        JsonArray references = preview.getAsJsonArray("inbound_references");
+        assertEquals(
+            java.util.List.of("2001", "2002", "2003"),
+            references.asList().stream()
+                .map(item -> item.getAsJsonObject()
+                    .get("source").getAsString()
+                    .replaceFirst("^.*::", ""))
+                .toList());
+        assertTrue(references.get(0).getAsJsonObject()
+            .get("offset").isJsonNull());
+        JsonObject offset = references.get(1).getAsJsonObject()
+            .getAsJsonObject("offset");
+        assertEquals(10, offset.get("signed_offset").getAsLong());
+        assertTrue(offset.get("base_address").getAsString()
+            .endsWith("::2ffe"));
+        JsonObject shifted = references.get(2).getAsJsonObject()
+            .getAsJsonObject("shifted");
+        assertEquals(0xc01, shifted.get("base_value").getAsLong());
+        assertEquals(2, shifted.get("shift").getAsInt());
+    }
+
+    @Test
+    public void liveCollectorRejectsMoreThanTheCollateralCapBeforeMutation()
+            throws Exception {
+        int addresses =
+            MemoryBlockLifecycleCore.MAX_COLLATERAL
+                / CommentType.values().length + 1;
+        create("collateral_cap", "0x8000", (long) addresses,
+            null, null, null, false, 0,
+            true, false, false, false, null, false);
+        Address start = ServiceUtils.parseAddress(program, "0x8000");
+        int transaction = program.startTransaction("collateral cap");
+        try {
+            for (int index = 0; index < addresses; index++) {
+                Address address = start.add(index);
+                for (CommentType type : CommentType.values()) {
+                    program.getListing().setComment(
+                        address, type, "bounded");
+                }
+            }
+        }
+        finally {
+            program.endTransaction(transaction, true);
+        }
+
+        Response rejected = memory.deleteMemoryBlock(
+            "collateral_cap", "error", false, "");
+
+        assertError(rejected, "comments collateral count 65540");
+        assertEquals(
+            addresses,
+            program.getMemory().getBlock("collateral_cap").getSize());
+        assertEquals(
+            "bounded",
+            program.getListing().getComment(CommentType.PLATE, start));
+    }
+
+    @Test
     public void resizeGrowsAndShrinksAtomicallyWhilePreservingMetadata() {
         create("resizable", "0x4000", null, "00010203", null, null,
             false, null, true, true, true, true, "stable", false);
@@ -745,6 +897,57 @@ public class MemoryBlockServiceGhidraTest {
     }
 
     @Test
+    public void lifecycleRejectsExternalDeleteAndOtherOverlayShrink()
+            throws Exception {
+        create(
+            ghidra.program.model.mem.MemoryBlock.EXTERNAL_BLOCK_NAME,
+            "0x6400",
+            null,
+            "0102",
+            null,
+            null,
+            false,
+            null,
+            true,
+            false,
+            false,
+            false,
+            null,
+            false);
+        assertTrue(program.getMemory().getBlock(
+            ghidra.program.model.mem.MemoryBlock.EXTERNAL_BLOCK_NAME)
+            .isExternalBlock());
+        assertError(memory.deleteMemoryBlock(
+            ghidra.program.model.mem.MemoryBlock.EXTERNAL_BLOCK_NAME,
+            "error",
+            true,
+            ""),
+            "external");
+
+        var other =
+            program.getAddressFactory().getAddressSpace("OTHER");
+        assertTrue(other != null);
+        int transaction = program.startTransaction("OTHER overlay");
+        try {
+            program.getMemory().createInitializedBlock(
+                "other_overlay",
+                other.getAddress(0),
+                4,
+                (byte) 0,
+                ghidra.util.task.TaskMonitor.DUMMY,
+                true);
+        }
+        finally {
+            program.endTransaction(transaction, true);
+        }
+        assertError(memory.resizeMemoryBlock(
+            "other_overlay", null, 2L, "error", null, null,
+            null, 0L, null, true, ""), "OTHER address space");
+        assertEquals(
+            4, program.getMemory().getBlock("other_overlay").getSize());
+    }
+
+    @Test
     public void lifecycleRejectsMissingBlocksOverlapAndInvalidGrowSources()
             throws Exception {
         assertError(memory.deleteMemoryBlock(
@@ -862,6 +1065,89 @@ public class MemoryBlockServiceGhidraTest {
     }
 
     @Test
+    public void overlayResizeRejectsGrowthPastBackingBounds()
+            throws Exception {
+        create("bounded_backing", "0xa100", 4L, null, null, null,
+            false, 0, true, true, false, false, null, false);
+        JsonObject overlay = create(
+            "bounded_bank", "0xa100", null, "0102", null, null,
+            true, null, true, true, false, false, null, false);
+        String space = overlay.getAsJsonObject("after")
+            .get("address_space").getAsString();
+
+        assertError(memory.resizeMemoryBlock(
+            "bounded_bank", null, 6L, "error", 0, null,
+            null, 0L, null, true, ""), "one complete backing");
+        assertEquals(
+            2, program.getMemory().getBlock("bounded_bank").getSize());
+        assertArrayEquals(
+            hex("0102"), bytes(space + "::0xa100", 2));
+    }
+
+    @Test
+    public void resizePreservesExactRetainedFileProvenance()
+            throws Exception {
+        byte[] imported = hex("0011223344556677");
+        int transaction = program.startTransaction("file-backed block");
+        try {
+            var fileBytes = program.getMemory().createFileBytes(
+                "origin.prg",
+                7,
+                imported.length,
+                new ByteArrayInputStream(imported),
+                ghidra.util.task.TaskMonitor.DUMMY);
+            program.getMemory().createInitializedBlock(
+                "file_backed",
+                ServiceUtils.parseAddress(program, "0x7600"),
+                fileBytes,
+                2,
+                4,
+                false);
+        }
+        finally {
+            program.endTransaction(transaction, true);
+        }
+
+        JsonObject grown = ok(memory.resizeMemoryBlock(
+            "file_backed", null, 6L, "error", null, "aabb",
+            null, 0L, null, false, ""));
+        JsonObject beforeFile = grown.getAsJsonObject("before")
+            .getAsJsonArray("source_infos").get(0).getAsJsonObject();
+        JsonObject afterFile = grown.getAsJsonObject("after")
+            .getAsJsonArray("source_infos").get(0).getAsJsonObject();
+        assertEquals(beforeFile.get("file"), afterFile.get("file"));
+        assertEquals(
+            beforeFile.get("file_offset"), afterFile.get("file_offset"));
+        assertEquals(
+            beforeFile.get("min_address"), afterFile.get("min_address"));
+        assertEquals(
+            beforeFile.get("max_address"), afterFile.get("max_address"));
+        assertEquals(
+            beforeFile.get("length"), afterFile.get("length"));
+        assertEquals(
+            7,
+            beforeFile.getAsJsonObject("file")
+                .get("imported_file_offset").getAsLong());
+        assertEquals(
+            8,
+            beforeFile.getAsJsonObject("file")
+                .get("stored_size").getAsLong());
+        assertEquals(2, beforeFile.get("file_offset").getAsLong());
+        assertArrayEquals(hex("22334455aabb"), bytes("0x7600", 6));
+
+        JsonObject shrunk = ok(memory.resizeMemoryBlock(
+            "file_backed", null, 3L, "error", null, null,
+            null, 0L, null, false, ""));
+        JsonObject retainedFile = shrunk.getAsJsonObject("after")
+            .getAsJsonArray("source_infos").get(0).getAsJsonObject();
+        assertEquals(beforeFile.get("file"), retainedFile.get("file"));
+        assertEquals(
+            beforeFile.get("file_offset"), retainedFile.get("file_offset"));
+        assertEquals(3, retainedFile.get("length").getAsLong());
+        assertArrayEquals(hex("223344"), bytes("0x7600", 3));
+    }
+
+    @Test
     public void retainedOverlaySupportsEveryInboundReferencePolicy()
             throws Exception {
         create("policy_backing", "0xa000", 0x30L, null, null, null,
@@ -974,6 +1260,123 @@ public class MemoryBlockServiceGhidraTest {
         assertEquals(4,
             program.getMemory().getBlock("resize_me").getSize());
         assertArrayEquals(hex("01020304"), bytes("0x8100", 4));
+    }
+
+    @Test
+    public void everyLifecycleMutationCheckpointRollsBackCompleteState()
+            throws Exception {
+        create("checkpoint_source", "0x7000", null, "0102", null, null,
+            false, null, true, false, false, false, null, false);
+        create("checkpoint_clear", "0x7100", null, "aabb", null, null,
+            false, null, true, false, false, false, null, false);
+        create("checkpoint_keep", "0x7200", null, "ccdd", null, null,
+            false, null, true, false, false, false, null, false);
+        Address source = ServiceUtils.parseAddress(program, "0x7000");
+        Address clearTarget = ServiceUtils.parseAddress(program, "0x7100");
+        Address keepTarget = ServiceUtils.parseAddress(program, "0x7200");
+        long keepSymbolId;
+        int transaction = program.startTransaction("checkpoint references");
+        try {
+            var keepSymbol = program.getSymbolTable().createLabel(
+                keepTarget, "CHECKPOINT_KEEP", SourceType.USER_DEFINED);
+            keepSymbolId = keepSymbol.getID();
+            program.getReferenceManager().addMemoryReference(
+                source, clearTarget, RefType.DATA,
+                SourceType.USER_DEFINED, 0);
+            var keepReference =
+                program.getReferenceManager().addMemoryReference(
+                    source, keepTarget, RefType.DATA,
+                    SourceType.USER_DEFINED, 1);
+            program.getReferenceManager().setAssociation(
+                keepSymbol, keepReference);
+        }
+        finally {
+            program.endTransaction(transaction, true);
+        }
+
+        MemoryBlockService afterInbound = serviceFailingAt(
+            MemoryBlockLifecycleCore.MutationStage.AFTER_INBOUND_POLICY);
+        assertError(afterInbound.deleteMemoryBlock(
+            "checkpoint_clear", "clear", false, ""), "injected");
+        assertTrue(program.getMemory().getBlock("checkpoint_clear") != null);
+        assertTrue(program.getReferenceManager().getReference(
+            source, clearTarget, 0) != null);
+        assertError(afterInbound.deleteMemoryBlock(
+            "checkpoint_keep", "keep", false, ""), "injected");
+        assertTrue(program.getMemory().getBlock("checkpoint_keep") != null);
+        assertEquals(
+            keepSymbolId,
+            program.getReferenceManager().getReference(
+                source, keepTarget, 1).getSymbolID());
+
+        create("checkpoint_shrink", "0x7300", null, "01020304", null, null,
+            false, null, true, true, false, false, "stable", false);
+        MemoryBlockService afterSplit = serviceFailingAt(
+            MemoryBlockLifecycleCore.MutationStage.AFTER_SPLIT);
+        assertError(afterSplit.resizeMemoryBlock(
+            "checkpoint_shrink", null, 2L, "error", null, null,
+            null, 0L, null, false, ""), "injected");
+        assertEquals(
+            4, program.getMemory().getBlock("checkpoint_shrink").getSize());
+        assertArrayEquals(hex("01020304"), bytes("0x7300", 4));
+
+        create("checkpoint_grow", "0x7400", null, "0102", null, null,
+            false, null, true, true, false, false, "stable", false);
+        MemoryBlockService afterTemporary = serviceFailingAt(
+            MemoryBlockLifecycleCore.MutationStage.AFTER_TEMPORARY_CREATE);
+        assertError(afterTemporary.resizeMemoryBlock(
+            "checkpoint_grow", null, 4L, "error", null, "aabb",
+            null, 0L, null, false, ""), "injected");
+        assertEquals(
+            2, program.getMemory().getBlock("checkpoint_grow").getSize());
+        assertNull(program.getMemory().getBlock("checkpoint_grow_resize"));
+        assertArrayEquals(hex("0102"), bytes("0x7400", 2));
+
+        MemoryBlockService afterJoin = serviceFailingAt(
+            MemoryBlockLifecycleCore.MutationStage.AFTER_JOIN);
+        assertError(afterJoin.resizeMemoryBlock(
+            "checkpoint_grow", null, 4L, "error", null, "aabb",
+            null, 0L, null, false, ""), "injected");
+        assertEquals(
+            2, program.getMemory().getBlock("checkpoint_grow").getSize());
+        assertArrayEquals(hex("0102"), bytes("0x7400", 2));
+
+        create("checkpoint_verify", "0x7500", null, "0102", null, null,
+            false, null, true, false, false, false, null, false);
+        MemoryBlockService duringVerification = serviceFailingAt(
+            MemoryBlockLifecycleCore.MutationStage
+                .DURING_POST_MUTATION_VERIFICATION);
+        assertError(duringVerification.resizeMemoryBlock(
+            "checkpoint_shrink", null, 2L, "error", null, null,
+            null, 0L, null, false, ""), "injected");
+        assertEquals(
+            4, program.getMemory().getBlock("checkpoint_shrink").getSize());
+        assertArrayEquals(hex("01020304"), bytes("0x7300", 4));
+        assertError(duringVerification.deleteMemoryBlock(
+            "checkpoint_verify", "error", false, ""), "injected");
+        assertTrue(program.getMemory().getBlock("checkpoint_verify") != null);
+        assertArrayEquals(hex("0102"), bytes("0x7500", 2));
+    }
+
+    private MemoryBlockService serviceFailingAt(
+            MemoryBlockLifecycleCore.MutationStage expected) {
+        HeadlessProgramProvider provider = new HeadlessProgramProvider();
+        provider.setCurrentProgram(program);
+        MemoryBlockLifecycleCore lifecycle = new MemoryBlockLifecycleCore(
+            stage -> {
+                if (stage == expected) {
+                    throw new Exception(
+                        "injected lifecycle failure at " + stage);
+                }
+            });
+        return new MemoryBlockService(
+            provider,
+            new DirectThreadingStrategy(),
+            SecurityConfig.getInstance(),
+            MemoryBlockService::readFileRange,
+            new MemoryBlockCore(),
+            lifecycle,
+            ghidra.util.task.TaskMonitor.DUMMY);
     }
 
     private MemoryBlockService serviceForRoot(

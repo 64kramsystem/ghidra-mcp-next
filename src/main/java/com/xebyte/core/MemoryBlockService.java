@@ -64,13 +64,31 @@ public final class MemoryBlockService {
             MemoryBlockCore.FileReader fileReader,
             MemoryBlockCore core,
             TaskMonitor monitor) {
+        this(
+            programProvider,
+            threading,
+            security,
+            fileReader,
+            core,
+            new MemoryBlockLifecycleCore(),
+            monitor);
+    }
+
+    MemoryBlockService(
+            ProgramProvider programProvider,
+            ThreadingStrategy threading,
+            SecurityConfig security,
+            MemoryBlockCore.FileReader fileReader,
+            MemoryBlockCore core,
+            MemoryBlockLifecycleCore lifecycle,
+            TaskMonitor monitor) {
         this.programProvider =
             Objects.requireNonNull(programProvider, "programProvider");
         this.threading = Objects.requireNonNull(threading, "threading");
         this.security = Objects.requireNonNull(security, "security");
         this.fileReader = Objects.requireNonNull(fileReader, "fileReader");
         this.core = Objects.requireNonNull(core, "core");
-        this.lifecycle = new MemoryBlockLifecycleCore();
+        this.lifecycle = Objects.requireNonNull(lifecycle, "lifecycle");
         this.monitor = Objects.requireNonNull(monitor, "monitor");
     }
 

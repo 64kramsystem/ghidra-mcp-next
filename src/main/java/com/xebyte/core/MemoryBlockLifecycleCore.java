@@ -46,6 +46,30 @@ final class MemoryBlockLifecycleCore {
 
     static final int MAX_COLLATERAL = 65_536;
     private static final int DIGEST_BUFFER_SIZE = 1 << 20;
+    private final MutationProbe mutationProbe;
+
+    MemoryBlockLifecycleCore() {
+        this(stage -> {
+        });
+    }
+
+    MemoryBlockLifecycleCore(MutationProbe mutationProbe) {
+        this.mutationProbe =
+            Objects.requireNonNull(mutationProbe, "mutationProbe");
+    }
+
+    @FunctionalInterface
+    interface MutationProbe {
+        void reached(MutationStage stage) throws Exception;
+    }
+
+    enum MutationStage {
+        AFTER_INBOUND_POLICY,
+        AFTER_SPLIT,
+        AFTER_TEMPORARY_CREATE,
+        AFTER_JOIN,
+        DURING_POST_MUTATION_VERIFICATION
+    }
 
     enum InboundPolicy {
         ERROR,
@@ -239,9 +263,12 @@ final class MemoryBlockLifecycleCore {
         applyInboundPolicy(
             plan.program(), plan.collateral().inboundReferences(),
             plan.policy(), monitor);
+        mutationProbe.reached(MutationStage.AFTER_INBOUND_POLICY);
         monitor.checkCancelled();
         plan.program().getMemory().removeBlock(plan.block(), monitor);
         monitor.checkCancelled();
+        mutationProbe.reached(
+            MutationStage.DURING_POST_MUTATION_VERIFICATION);
         verifyInboundPolicy(
             plan.program(), plan.collateral().inboundReferences(),
             plan.policy());
@@ -419,15 +446,8 @@ final class MemoryBlockLifecycleCore {
             throw new IllegalArgumentException(
                 "grow source length must equal the added range length");
         }
-        long total = Math.addExact(block.getSize(), growth);
-        if (total > Memory.MAX_BLOCK_SIZE) {
-            throw new IllegalArgumentException(
-                "result exceeds Memory.MAX_BLOCK_SIZE");
-        }
-        if (growth > Memory.MAX_BINARY_SIZE - program.getMemory().getSize()) {
-            throw new IllegalArgumentException(
-                "result exceeds Memory.MAX_BINARY_SIZE");
-        }
+        validateGrowthLimits(
+            block.getSize(), growth, program.getMemory().getSize());
         rejectOverlap(program.getMemory(), addedStart, newEnd, block);
         if (block.getStart().getAddressSpace().isOverlaySpace()) {
             validateOverlayBacking(
@@ -468,6 +488,7 @@ final class MemoryBlockLifecycleCore {
         Memory memory = plan.program().getMemory();
         Address split = plan.changedRange().start();
         memory.split(plan.block(), split);
+        mutationProbe.reached(MutationStage.AFTER_SPLIT);
         MemoryBlock prefix = memory.getBlock(plan.before().name());
         MemoryBlock tail = findBlockAt(memory, split, prefix);
         if (prefix == null || tail == null) {
@@ -478,9 +499,12 @@ final class MemoryBlockLifecycleCore {
         applyInboundPolicy(
             plan.program(), plan.collateral().inboundReferences(),
             plan.policy(), monitor);
+        mutationProbe.reached(MutationStage.AFTER_INBOUND_POLICY);
         monitor.checkCancelled();
         memory.removeBlock(tail, monitor);
         monitor.checkCancelled();
+        mutationProbe.reached(
+            MutationStage.DURING_POST_MUTATION_VERIFICATION);
         normalizeMetadata(prefix, plan.before());
         verifyInboundPolicy(
             plan.program(), plan.collateral().inboundReferences(),
@@ -514,9 +538,11 @@ final class MemoryBlockLifecycleCore {
             false);
         normalizeMetadata(temporary, plan.before());
         temporary.setName(temporaryName);
+        mutationProbe.reached(MutationStage.AFTER_TEMPORARY_CREATE);
         monitor.checkCancelled();
         MemoryBlock joined = memory.join(plan.block(), temporary);
         normalizeMetadata(joined, plan.before());
+        mutationProbe.reached(MutationStage.AFTER_JOIN);
         monitor.checkCancelled();
         verifyRetained(plan, joined, monitor);
         byte[] observed = new byte[Math.toIntExact(plan.changedRange().length())];
@@ -968,7 +994,7 @@ final class MemoryBlockLifecycleCore {
             && !candidate.isShiftedReference();
     }
 
-    private static void validateListingBoundary(
+    static void validateListingBoundary(
             Program program, Range range) {
         Listing listing = program.getListing();
         CodeUnit atStart = listing.getCodeUnitContaining(range.start());
@@ -1028,9 +1054,11 @@ final class MemoryBlockLifecycleCore {
         }
     }
 
-    private static void verifyRetained(
+    private void verifyRetained(
             ResizePlan plan, MemoryBlock block, TaskMonitor monitor)
             throws Exception {
+        mutationProbe.reached(
+            MutationStage.DURING_POST_MUTATION_VERIFICATION);
         Address retainedEnd = plan.kind() == ResizeKind.SHRINK
             ? plan.changedRange().start().previous()
             : plan.before().end().equals(block.getEnd().toString(false))
@@ -1276,6 +1304,19 @@ final class MemoryBlockLifecycleCore {
         if (removed.contains(program.getImageBase())) {
             throw new IllegalArgumentException(
                 "cannot shrink a tail containing the program image base");
+        }
+    }
+
+    static void validateGrowthLimits(
+            long blockSize, long growth, long memorySize) {
+        long total = Math.addExact(blockSize, growth);
+        if (total > Memory.MAX_BLOCK_SIZE) {
+            throw new IllegalArgumentException(
+                "result exceeds Memory.MAX_BLOCK_SIZE");
+        }
+        if (growth > Memory.MAX_BINARY_SIZE - memorySize) {
+            throw new IllegalArgumentException(
+                "result exceeds Memory.MAX_BINARY_SIZE");
         }
     }
 
