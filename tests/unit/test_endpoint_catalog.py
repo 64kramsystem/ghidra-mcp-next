@@ -113,6 +113,7 @@ class TestAnnotatedEndpoints(unittest.TestCase):
             "FlowDisassemblyService",
             "ListingRangeService",
             "ListingMutationService",
+            "GuiContextService",
         ]
         for svc in expected_services:
             path = CORE_SRC / f"{svc}.java"
@@ -438,6 +439,104 @@ class TestEndpointsJson(unittest.TestCase):
             bridge.register_tools_from_schema([])
 
     @unittest.skipUnless(ENDPOINTS_JSON.exists(), "endpoints.json not found")
+    def test_gui_context_contract_and_lazy_group_loading(self):
+        data = json.loads(ENDPOINTS_JSON.read_text())
+        endpoints = {
+            ep["path"]: ep
+            for ep in data.get("endpoints", [])
+            if ep["path"]
+            in {
+                "/get_current_address",
+                "/get_current_selection",
+                "/go_to_address",
+            }
+        }
+        self.assertEqual(
+            set(endpoints),
+            {
+                "/get_current_address",
+                "/get_current_selection",
+                "/go_to_address",
+            },
+        )
+        self.assertTrue(
+            all(ep["category"] == "gui" for ep in endpoints.values())
+        )
+        self.assertEqual(endpoints["/get_current_address"]["params"], [])
+        self.assertEqual(endpoints["/get_current_selection"]["params"], [])
+        self.assertEqual(
+            endpoints["/go_to_address"]["params"], ["address", "program"]
+        )
+        self.assertEqual(endpoints["/go_to_address"]["method"], "POST")
+        self.assertNotIn(
+            "/tool/goto_address",
+            {ep["path"] for ep in data.get("endpoints", [])},
+        )
+
+        import bridge_mcp_ghidra as bridge
+
+        raw_schema = {
+            "tools": [
+                {
+                    "path": "/get_current_address",
+                    "method": "GET",
+                    "category": "gui",
+                    "supports_dry_run": False,
+                    "params": [],
+                },
+                {
+                    "path": "/get_current_selection",
+                    "method": "GET",
+                    "category": "gui",
+                    "supports_dry_run": False,
+                    "params": [],
+                },
+                {
+                    "path": "/go_to_address",
+                    "method": "POST",
+                    "category": "gui",
+                    "supports_dry_run": False,
+                    "params": [
+                        {
+                            "name": "address",
+                            "type": "string",
+                            "source": "body",
+                            "required": True,
+                            "param_type": "address",
+                        },
+                        {
+                            "name": "program",
+                            "type": "string",
+                            "source": "body",
+                            "required": False,
+                            "default": "",
+                        },
+                    ],
+                },
+            ]
+        }
+        try:
+            parsed = bridge._parse_schema(raw_schema)
+            self.assertEqual(
+                bridge.register_tools_from_schema(parsed, groups=set()), 0
+            )
+            self.assertEqual(
+                bridge._load_group("gui"),
+                [
+                    "get_current_address",
+                    "get_current_selection",
+                    "go_to_address",
+                ],
+            )
+            handler = bridge.mcp._tool_manager._tools["go_to_address"].fn
+            self.assertEqual(
+                list(inspect.signature(handler).parameters),
+                ["address", "program", "ctx"],
+            )
+        finally:
+            bridge.register_tools_from_schema([])
+
+    @unittest.skipUnless(ENDPOINTS_JSON.exists(), "endpoints.json not found")
     def test_disassemble_flow_contract_has_separate_safe_controls(self):
         data = json.loads(ENDPOINTS_JSON.read_text())
         endpoint = next(
@@ -582,6 +681,7 @@ class TestAnnotationScannerExists(unittest.TestCase):
             "ProgramScriptService",
             "ExportService",
             "FlowDisassemblyService",
+            "GuiContextService",
         ]
         for name in expected:
             path = CORE_SRC / f"{name}.java"

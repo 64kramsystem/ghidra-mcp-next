@@ -85,6 +85,8 @@ public class ServerManager {
                 new ListingMutationService(programProvider, ts);
             DebuggerService debuggerService = new DebuggerService(programProvider, ts, tool);
             GuiProjectService guiProjectService = new GuiProjectService(this::getActiveTool);
+            GuiContextService guiContextService =
+                new GuiContextService(this::getActiveTool, programProvider);
 
             AnnotationScanner scanner = new AnnotationScanner(programProvider,
                 listingService, functionService, commentService, symbolLabelService,
@@ -93,7 +95,7 @@ public class ServerManager {
                 memoryBlockService, dataRegionService, symbolProfileService,
                 emulationService, exportService, flowDisassemblyService,
                 listingRangeService, listingMutationService,
-                debuggerService, guiProjectService);
+                debuggerService, guiProjectService, guiContextService);
 
             startServer(scanner);
         }

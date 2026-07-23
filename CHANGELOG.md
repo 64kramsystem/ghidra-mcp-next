@@ -8,6 +8,10 @@ Complete version history for the Ghidra MCP Server project.
 
 ### Added
 
+- Added GUI-only `get_current_address`, `get_current_selection`, and
+  `go_to_address` MCP tools with normalized program/address context,
+  lossless ordered multi-range selections, Swing-safe reads and navigation,
+  named-program activation, and final context on navigation failure.
 - Added `patch_bytes`, a dry-run-first raw hexadecimal patch endpoint for
   initialized ordinary and overlay blocks. It supports exact block/space
   resolution, compare-and-swap guards, temporary read-only writes, bounded

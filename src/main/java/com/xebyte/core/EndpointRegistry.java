@@ -7,8 +7,8 @@ import java.util.*;
  * Shared between GUI ({@code GhidraMCPPlugin}) and headless ({@code GhidraMCPHeadlessServer}) modes.
  *
  * <p>Only includes endpoints whose handler logic lives entirely in the service layer.
- * GUI-only endpoints ({@code /get_current_address}, {@code /get_current_function},
- * {@code /get_current_selection}, {@code /tool/*}, {@code /exit_ghidra},
+ * GUI-only manual endpoints ({@code /get_current_function},
+ * {@code /tool/*}, {@code /exit_ghidra},
  * {@code /check_connection}, {@code /health}, {@code /get_version}) stay inline.
  *
  * <p>Usage:

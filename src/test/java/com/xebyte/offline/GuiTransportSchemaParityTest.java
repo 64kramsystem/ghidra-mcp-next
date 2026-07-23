@@ -1,6 +1,7 @@
 package com.xebyte.offline;
 
 import com.xebyte.core.AnnotationScanner;
+import com.xebyte.core.GuiContextService;
 import com.xebyte.core.GuiProjectService;
 
 import java.io.IOException;
@@ -36,6 +37,19 @@ public class GuiTransportSchemaParityTest extends TestCase {
                 parameterNames(tools.get("/open_project")));
         assertEquals("headless", tools.get("/create_project").category());
         assertEquals("headless", tools.get("/open_project").category());
+    }
+
+    public void testGuiContextEndpointsAreAnnotationScanned() {
+        AnnotationScanner scanner = new AnnotationScanner(
+                new GuiContextService(() -> null, ServiceFactory.stubProvider()));
+        Set<String> paths = scanner.getDescriptors().stream()
+                .map(AnnotationScanner.ToolDescriptor::path)
+                .collect(Collectors.toSet());
+
+        assertEquals(Set.of(
+            "/get_current_address",
+            "/get_current_selection",
+            "/go_to_address"), paths);
     }
 
     public void testHeadlessImportEndpointIsAnnotationScanned() {
@@ -77,7 +91,7 @@ public class GuiTransportSchemaParityTest extends TestCase {
                         + "flowDisassemblyService,\\s*listingRangeService,\\s*"
                         + "listingMutationService,\\s*"
                         + "debuggerService,\\s*"
-                        + "guiProjectService\\).*"));
+                        + "guiProjectService,\\s*guiContextService\\).*"));
     }
 
     public void testUdsScannerIncludesProtectedGuiServices() throws IOException {
@@ -103,7 +117,9 @@ public class GuiTransportSchemaParityTest extends TestCase {
                 "DebuggerService debuggerService = new DebuggerService"));
         assertTrue("UDS must construct GuiProjectService", source.contains(
                 "GuiProjectService guiProjectService = new GuiProjectService"));
-        assertTrue("UDS scanner must advertise emulation, export, debugger, and project tools",
+        assertTrue("UDS must construct GuiContextService", source.contains(
+                "GuiContextService guiContextService ="));
+        assertTrue("UDS scanner must advertise GUI services",
                 source.matches("(?s).*new AnnotationScanner\\(programProvider,.*"
                         + "programScriptService,\\s*memoryBlockService,\\s*dataRegionService,\\s*"
                         + "symbolProfileService,\\s*"
@@ -111,7 +127,7 @@ public class GuiTransportSchemaParityTest extends TestCase {
                         + "flowDisassemblyService,\\s*listingRangeService,\\s*"
                         + "listingMutationService,\\s*"
                         + "debuggerService,\\s*"
-                        + "guiProjectService\\).*"));
+                        + "guiProjectService,\\s*guiContextService\\).*"));
     }
 
     public void testHeadlessScannerIncludesExportService() throws IOException {

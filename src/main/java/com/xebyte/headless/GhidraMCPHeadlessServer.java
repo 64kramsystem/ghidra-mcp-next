@@ -437,7 +437,18 @@ public class GhidraMCPHeadlessServer implements GhidraLaunchable {
         // ==========================================================================
 
         safeContext("/get_current_address", exchange -> {
-            sendResponse(exchange, "{\"error\": \"Headless mode - use address parameter with specific endpoints\"}");
+            sendResponse(exchange,
+                "{\"error\": \"GUI context tools are unavailable in headless mode\"}");
+        });
+
+        safeContext("/get_current_selection", exchange -> {
+            sendResponse(exchange,
+                "{\"error\": \"GUI context tools are unavailable in headless mode\"}");
+        });
+
+        safeContext("/go_to_address", exchange -> {
+            sendResponse(exchange,
+                "{\"error\": \"GUI context tools are unavailable in headless mode\"}");
         });
 
         safeContext("/get_current_function", exchange -> {

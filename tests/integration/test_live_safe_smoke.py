@@ -176,9 +176,47 @@ class TestLiveServerSmoke:
         assert response.status_code == 200
         assert len(response.text.strip()) > 0
 
-    def test_current_selection_optional(self, http_client):
+    def test_gui_context_navigation_round_trip(
+        self, http_client, first_function_address
+    ):
+        version = json.loads(http_client.get("/get_version").text)
+        if version.get("mode") != "gui":
+            pytest.skip("GUI context tools are intentionally absent in headless mode")
+
+        schema = json.loads(http_client.get("/mcp/schema").text)
+        paths = {tool["path"] for tool in schema.get("tools", [])}
+        assert {
+            "/get_current_address",
+            "/get_current_selection",
+            "/go_to_address",
+        }.issubset(paths)
+
+        navigation = http_client.post(
+            "/go_to_address",
+            json_data={"address": first_function_address},
+        )
+        assert navigation.status_code == 200
+        navigation_payload = json.loads(navigation.text)
+        assert navigation_payload["success"] is True
+
+        current = http_client.get("/get_current_address")
+        assert current.status_code == 200
+        current_payload = json.loads(current.text)
+        assert current_payload["has_address"] is True
+        assert (
+            current_payload["address"]
+            == navigation_payload["current_context"]["address"]
+        )
+
+    def test_current_selection_normalized(self, http_client):
+        version = json.loads(http_client.get("/get_version").text)
+        if version.get("mode") != "gui":
+            pytest.skip("GUI context tools are intentionally absent in headless mode")
         response = http_client.get("/get_current_selection")
-        assert response.status_code in [200, 404]
+        assert response.status_code == 200
+        payload = json.loads(response.text)
+        assert isinstance(payload["ranges"], list)
+        assert payload["has_selection"] is bool(payload["ranges"])
 
 
 class TestSafeRoundTripSmoke:
