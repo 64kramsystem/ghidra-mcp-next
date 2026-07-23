@@ -27,6 +27,13 @@ public class CommentService {
     private final ThreadingStrategy threadingStrategy;
     private final AddressCommentCore addressCommentCore;
 
+    private record BatchCommentOutcome(
+            int decompilerCount,
+            int disassemblyCount,
+            boolean plateSet,
+            int overwrittenCount) {
+    }
+
     public CommentService(ProgramProvider programProvider, ThreadingStrategy threadingStrategy) {
         this.programProvider = programProvider;
         this.threadingStrategy = threadingStrategy;
@@ -184,15 +191,6 @@ public class CommentService {
             return Response.err("Comment is required");
         }
 
-        final Address resolvedAddr;
-        try {
-            resolvedAddr =
-                addressCommentCore.resolveAddress(program, functionAddress);
-        }
-        catch (IllegalArgumentException e) {
-            return Response.err(e.getMessage());
-        }
-
         try {
             AddressCommentCore.WriteMode mode =
                 comment.isEmpty()
@@ -203,10 +201,13 @@ public class CommentService {
                     program,
                     "Set Plate Comment",
                     () -> {
+                        AddressCommentCore.ResolvedAddress target =
+                            addressCommentCore.resolveAddress(
+                                program, functionAddress);
                         AddressCommentCore.Plan prepared =
                             addressCommentCore.plan(
                                 program,
-                                resolvedAddr,
+                                target,
                                 CommentType.PLATE,
                                 comment,
                                 mode);
@@ -215,7 +216,7 @@ public class CommentService {
                     });
 
             JsonObject result = new JsonObject();
-            ServiceUtils.addressToJson(resolvedAddr, program)
+            ServiceUtils.addressToJson(plan.address(), program)
                 .forEach((key, value) ->
                     result.addProperty(key, String.valueOf(value)));
             result.add(
@@ -263,39 +264,33 @@ public class CommentService {
         if (pe.hasError()) return pe.error();
         Program program = pe.program();
 
-        // Resolve the top-level address before entering the write transaction.
-        final Address funcAddr;
-        if (functionAddress != null && !functionAddress.isEmpty()) {
-            try {
-                funcAddr =
-                    addressCommentCore.resolveAddress(
-                        program, functionAddress);
-            }
-            catch (IllegalArgumentException e) {
-                return Response.err(e.getMessage());
-            }
-        } else {
-            funcAddr = null;
-        }
-
-        final AtomicBoolean success = new AtomicBoolean(false);
-        final AtomicReference<String> errorMsg = new AtomicReference<>();
-        final AtomicInteger decompilerCount = new AtomicInteger(0);
-        final AtomicInteger disassemblyCount = new AtomicInteger(0);
-        final AtomicBoolean plateSet = new AtomicBoolean(false);
-        final AtomicInteger overwrittenCount = new AtomicInteger(0);
-
+        final BatchCommentOutcome outcome;
         try {
-            SwingUtilities.invokeAndWait(() -> {
-                int tx = program.startTransaction("Batch Set Comments");
-                try {
+            outcome = threadingStrategy.executeWrite(
+                program,
+                "Batch Set Comments",
+                () -> {
+                    int decompilerCount = 0;
+                    int disassemblyCount = 0;
+                    int overwrittenCount = 0;
+                    boolean plateSet = false;
+
+                    AddressCommentCore.ResolvedAddress target = null;
+                    if (functionAddress != null
+                            && !functionAddress.isEmpty()) {
+                        target = addressCommentCore.resolveAddress(
+                            program, functionAddress);
+                    }
+
                     // Set or clear the exact-address plate through the same
                     // planner/writer as set_plate_comment.
-                    if (plateComment != null && !plateComment.equals("null") && funcAddr != null) {
+                    if (plateComment != null
+                            && !plateComment.equals("null")
+                            && target != null) {
                         AddressCommentCore.Plan platePlan =
                             addressCommentCore.plan(
                                 program,
-                                funcAddr,
+                                target,
                                 CommentType.PLATE,
                                 plateComment,
                                 plateComment.isEmpty()
@@ -303,13 +298,12 @@ public class CommentService {
                                     : AddressCommentCore.WriteMode.REPLACE);
                         if (platePlan.previous() != null
                                 && !platePlan.previous().isEmpty()) {
-                            overwrittenCount.incrementAndGet();
+                            overwrittenCount++;
                         }
                         addressCommentCore.apply(program, platePlan);
-                        plateSet.set(true);
+                        plateSet = true;
                     }
 
-                    // Set decompiler comments (PRE_COMMENT)
                     Listing listing = program.getListing();
                     if (decompilerComments != null) {
                         for (Map<String, String> commentEntry : decompilerComments) {
@@ -320,16 +314,15 @@ public class CommentService {
                                 if (address != null) {
                                     String existing = listing.getComment(CommentType.PRE, address);
                                     if (existing != null && !existing.isEmpty()) {
-                                        overwrittenCount.incrementAndGet();
+                                        overwrittenCount++;
                                     }
                                     listing.setComment(address, CommentType.PRE, cmt.isEmpty() ? null : cmt);
-                                    decompilerCount.incrementAndGet();
+                                    decompilerCount++;
                                 }
                             }
                         }
                     }
 
-                    // Set disassembly comments (EOL_COMMENT)
                     if (disassemblyComments != null) {
                         for (Map<String, String> commentEntry : disassemblyComments) {
                             String addrStr = commentEntry.get("address");
@@ -339,44 +332,46 @@ public class CommentService {
                                 if (address != null) {
                                     String existing = listing.getComment(CommentType.EOL, address);
                                     if (existing != null && !existing.isEmpty()) {
-                                        overwrittenCount.incrementAndGet();
+                                        overwrittenCount++;
                                     }
                                     listing.setComment(address, CommentType.EOL, cmt.isEmpty() ? null : cmt);
-                                    disassemblyCount.incrementAndGet();
+                                    disassemblyCount++;
                                 }
                             }
                         }
                     }
 
-                    success.set(true);
-                } catch (Exception e) {
-                    errorMsg.set(e.getMessage());
-                    Msg.error(this, "Error in batch set comments", e);
-                } finally {
-                    program.endTransaction(tx, success.get());
-                }
-            });
-
-            // Force event processing to ensure changes propagate to decompiler cache
-            if (success.get()) {
-                program.flushEvents();
-                try { Thread.sleep(500); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
-            }
-        } catch (Exception e) {
-            return Response.err(e.getMessage());
+                    return new BatchCommentOutcome(
+                        decompilerCount,
+                        disassemblyCount,
+                        plateSet,
+                        overwrittenCount);
+                });
         }
-
-        if (!success.get()) {
-            return Response.err(errorMsg.get() != null ? errorMsg.get() : "Unknown failure");
+        catch (Exception e) {
+            return Response.err(
+                e.getMessage() != null
+                    ? e.getMessage()
+                    : "Failed to set batch comments");
         }
 
         Map<String, Object> resultMap = new LinkedHashMap<>();
         resultMap.put("success", true);
-        resultMap.put("decompiler_comments_set", decompilerCount.get());
-        resultMap.put("disassembly_comments_set", disassemblyCount.get());
-        resultMap.put("plate_comment_set", plateSet.get());
-        resultMap.put("plate_comment_cleared", plateSet.get() && plateComment != null && plateComment.isEmpty());
-        resultMap.put("comments_overwritten", overwrittenCount.get());
+        resultMap.put(
+            "decompiler_comments_set",
+            outcome.decompilerCount());
+        resultMap.put(
+            "disassembly_comments_set",
+            outcome.disassemblyCount());
+        resultMap.put("plate_comment_set", outcome.plateSet());
+        resultMap.put(
+            "plate_comment_cleared",
+            outcome.plateSet()
+                && plateComment != null
+                && plateComment.isEmpty());
+        resultMap.put(
+            "comments_overwritten",
+            outcome.overwrittenCount());
         return Response.ok(resultMap);
     }
 
