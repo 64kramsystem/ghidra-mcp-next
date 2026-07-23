@@ -9,6 +9,7 @@ import com.xebyte.core.FunctionService;
 import com.xebyte.core.FlowDisassemblyService;
 import com.xebyte.core.ListingService;
 import com.xebyte.core.ListingRangeService;
+import com.xebyte.core.ListingMutationService;
 import com.xebyte.core.MalwareSecurityService;
 import com.xebyte.core.ProgramProvider;
 import com.xebyte.core.EmulationService;
@@ -55,6 +56,8 @@ public final class ServiceFactory {
             new FlowDisassemblyService(provider, ts);
         ListingRangeService listingRangeService =
             new ListingRangeService(provider, ts);
+        ListingMutationService listingMutationService =
+            new ListingMutationService(provider, ts);
 
         HeadlessManagementService headlessManagementService =
             new HeadlessManagementService(new HeadlessProgramProvider());
@@ -78,6 +81,7 @@ public final class ServiceFactory {
             exportService,
             flowDisassemblyService,
             listingRangeService,
+            listingMutationService,
             headlessManagementService,
             debuggerService,
         };

@@ -36,6 +36,9 @@ ghidra-mcp/
   fuzzy matching, and function diffs.
 - `core/ProgramScriptService` owns local project/program and script execution;
   script endpoints consult `SecurityConfig`.
+- `core/ListingMutationService` owns dry-run-first, complete-unit listing
+  undefinition and delegates annotation capture/restoration to the shared
+  `ListingClearCore`.
 - `headless/` provides a local headless Ghidra process with deliberate parity
   or explicit unsupported responses.
 

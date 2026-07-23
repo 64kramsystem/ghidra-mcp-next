@@ -21,6 +21,10 @@ Complete version history for the Ghidra MCP Server project.
 - Added `get_listing_range`, a function-independent mixed instruction, data,
   and undefined-byte reader with whole-unit pagination, explicit byte and
   reference limits, annotation coverage, and program-version-bound cursors.
+- Added `undefine_range`, a dry-run-first, annotation-preserving listing
+  mutation that expands partial selections to complete instruction/data units,
+  rejects implicit function damage, preserves incoming references, and commits
+  the validated clear plan atomically.
 - Added `debugger_attach` for exact-offer, typed TraceRMI PID attachment. The attach-only flow supports native local GDB without synthesizing debugger commands; required-image Wine launchers remain on the existing launch path.
 - Added `debugger_wait_for_stop` for event-driven, bounded waits with explicit stopped, terminated, and timeout results.
 - Added `debugger_memory_maps` for sorted current-snapshot region enumeration with optional process-PID filtering.
@@ -28,7 +32,7 @@ Complete version history for the Ghidra MCP Server project.
 
 ### Changed
 
-- Streamlined ghidra-mcp around its local GUI/headless analysis stack, with 235 cataloged endpoints, schema discovery, TCP/UDS transports, and explicit multi-program selection.
+- Streamlined ghidra-mcp around its local GUI/headless analysis stack, with 236 cataloged endpoints, schema discovery, TCP/UDS transports, and explicit multi-program selection.
 - Made Maven the only Java build backend while retaining the uv-packaged
   Python bridge and setup commands.
 - Kept caller-supplied annotations unrestricted and retained generated-symbol

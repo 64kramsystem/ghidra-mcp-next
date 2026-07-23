@@ -41,6 +41,7 @@ public class EndpointRegistry {
     private final ProgramScriptService programScriptService;
     private final ExportService exportService;
     private final ListingRangeService listingRangeService;
+    private final ListingMutationService listingMutationService;
 
     public EndpointRegistry(ListingService listingService,
                             FunctionService functionService,
@@ -53,7 +54,8 @@ public class EndpointRegistry {
                             MalwareSecurityService malwareSecurityService,
                             ProgramScriptService programScriptService,
                             ExportService exportService,
-                            ListingRangeService listingRangeService) {
+                            ListingRangeService listingRangeService,
+                            ListingMutationService listingMutationService) {
         this.listingService = listingService;
         this.functionService = functionService;
         this.commentService = commentService;
@@ -66,6 +68,7 @@ public class EndpointRegistry {
         this.programScriptService = programScriptService;
         this.exportService = exportService;
         this.listingRangeService = listingRangeService;
+        this.listingMutationService = listingMutationService;
         registerEndpoints();
     }
 
@@ -382,6 +385,32 @@ public class EndpointRegistry {
     // ======================================================================
 
     private void registerListingEndpoints() {
+
+        post("/undefine_range",
+            "Preview or atomically clear complete instructions and/or data units",
+            params(
+                bStr("start", "Inclusive start address"),
+                bStr("end", "Inclusive end address"),
+                bBool("clear_instructions", true),
+                bBool("clear_data", true),
+                bBool("preserve_labels", true),
+                bBool("preserve_comments", true),
+                bBool("preserve_bookmarks", true),
+                bBool("preserve_user_references", true),
+                bBool("remove_intersecting_functions", false),
+                bBool("dry_run", true),
+                pProg()),
+            (q, b) -> listingMutationService.undefineRange(
+                bodyStr(b, "start"), bodyStr(b, "end"),
+                bodyBool(b, "clear_instructions", true),
+                bodyBool(b, "clear_data", true),
+                bodyBool(b, "preserve_labels", true),
+                bodyBool(b, "preserve_comments", true),
+                bodyBool(b, "preserve_bookmarks", true),
+                bodyBool(b, "preserve_user_references", true),
+                bodyBool(b, "remove_intersecting_functions", false),
+                bodyBool(b, "dry_run", true),
+                str(q, "program")));
 
         get("/get_listing_range", "Read a bounded mixed listing range",
             params(qStr("start", "Inclusive start address"),

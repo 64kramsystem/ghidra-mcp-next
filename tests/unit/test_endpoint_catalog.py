@@ -112,6 +112,7 @@ class TestAnnotatedEndpoints(unittest.TestCase):
             "ExportService",
             "FlowDisassemblyService",
             "ListingRangeService",
+            "ListingMutationService",
         ]
         for svc in expected_services:
             path = CORE_SRC / f"{svc}.java"
@@ -206,6 +207,78 @@ class TestEndpointsJson(unittest.TestCase):
                 "program",
             ],
         )
+
+    @unittest.skipUnless(ENDPOINTS_JSON.exists(), "endpoints.json not found")
+    def test_undefine_range_contract_and_bridge_signature(self):
+        data = json.loads(ENDPOINTS_JSON.read_text())
+        matches = [
+            ep
+            for ep in data.get("endpoints", [])
+            if ep["path"] == "/undefine_range"
+        ]
+        self.assertEqual(len(matches), 1)
+        endpoint = matches[0]
+        self.assertEqual(endpoint["method"], "POST")
+        self.assertEqual(endpoint["category"], "listing")
+        self.assertEqual(
+            endpoint["params"],
+            [
+                "start",
+                "end",
+                "clear_instructions",
+                "clear_data",
+                "preserve_labels",
+                "preserve_comments",
+                "preserve_bookmarks",
+                "preserve_user_references",
+                "remove_intersecting_functions",
+                "dry_run",
+                "program",
+            ],
+        )
+
+        from bridge_mcp_ghidra import _parse_schema
+        from bridge_mcp_ghidra.registry import _build_tool_function
+
+        raw_tool = {
+            "path": endpoint["path"],
+            "method": endpoint["method"],
+            "supports_dry_run": True,
+            "params": [
+                {
+                    "name": "start",
+                    "type": "string",
+                    "source": "body",
+                    "required": True,
+                    "param_type": "address",
+                },
+                {
+                    "name": "end",
+                    "type": "string",
+                    "source": "body",
+                    "required": True,
+                    "param_type": "address",
+                },
+                {
+                    "name": "dry_run",
+                    "type": "boolean",
+                    "source": "body",
+                    "required": False,
+                    "default": "true",
+                },
+            ],
+        }
+        tool = _parse_schema({"tools": [raw_tool]})[0]
+        handler = _build_tool_function(
+            tool["endpoint"],
+            tool["http_method"],
+            tool["input_schema"],
+            tool["supports_synthetic_dry_run"],
+        )
+        signature = inspect.signature(handler)
+        self.assertIn("start", signature.parameters)
+        self.assertIn("end", signature.parameters)
+        self.assertIn("dry_run", signature.parameters)
 
     @unittest.skipUnless(ENDPOINTS_JSON.exists(), "endpoints.json not found")
     def test_catalog_tool_names_are_capi_safe_after_bridge_parsing(self):

@@ -28,12 +28,13 @@ import ghidra.program.model.address.GenericAddressSpace;
 import ghidra.program.model.listing.Bookmark;
 import ghidra.program.model.listing.BookmarkManager;
 import ghidra.program.model.listing.CodeUnit;
-import ghidra.program.model.listing.CodeUnitIterator;
 import ghidra.program.model.listing.CommentType;
 import ghidra.program.model.listing.Data;
+import ghidra.program.model.listing.DataIterator;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.FunctionManager;
 import ghidra.program.model.listing.Instruction;
+import ghidra.program.model.listing.InstructionIterator;
 import ghidra.program.model.listing.Listing;
 import ghidra.program.model.listing.Program;
 import ghidra.program.model.lang.InstructionPrototype;
@@ -62,11 +63,15 @@ public class ListingClearCoreTest {
         when(instruction.getMaxAddress()).thenReturn(end);
 
         Listing listing = mock(Listing.class);
-        when(listing.getCodeUnits(
+        when(listing.getInstructions(
             org.mockito.ArgumentMatchers.any(AddressSetView.class),
             org.mockito.ArgumentMatchers.eq(true)))
-            .thenReturn(iterator(Collections.emptyIterator()));
-        when(listing.getCodeUnitContaining(middle)).thenReturn(instruction);
+            .thenReturn(instructionIterator(Collections.emptyIterator()));
+        when(listing.getDefinedData(
+            org.mockito.ArgumentMatchers.any(AddressSetView.class),
+            org.mockito.ArgumentMatchers.eq(true)))
+            .thenReturn(dataIterator(Collections.emptyIterator()));
+        when(listing.getInstructionContaining(middle)).thenReturn(instruction);
 
         FunctionManager functions = mock(FunctionManager.class);
         when(functions.getFunctionsOverlapping(org.mockito.ArgumentMatchers.any()))
@@ -75,6 +80,9 @@ public class ListingClearCoreTest {
         Program program = mock(Program.class);
         when(program.getListing()).thenReturn(listing);
         when(program.getFunctionManager()).thenReturn(functions);
+        when(program.getSymbolTable()).thenReturn(mock(SymbolTable.class));
+        when(program.getReferenceManager()).thenReturn(mock(ReferenceManager.class));
+        when(program.getBookmarkManager()).thenReturn(mock(BookmarkManager.class));
 
         ListingClearCore.Plan plan = new ListingClearCore().plan(
             program,
@@ -100,8 +108,8 @@ public class ListingClearCoreTest {
         when(root.getPrototype()).thenReturn(prototype);
         when(slot.isInDelaySlot()).thenReturn(true);
         Fixture fixture = fixture(List.of(root, slot));
-        when(fixture.listing().getCodeUnitBefore(slotStart)).thenReturn(root);
-        when(fixture.listing().getCodeUnitAfter(rootEnd)).thenReturn(slot);
+        when(fixture.listing().getInstructionBefore(slotStart)).thenReturn(root);
+        when(fixture.listing().getInstructionAfter(rootEnd)).thenReturn(slot);
 
         ListingClearCore.Plan plan = new ListingClearCore().plan(
             fixture.program(),
@@ -136,6 +144,28 @@ public class ListingClearCoreTest {
         assertEquals(new ListingClearCore.RemovalCounts(0, 1, 0), plan.removalCounts());
         assertFalse(plan.expanded().contains(instructionStart));
         assertTrue(plan.expanded().contains(dataStart, dataEnd));
+    }
+
+    @Test
+    public void whollyUndefinedBytesAreANoOpWithoutSynthesizedDataUnits() {
+        Address start = RAM.getAddress(0x1080);
+        Address end = RAM.getAddress(0x10ff);
+        Fixture fixture = fixture(List.of());
+
+        ListingClearCore.Plan plan = new ListingClearCore().plan(
+            fixture.program(),
+            new AddressSet(start, end),
+            new ListingClearCore.Selection(true, true, false),
+            ListingClearCore.Preservation.defaults());
+
+        assertTrue(plan.units().isEmpty());
+        assertTrue(plan.expanded().isEmpty());
+        assertEquals(new ListingClearCore.RemovalCounts(0, 0, 0),
+            plan.removalCounts());
+        assertTrue(plan.annotations().labels().isEmpty());
+        assertTrue(plan.removedAnnotations().references().isEmpty());
+        verify(fixture.listing(), never()).getCodeUnits(
+            any(AddressSetView.class), eq(true));
     }
 
     @Test
@@ -220,6 +250,118 @@ public class ListingClearCoreTest {
                 .map(ListingClearCore.ReferenceSnapshot::source)
                 .toList());
         verify(fixture.references(), never()).getReferencesTo(any(Address.class));
+    }
+
+    @Test
+    public void partitionsEveryAnnotationSourceIntoPreservedAndRemovedPlans() {
+        Address start = RAM.getAddress(0x1320);
+        Address target = RAM.getAddress(0x1380);
+        Fixture fixture = fixture(List.of(unit(Data.class, start, start)));
+
+        Symbol user = symbol("user_label", start, SourceType.USER_DEFINED);
+        Symbol imported = symbol("imported_label", start, SourceType.IMPORTED);
+        Symbol analysis = symbol("analysis_label", start, SourceType.ANALYSIS);
+        Symbol defaultSymbol = symbol("default_label", start, SourceType.DEFAULT);
+        Symbol dynamic = symbol("dynamic_label", start, SourceType.DEFAULT);
+        when(dynamic.isDynamic()).thenReturn(true);
+        when(fixture.symbols().getSymbols(start))
+            .thenReturn(new Symbol[] { user, imported, analysis, defaultSymbol, dynamic });
+        when(fixture.listing().getComment(CommentType.EOL, start)).thenReturn("comment");
+        Bookmark bookmark = mock(Bookmark.class);
+        when(bookmark.getTypeString()).thenReturn("NOTE");
+        when(bookmark.getCategory()).thenReturn("review");
+        when(bookmark.getComment()).thenReturn("bookmark");
+        when(fixture.bookmarks().getBookmarks(start)).thenReturn(new Bookmark[] { bookmark });
+        Reference userReference =
+            reference(start, target, SourceType.USER_DEFINED, RefType.DATA);
+        Reference importedReference =
+            reference(start, target.next(), SourceType.IMPORTED, RefType.READ);
+        Reference analysisReference =
+            reference(start, target.next().next(), SourceType.ANALYSIS, RefType.WRITE);
+        Reference defaultReference =
+            reference(start, target.next().next().next(), SourceType.DEFAULT, RefType.FLOW);
+        when(fixture.references().getReferencesFrom(start)).thenReturn(
+            new Reference[] {
+                defaultReference, analysisReference, importedReference, userReference
+            });
+
+        ListingClearCore.Plan preserved = new ListingClearCore().plan(
+            fixture.program(), new AddressSet(start, start),
+            new ListingClearCore.Selection(false, true, false),
+            ListingClearCore.Preservation.defaults());
+
+        assertEquals(
+            List.of(SourceType.IMPORTED, SourceType.USER_DEFINED),
+            preserved.annotations().labels().stream()
+                .map(ListingClearCore.LabelSnapshot::source).toList());
+        assertEquals(
+            List.of(SourceType.ANALYSIS, SourceType.DEFAULT),
+            preserved.removedAnnotations().labels().stream()
+                .map(ListingClearCore.LabelSnapshot::source).toList());
+        assertEquals(
+            List.of(SourceType.USER_DEFINED, SourceType.IMPORTED),
+            preserved.annotations().references().stream()
+                .map(ListingClearCore.ReferenceSnapshot::source).toList());
+        assertEquals(
+            List.of(SourceType.ANALYSIS, SourceType.DEFAULT),
+            preserved.removedAnnotations().references().stream()
+                .map(ListingClearCore.ReferenceSnapshot::source).toList());
+        assertEquals(1, preserved.annotations().comments().size());
+        assertEquals(0, preserved.removedAnnotations().comments().size());
+        assertEquals(1, preserved.annotations().bookmarks().size());
+        assertEquals(0, preserved.removedAnnotations().bookmarks().size());
+
+        ListingClearCore.Plan removeAll = new ListingClearCore().plan(
+            fixture.program(), new AddressSet(start, start),
+            new ListingClearCore.Selection(false, true, false),
+            new ListingClearCore.Preservation(false, false, false, false));
+
+        assertEquals(0, removeAll.annotations().labels().size());
+        assertEquals(4, removeAll.removedAnnotations().labels().size());
+        assertEquals(0, removeAll.annotations().comments().size());
+        assertEquals(1, removeAll.removedAnnotations().comments().size());
+        assertEquals(0, removeAll.annotations().bookmarks().size());
+        assertEquals(1, removeAll.removedAnnotations().bookmarks().size());
+        assertEquals(0, removeAll.annotations().references().size());
+        assertEquals(4, removeAll.removedAnnotations().references().size());
+        assertEquals(
+            java.util.Map.of(
+                SourceType.USER_DEFINED, 1,
+                SourceType.IMPORTED, 1,
+                SourceType.ANALYSIS, 1,
+                SourceType.DEFAULT, 1),
+            removeAll.removedReferencesBySource());
+    }
+
+    @Test
+    public void applyDeletesOnlyPlannedCommentsBookmarksAndOutgoingReferences()
+            throws Exception {
+        Address start = RAM.getAddress(0x13a0);
+        Address target = RAM.getAddress(0x13b0);
+        Fixture fixture = fixture(List.of(unit(Data.class, start, start)));
+        when(fixture.listing().getComment(CommentType.EOL, start)).thenReturn("remove");
+        Bookmark bookmark = mock(Bookmark.class);
+        when(bookmark.getTypeString()).thenReturn("NOTE");
+        when(bookmark.getCategory()).thenReturn("review");
+        when(bookmark.getComment()).thenReturn("remove");
+        when(fixture.bookmarks().getBookmarks(start)).thenReturn(new Bookmark[] { bookmark });
+        Reference outgoing =
+            reference(start, target, SourceType.USER_DEFINED, RefType.DATA);
+        when(fixture.references().getReferencesFrom(start))
+            .thenReturn(new Reference[] { outgoing });
+
+        ListingClearCore core = new ListingClearCore();
+        ListingClearCore.Plan plan = core.plan(
+            fixture.program(), new AddressSet(start, start),
+            new ListingClearCore.Selection(false, true, false),
+            new ListingClearCore.Preservation(true, false, false, false));
+
+        core.apply(fixture.program(), plan);
+
+        verify(fixture.listing()).setComment(start, CommentType.EOL, null);
+        verify(fixture.bookmarks()).removeBookmark(bookmark);
+        verify(fixture.references()).removeAllReferencesFrom(start);
+        verify(fixture.references(), never()).removeAllReferencesTo(any(Address.class));
     }
 
     @Test
@@ -310,6 +452,8 @@ public class ListingClearCoreTest {
         when(fixture.references().addMemoryReference(
             start, target, RefType.DATA, SourceType.USER_DEFINED, 0))
                 .thenReturn(restoredReference);
+        when(fixture.bookmarks().setBookmark(
+            start, "NOTE", "review", "keep")).thenReturn(bookmark);
 
         ListingClearCore core = new ListingClearCore();
         ListingClearCore.Plan plan = core.plan(
@@ -406,17 +550,34 @@ public class ListingClearCoreTest {
 
     private static Fixture fixture(List<? extends CodeUnit> units) {
         Listing listing = mock(Listing.class);
-        when(listing.getCodeUnits(any(AddressSetView.class), eq(true)))
+        when(listing.getInstructions(any(AddressSetView.class), eq(true)))
             .thenAnswer(invocation -> {
                 AddressSetView requested = invocation.getArgument(0);
-                return iterator(units.stream()
+                return instructionIterator(units.stream()
+                    .filter(Instruction.class::isInstance)
+                    .map(Instruction.class::cast)
+                    .filter(unit -> requested.contains(unit.getMinAddress()))
+                    .iterator());
+            });
+        when(listing.getDefinedData(any(AddressSetView.class), eq(true)))
+            .thenAnswer(invocation -> {
+                AddressSetView requested = invocation.getArgument(0);
+                return dataIterator(units.stream()
+                    .filter(Data.class::isInstance)
+                    .map(Data.class::cast)
                     .filter(unit -> requested.contains(unit.getMinAddress()))
                     .iterator());
             });
         for (CodeUnit unit : units) {
             Address current = unit.getMinAddress();
             while (current.compareTo(unit.getMaxAddress()) <= 0) {
-                when(listing.getCodeUnitContaining(current)).thenReturn(unit);
+                if (unit instanceof Instruction instruction) {
+                    when(listing.getInstructionContaining(current))
+                        .thenReturn(instruction);
+                }
+                else if (unit instanceof Data data) {
+                    when(listing.getDefinedDataContaining(current)).thenReturn(data);
+                }
                 current = current.next();
             }
         }
@@ -447,20 +608,41 @@ public class ListingClearCoreTest {
             BookmarkManager bookmarks) {
     }
 
-    private static CodeUnitIterator iterator(Iterator<? extends CodeUnit> delegate) {
-        return new CodeUnitIterator() {
+    private static InstructionIterator instructionIterator(
+            Iterator<? extends Instruction> delegate) {
+        return new InstructionIterator() {
             @Override
             public boolean hasNext() {
                 return delegate.hasNext();
             }
 
             @Override
-            public CodeUnit next() {
+            public Instruction next() {
                 return delegate.next();
             }
 
             @Override
-            public Iterator<CodeUnit> iterator() {
+            public Iterator<Instruction> iterator() {
+                return this;
+            }
+        };
+    }
+
+    private static DataIterator dataIterator(
+            Iterator<? extends Data> delegate) {
+        return new DataIterator() {
+            @Override
+            public boolean hasNext() {
+                return delegate.hasNext();
+            }
+
+            @Override
+            public Data next() {
+                return delegate.next();
+            }
+
+            @Override
+            public Iterator<Data> iterator() {
                 return this;
             }
         };
