@@ -14,6 +14,20 @@ def timestamp() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def same_connection_identity(
+    left: state.ConnectionBundle, right: state.ConnectionBundle
+) -> bool:
+    """Ignore lazy group-map changes while detecting connection replacement."""
+    fields = (
+        "connected",
+        "generation",
+        "project",
+        "transport",
+        "endpoint",
+    )
+    return all(getattr(left, field) == getattr(right, field) for field in fields)
+
+
 def create_project_request(
     mode: str, endpoint: str, parent_dir: str, name: str
 ) -> tuple[str, int]:
@@ -154,6 +168,7 @@ async def handshake_candidate(
     project: str | None,
     ctx: Context | None,
     failure_policy: str,
+    expected_connection: state.ConnectionBundle | None = None,
 ) -> dict:
     """Build, validate, and atomically publish one candidate connection."""
     started = timestamp()
@@ -177,7 +192,34 @@ async def handshake_candidate(
                 "error": None,
             },
         }
+        if (
+            expected_connection is not None
+            and not same_connection_identity(previous, expected_connection)
+        ):
+            failure = registry.handshake.HandshakeError(
+                "stale-handler identity",
+                f"{operation} was superseded by another committed "
+                "connection generation.",
+            )
+            attempt["failure"] = failure.as_dict()
+            attempt["ended_at"] = timestamp()
+            state._last_attempt = attempt
+            result = {
+                **state.connection_summary(),
+                "error": str(failure),
+                "category": "stale-handler identity",
+                "failure": failure.as_dict(),
+                "handshake_aborted": True,
+                "reconnect_aborted": operation == "reconnect",
+                "tools_changed": {
+                    "attempted": False,
+                    "sent": False,
+                    "error": None,
+                },
+            }
+            return result
         notify = False
+        staged = None
         try:
             staged = fetch_staged_candidate(mode, endpoint)
             attempt["server_identity"] = dict(staged.manifest.version)
@@ -193,8 +235,17 @@ async def handshake_candidate(
             notify = operation != "auto-connect"
             result = state.connection_summary()
         except registry.handshake.HandshakeError as exc:
-            attempt["server_identity"] = exc.server_identity
-            attempt["failure"] = exc.as_dict()
+            identity = exc.server_identity or (
+                dict(staged.manifest.version) if staged is not None else None
+            )
+            failure = registry.handshake.HandshakeError(
+                exc.category,
+                str(exc),
+                server_identity=identity,
+                failures=exc.failures,
+            )
+            attempt["server_identity"] = identity
+            attempt["failure"] = failure.as_dict()
             if failure_policy == "clear":
                 had_dynamic = bool(previous.dynamic_names)
                 registry.publish_disconnected()
@@ -207,13 +258,19 @@ async def handshake_candidate(
                 )
             result = {
                 **state.connection_summary(),
-                "error": str(exc),
-                "failure": exc.as_dict(),
+                "error": str(failure),
+                "failure": failure.as_dict(),
             }
         except Exception as exc:
-            failure = registry.handshake.HandshakeError(
-                "registration failure", str(exc)
+            identity = (
+                dict(staged.manifest.version) if staged is not None else None
             )
+            failure = registry.handshake.HandshakeError(
+                "registration failure",
+                str(exc),
+                server_identity=identity,
+            )
+            attempt["server_identity"] = identity
             attempt["failure"] = failure.as_dict()
             if failure_policy == "clear":
                 had_dynamic = bool(previous.dynamic_names)

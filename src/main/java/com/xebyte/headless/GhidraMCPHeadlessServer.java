@@ -420,7 +420,7 @@ public class GhidraMCPHeadlessServer implements GhidraLaunchable {
         }
 
         // Store scanner size for dynamic endpoint count reporting
-        registeredEndpointCount = scanner.getEndpoints().size();
+        registeredEndpointCount = scanner.getDescriptors().size();
 
         // ==========================================================================
         // SCHEMA ENDPOINT — Serves machine-readable API metadata

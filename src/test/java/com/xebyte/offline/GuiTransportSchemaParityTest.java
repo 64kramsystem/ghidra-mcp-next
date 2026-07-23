@@ -38,6 +38,18 @@ public class GuiTransportSchemaParityTest extends TestCase {
         assertEquals("headless", tools.get("/open_project").category());
     }
 
+    public void testHeadlessImportEndpointIsAnnotationScanned() {
+        AnnotationScanner scanner = new AnnotationScanner(
+                ServiceFactory.stubProvider(),
+                ServiceFactory.buildAllServices());
+        Set<String> paths = scanner.getDescriptors().stream()
+                .map(AnnotationScanner.ToolDescriptor::path)
+                .collect(Collectors.toSet());
+
+        assertTrue("headless schema must advertise /import_file",
+                paths.contains("/import_file"));
+    }
+
     public void testTcpScannerIncludesExportAndProtectedGuiServices() throws IOException {
         String source = Files.readString(ROOT.resolve(
                 "src/main/java/com/xebyte/GhidraMCPPlugin.java"));

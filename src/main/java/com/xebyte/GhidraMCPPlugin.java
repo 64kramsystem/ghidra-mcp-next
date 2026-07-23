@@ -561,7 +561,7 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
         // Reflect the live count so /get_version.endpoint_count matches
         // what /mcp/schema actually serves. Previously a hardcoded constant
         // that drifted as services added new @McpTool methods.
-        VersionInfo.setEndpointCount(scanner.getEndpoints().size());
+        VersionInfo.setEndpointCount(scanner.getDescriptors().size());
 
         // ==========================================================================
         // SCHEMA ENDPOINT — Serves machine-readable API metadata

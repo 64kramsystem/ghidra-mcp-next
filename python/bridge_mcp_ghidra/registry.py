@@ -471,7 +471,6 @@ def publish_staged(
     lazy: bool,
 ) -> state.ConnectionBundle:
     """Commit a staged map and its matching state while the mutation lock is held."""
-    _adapter().replace_dynamic(staged.dynamic_tools)
     identities = {
         definition["name"]: (
             definition["http_method"],
@@ -496,16 +495,36 @@ def publish_staged(
         dynamic_names=tuple(sorted(staged.dynamic_tools)),
         identities=identities,
     )
-    state.publish_connection(bundle)
+    return _publish_bundle(staged.dynamic_tools, bundle)
+
+
+def _publish_bundle(
+    dynamic: dict[str, Tool], bundle: state.ConnectionBundle
+) -> state.ConnectionBundle:
+    """Swap tool map and state as one rollback-safe mutation."""
+    adapter = _adapter()
+    old_map = adapter.snapshot()
+    old_bundle = state._connection
+    adapter.replace_dynamic(dynamic)
+    try:
+        state.publish_connection(bundle)
+    except Exception as exc:
+        adapter.restore(old_map)
+        state.publish_connection(old_bundle)
+        if isinstance(exc, handshake.HandshakeError):
+            raise
+        raise handshake.HandshakeError(
+            "registration failure",
+            f"connection-state publication failed: {exc}",
+            server_identity=bundle.server,
+        ) from exc
     return bundle
 
 
 def publish_disconnected() -> state.ConnectionBundle:
     """Atomically remove all dynamic tools and mark the bridge disconnected."""
-    _adapter().replace_dynamic({})
     bundle = state.disconnected_bundle()
-    state.publish_connection(bundle)
-    return bundle
+    return _publish_bundle({}, bundle)
 
 
 def stage_active_groups(groups: set[str]) -> dict[str, Tool]:
@@ -549,15 +568,13 @@ def publish_active_groups(
     dynamic: dict[str, Tool], groups: set[str]
 ) -> state.ConnectionBundle:
     """Atomically publish a lazy load/unload map without changing generation."""
-    _adapter().replace_dynamic(dynamic)
     bundle = replace(
         state._connection,
         callable_dynamic_count=len(dynamic),
         loaded_groups=tuple(sorted(groups)),
         dynamic_names=tuple(sorted(dynamic)),
     )
-    state.publish_connection(bundle)
-    return bundle
+    return _publish_bundle(dynamic, bundle)
 
 
 def _report_tool_registration_failures(failures: list[str]) -> None:
