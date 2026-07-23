@@ -163,7 +163,7 @@ public class ServerManager {
             try {
                 sendJsonResponse(
                     exchange,
-                    VersionPayload.toJson("gui", scanner.getEndpoints().size()));
+                    VersionPayload.toJson("gui", scanner.getDescriptors().size()));
             } catch (Exception ignored) {
             }
         });

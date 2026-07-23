@@ -12,6 +12,13 @@ import org.junit.Test;
 
 public class VersionPayloadTest {
 
+    private static final class FixtureService {
+        @McpTool(path = "/fixture", description = "fixture")
+        public Response fixture() {
+            return Response.ok("fixture");
+        }
+    }
+
     @Test
     public void guiAndHeadlessExposeTheSameRequiredShape() {
         JsonObject gui = JsonParser.parseString(
@@ -41,6 +48,23 @@ public class VersionPayloadTest {
     }
 
     @Test
+    public void endpointCountEqualsTheGeneratedSchemaToolCount() {
+        AnnotationScanner scanner = new AnnotationScanner(new FixtureService());
+        JsonObject schema = JsonParser.parseString(
+            scanner.generateSchema()).getAsJsonObject();
+        JsonObject version = JsonParser.parseString(
+            VersionPayload.toJson(
+                "gui", scanner.getDescriptors().size())).getAsJsonObject();
+
+        assertEquals(
+            schema.getAsJsonArray("tools").size(),
+            version.get("endpoint_count").getAsInt());
+        assertEquals(
+            schema.get("count").getAsInt(),
+            version.get("endpoint_count").getAsInt());
+    }
+
+    @Test
     public void everyServerTransportUsesTheSharedPayload() throws Exception {
         String guiTcp = Files.readString(Path.of(
             "src/main/java/com/xebyte/GhidraMCPPlugin.java"));
@@ -51,8 +75,11 @@ public class VersionPayloadTest {
 
         assertTrue(guiTcp.contains("VersionPayload.toJson("));
         assertTrue(guiTcp.contains("VersionInfo.getEndpointCount()"));
-        assertTrue(guiUds.contains("VersionPayload.toJson(\"gui\", scanner.getEndpoints().size())"));
+        assertTrue(guiUds.contains("VersionPayload.toJson(\"gui\", scanner.getDescriptors().size())"));
         assertTrue(headlessTcp.contains("VersionPayload.toJson("));
         assertTrue(headlessTcp.contains("\"headless\", registeredEndpointCount"));
+        assertTrue(guiTcp.contains("setEndpointCount(scanner.getDescriptors().size())"));
+        assertTrue(headlessTcp.contains(
+            "registeredEndpointCount = scanner.getDescriptors().size()"));
     }
 }

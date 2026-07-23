@@ -9,102 +9,16 @@ from . import discovery
 from . import dispatch
 from . import registry
 from . import state
-from . import transport
+from . import transport  # noqa: F401 - retained as the shared transport seam
 from .config import DEFAULT_TCP_URL, STATIC_TOOL_NAMES, logger
+from .selection import (
+    InstanceSelectionError,
+    _instance_summary,
+    _select_instance,
+    _selection_tool_error,
+)
 from .server import Context, mcp
 from .validation import validate_server_url
-
-
-class InstanceSelectionError(ValueError):
-    """Instance selection failed before a mutating request was sent."""
-
-    def __init__(self, message: str, available: list[dict]):
-        super().__init__(message)
-        self.available = available
-
-
-def _matches_instance(record: dict, selector: str) -> bool:
-    pid = discovery._known_pid(record)
-    if pid is not None and str(pid) == selector:
-        return True
-    if record.get("project") == selector:
-        return True
-
-    record_socket = discovery._normalize_socket_path(record.get("socket"))
-    selector_socket = discovery._normalize_socket_path(selector)
-    if record_socket and record_socket == selector_socket:
-        return True
-
-    record_url = discovery._normalize_tcp_url(record.get("url"))
-    selector_url = discovery._normalize_tcp_url(selector)
-    return bool(record_url and record_url == selector_url)
-
-
-def _select_instance(
-    instances: list[dict], instance: str | None = None
-) -> tuple[dict, str, str]:
-    """Select exactly one record and its proven reachable transport."""
-    if not instances:
-        raise InstanceSelectionError(
-            "No running Ghidra instance found.", instances
-        )
-
-    if instance is None:
-        if len(instances) != 1:
-            raise InstanceSelectionError(
-                "Multiple Ghidra instances are available; specify instance.",
-                instances,
-            )
-        selected = instances[0]
-    else:
-        selector = str(instance)
-        matches = [
-            record for record in instances if _matches_instance(record, selector)
-        ]
-        if not matches:
-            matches = [
-                record
-                for record in instances
-                if selector.lower()
-                in str(record.get("project", "")).lower()
-            ]
-        if not matches:
-            raise InstanceSelectionError(
-                f"Requested instance '{selector}' was not found.", instances
-            )
-        if len(matches) != 1:
-            raise InstanceSelectionError(
-                f"Instance selector '{selector}' is ambiguous.", instances
-            )
-        selected = matches[0]
-
-    uds_reachable = selected.get("uds_reachable")
-    if uds_reachable is None:
-        uds_reachable = bool(selected.get("socket")) and transport.uds_supported()
-    tcp_reachable = selected.get("tcp_reachable")
-    if tcp_reachable is None:
-        tcp_reachable = bool(selected.get("url"))
-    if uds_reachable and selected.get("socket"):
-        return selected, "uds", str(selected["socket"])
-    if tcp_reachable and selected.get("url"):
-        return selected, "tcp", str(selected["url"])
-    raise InstanceSelectionError(
-        "Selected Ghidra instance has no reachable transport.", instances
-    )
-
-
-def _selection_tool_error(error: InstanceSelectionError) -> RuntimeError:
-    return RuntimeError(
-        json.dumps({"error": str(error), "available": error.available})
-    )
-
-
-def _instance_summary(instance: dict) -> dict:
-    return {
-        key: instance[key]
-        for key in ("pid", "socket", "url")
-        if instance.get(key) is not None
-    }
 
 
 @mcp.tool()
@@ -241,6 +155,7 @@ async def create_and_connect_project(
         project = str(response["project"])
         path = str(response["path"])
         had_dynamic = bool(state._connection.dynamic_names)
+        staged = None
         try:
             staged = connection.fetch_staged_candidate(mode, endpoint)
             attempt["server_identity"] = dict(staged.manifest.version)
@@ -261,11 +176,21 @@ async def create_and_connect_project(
             }
             notify = True
         except Exception as exc:
+            identity = (
+                dict(staged.manifest.version) if staged is not None else None
+            )
             if isinstance(exc, registry.handshake.HandshakeError):
-                failure = exc
+                failure = registry.handshake.HandshakeError(
+                    exc.category,
+                    str(exc),
+                    server_identity=exc.server_identity or identity,
+                    failures=exc.failures,
+                )
             else:
                 failure = registry.handshake.HandshakeError(
-                    "registration failure", str(exc)
+                    "registration failure",
+                    str(exc),
+                    server_identity=identity,
                 )
             attempt["server_identity"] = failure.server_identity
             attempt["failure"] = failure.as_dict()
@@ -296,6 +221,9 @@ async def create_and_connect_project(
 @mcp.tool()
 async def connect_instance(project: str, ctx: Context | None = None) -> str:
     """Select a running instance and publish its exact capability manifest."""
+    with state._ghidra_lock:
+        expected = state._connection
+        operation = "switch" if expected.connected else "connect"
     instances = discovery.discover_all_instances()
     try:
         selected, mode, endpoint = _select_instance(instances, project)
@@ -320,7 +248,7 @@ async def connect_instance(project: str, ctx: Context | None = None) -> str:
                 mode, endpoint = "tcp", scanned
             else:
                 connection.record_local_failure(
-                    "connect",
+                    operation,
                     {"project": project},
                     "transport failure",
                     str(error),
@@ -337,7 +265,7 @@ async def connect_instance(project: str, ctx: Context | None = None) -> str:
                 item.get("project", "unknown") for item in instances
             ]
             connection.record_local_failure(
-                "connect",
+                operation,
                 {"project": project},
                 "transport failure",
                 f"No instance matching '{project}'.",
@@ -349,15 +277,14 @@ async def connect_instance(project: str, ctx: Context | None = None) -> str:
                     **state.connection_summary(),
                 }
             )
-    with state._ghidra_lock:
-        preserve = state._connection.connected
     result = await connection.handshake_candidate(
-        "switch" if preserve else "connect",
+        operation,
         mode=mode,
         endpoint=endpoint,
         project=selected.get("project") or project,
         ctx=ctx,
-        failure_policy="preserve" if preserve else "clear",
+        failure_policy="preserve" if operation == "switch" else "clear",
+        expected_connection=expected,
     )
     result["instance"] = _instance_summary(selected)
     return json.dumps(result)
@@ -385,6 +312,7 @@ async def refresh_connection(ctx: Context | None = None) -> str:
         project=project,
         ctx=ctx,
         failure_policy="clear",
+        expected_connection=active,
     )
     return json.dumps(result)
 
@@ -430,6 +358,7 @@ async def _reconnect_active(
         project=project,
         ctx=ctx,
         failure_policy="clear",
+        expected_connection=previous,
     )
     if cause:
         result["reconnect_cause"] = cause
@@ -534,6 +463,15 @@ async def unload_tool_group(group: str, ctx: Context | None = None) -> str:
         if not active.connected:
             return json.dumps(
                 {"error": "No instance connected. Use connect_instance() first."}
+            )
+        if not active.lazy:
+            return json.dumps(
+                {
+                    "error": (
+                        "Cannot unload tool groups in eager mode; every "
+                        "manifest tool must remain callable."
+                    )
+                }
             )
         previous = set(active.loaded_groups)
         if group not in previous:

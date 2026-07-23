@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import keyword
+import math
 import re
 import unicodedata
 from copy import deepcopy
@@ -76,6 +77,13 @@ def _reject_non_finite(value):
     )
 
 
+def _parse_finite_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        _reject_non_finite(value)
+    return parsed
+
+
 def parse_json_strict(text: str, kind: str) -> Any:
     """Parse server JSON without accepting duplicate keys or NaN/Infinity."""
     try:
@@ -83,6 +91,7 @@ def parse_json_strict(text: str, kind: str) -> Any:
             text,
             object_pairs_hook=_reject_duplicate_pairs,
             parse_constant=_reject_non_finite,
+            parse_float=_parse_finite_float,
         )
     except HandshakeError as exc:
         if kind == "version":
@@ -419,4 +428,28 @@ class RegistryAdapter:
             raise HandshakeError(
                 "registration failure",
                 "FastMCP registry did not publish the exact staged tool objects",
+            )
+
+    def restore(self, snapshot: dict[str, Any]) -> None:
+        """Restore one previously verified full registry snapshot exactly."""
+        if type(snapshot) is not dict:
+            raise HandshakeError(
+                "registration failure", "registry snapshot is not a dict"
+            )
+        missing = self._static_names.difference(snapshot)
+        if missing:
+            raise HandshakeError(
+                "registration failure",
+                f"registry snapshot lacks static tool(s): {sorted(missing)}",
+            )
+        self._manager._tools = dict(snapshot)
+        restored = self._manager._tools
+        if (
+            type(restored) is not dict
+            or set(restored) != set(snapshot)
+            or any(restored[name] is not tool for name, tool in snapshot.items())
+        ):
+            raise HandshakeError(
+                "registration failure",
+                "FastMCP registry snapshot restoration failed",
             )

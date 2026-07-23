@@ -16,6 +16,18 @@ from typing import Any
 
 from .config import CORE_GROUPS, STATIC_TOOL_NAMES, logger
 
+SERVER_IDENTITY_FIELDS = (
+    "plugin_name",
+    "plugin_version",
+    "build_timestamp",
+    "build_number",
+    "full_version",
+    "ghidra_version",
+    "java_version",
+    "endpoint_count",
+    "mode",
+)
+
 # --------------------------------------------------------------------------
 # Connection state
 # --------------------------------------------------------------------------
@@ -80,8 +92,14 @@ def connection_summary() -> dict[str, Any]:
         "static_tools": sorted(STATIC_TOOL_NAMES),
     }
     if bundle.connected:
+        server_identity = {
+            key: bundle.server[key]
+            for key in SERVER_IDENTITY_FIELDS
+            if bundle.server is not None and key in bundle.server
+        }
         result.update(
             {
+                **server_identity,
                 "project": bundle.project,
                 "transport": bundle.transport,
                 "endpoint": bundle.endpoint,
@@ -92,7 +110,6 @@ def connection_summary() -> dict[str, Any]:
                 "loaded_groups": list(bundle.loaded_groups),
                 "manifest_sha256": bundle.manifest_sha256,
                 "callable_schema_sha256": bundle.callable_schema_sha256,
-                **(bundle.server or {}),
             }
         )
     return result

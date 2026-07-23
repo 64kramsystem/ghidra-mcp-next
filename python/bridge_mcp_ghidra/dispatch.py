@@ -1,6 +1,7 @@
 """HTTP dispatch: timeout scaling, reconnection, and GET/POST helpers."""
 
 import json
+from http.client import HTTPException
 import time
 from typing import Any
 
@@ -197,7 +198,7 @@ async def dispatch_dynamic(
             json_data=body if method == "POST" else None,
             timeout=timeout,
         )
-    except (ConnectionError, OSError) as exc:
+    except (ConnectionError, OSError, HTTPException) as exc:
         # Import lazily to avoid registry/static-tool import cycles.
         from .static_tools import _reconnect_active
 
@@ -206,6 +207,8 @@ async def dispatch_dynamic(
             bundle = state._connection
             current = bundle.identities.get(name) if bundle.connected else None
             generation = bundle.generation
+        if reconnect.get("reconnect_aborted"):
+            return json.dumps(reconnect)
         if not reconnect.get("connected"):
             return json.dumps(reconnect)
         if current != identity:
