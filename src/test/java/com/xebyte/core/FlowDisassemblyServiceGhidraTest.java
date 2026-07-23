@@ -21,6 +21,7 @@ import com.xebyte.headless.DirectThreadingStrategy;
 
 import ghidra.GhidraApplicationLayout;
 import ghidra.app.plugin.core.analysis.AutoAnalysisManager;
+import ghidra.program.disassemble.Disassembler;
 import ghidra.framework.Application;
 import ghidra.framework.ApplicationConfiguration;
 import ghidra.program.model.address.Address;
@@ -96,6 +97,7 @@ public class FlowDisassemblyServiceGhidraTest {
         assertTrue(response.toJson(), response instanceof Response.Ok);
         assertTrue(response.toJson(), response.toJson().contains("\"committed\":false"));
         assertEquals(1, planCalls.get());
+        assertEquals(1, threading.readCalls);
         assertEquals(0, threading.writeCalls);
         assertEquals(0, commitCalls.get());
         assertEquals(0, analysisCalls.get());
@@ -120,6 +122,7 @@ public class FlowDisassemblyServiceGhidraTest {
         assertTrue(response.toJson(), response instanceof Response.Ok);
         assertTrue(response.toJson(), response.toJson().contains("\"committed\":true"));
         assertTrue(response.toJson(), response.toJson().contains("\"analysis_status\":\"not_requested\""));
+        assertEquals(0, threading.readCalls);
         assertEquals(1, threading.writeCalls);
         assertEquals(1, commitCalls.get());
         assertEquals(0, analysisCalls.get());
@@ -265,7 +268,8 @@ public class FlowDisassemblyServiceGhidraTest {
         assertTrue(response.toJson(), response instanceof Response.Ok);
         assertTrue(response.toJson(), response.toJson().contains("\"dry_run\":false"));
         assertTrue(response.toJson(), response.toJson().contains("\"commit_status\":\"blocked\""));
-        assertEquals(0, threading.writeCalls);
+        assertEquals(0, threading.readCalls);
+        assertEquals(1, threading.writeCalls);
     }
 
     @Test
@@ -859,6 +863,191 @@ public class FlowDisassemblyServiceGhidraTest {
         }
     }
 
+    @Test
+    public void liveNonDryRunReplansInsideWriteAfterInterleaving()
+            throws Exception {
+        initializeGhidraOrSkip();
+        ProgramBuilder builder =
+            new ProgramBuilder("flow-interleaving-6502",
+                "6502:LE:16:default", "default", this);
+        try {
+            ProgramDB liveProgram = builder.getProgram();
+            builder.createMemory(".ram", "0x1000", 3);
+            builder.setBytes("0x1000", "4c 00 10");
+            builder.applyDataType("0x1001", ByteDataType.dataType);
+
+            HeadlessProgramProvider liveProvider = new HeadlessProgramProvider();
+            liveProvider.setCurrentProgram(liveProgram);
+            InterleavingThreadingStrategy interleaving =
+                new InterleavingThreadingStrategy(() -> {
+                    builder.withTransaction(() ->
+                        liveProgram.getListing().clearCodeUnits(
+                            builder.addr("0x1001"), builder.addr("0x1001"), false));
+                    builder.disassemble("0x1000", 3);
+                    builder.createFunction("0x1000");
+                    builder.createLabel("0x1001", "interleaved_label");
+                    builder.createComment(
+                        "0x1001", "interleaved comment", CommentType.EOL);
+                });
+            FlowDisassemblyService service =
+                new FlowDisassemblyService(liveProvider, interleaving);
+
+            Response response = service.disassembleFlow(
+                "[\"0x1001\"]",
+                "0x1000",
+                "0x1002",
+                false,
+                true,
+                false,
+                false,
+                false,
+                100,
+                "");
+
+            assertTrue(response.toJson(), response instanceof Response.Ok);
+            assertTrue(response.toJson(),
+                response.toJson().contains("\"commit_status\":\"blocked\""));
+            assertTrue(response.toJson(),
+                response.toJson().contains("\"middle_of_code_unit\""));
+            assertTrue(response.toJson(),
+                response.toJson().contains("\"committed\":false"));
+            assertEquals(0, interleaving.readCalls);
+            assertEquals(1, interleaving.writeCalls);
+            assertTrue(liveProgram.getListing()
+                .getInstructionAt(builder.addr("0x1000")) != null);
+            assertTrue(liveProgram.getFunctionManager()
+                .getFunctionAt(builder.addr("0x1000")) != null);
+            assertTrue(liveProgram.getSymbolTable()
+                .getSymbolsAsIterator(builder.addr("0x1001")).hasNext());
+            assertEquals(
+                "interleaved comment",
+                liveProgram.getListing().getComment(
+                    CommentType.EOL, builder.addr("0x1001")));
+        }
+        finally {
+            builder.dispose();
+        }
+    }
+
+    @Test
+    public void liveCommitIgnoresExecuteRestrictionWithoutDiagnosticBookmarks()
+            throws Exception {
+        initializeGhidraOrSkip();
+        ProgramBuilder builder =
+            new ProgramBuilder("flow-non-executable-6502",
+                "6502:LE:16:default", "default", this);
+        try {
+            ProgramDB liveProgram = builder.getProgram();
+            builder.createMemory(".ram", "0x1000", 2);
+            builder.setBytes("0x1000", "ea 60");
+            builder.withTransaction(() -> {
+                liveProgram.getMemory().getBlock(builder.addr("0x1000"))
+                    .setExecute(false);
+                liveProgram.getOptions(Program.PROGRAM_INFO).setBoolean(
+                    Disassembler.RESTRICT_DISASSEMBLY_TO_EXECUTE_MEMORY_PROPERTY,
+                    true);
+            });
+
+            FlowDisassemblyService service = liveService(liveProgram);
+            Response preview = service.disassembleFlow(
+                "[\"0x1000\"]",
+                "0x1000",
+                "0x1001",
+                true,
+                true,
+                true,
+                false,
+                false,
+                100,
+                "");
+            Response commit = service.disassembleFlow(
+                "[\"0x1000\"]",
+                "0x1000",
+                "0x1001",
+                false,
+                true,
+                true,
+                false,
+                false,
+                100,
+                "");
+
+            assertTrue(preview.toJson(), preview instanceof Response.Ok);
+            assertTrue(commit.toJson(), commit instanceof Response.Ok);
+            JsonObject previewJson =
+                JsonParser.parseString(preview.toJson()).getAsJsonObject();
+            JsonObject commitJson =
+                JsonParser.parseString(commit.toJson()).getAsJsonObject();
+            assertEquals(
+                previewJson.get("candidate_instruction_ranges"),
+                commitJson.get("created_instruction_ranges"));
+            assertTrue(liveProgram.getListing()
+                .getInstructionAt(builder.addr("0x1000")) != null);
+            assertTrue(liveProgram.getListing()
+                .getInstructionAt(builder.addr("0x1001")) != null);
+            assertEquals(0, liveProgram.getBookmarkManager().getBookmarkCount());
+        }
+        finally {
+            builder.dispose();
+        }
+    }
+
+    @Test
+    public void liveNonDryRequestParsingObservesInterleavedUninitializedSeed()
+            throws Exception {
+        initializeGhidraOrSkip();
+        ProgramBuilder builder =
+            new ProgramBuilder("flow-uninitialized-interleaving-6502",
+                "6502:LE:16:default", "default", this);
+        try {
+            ProgramDB liveProgram = builder.getProgram();
+            builder.createMemory(".ram", "0x1000", 2);
+            builder.setBytes("0x1000", "ea 60");
+
+            HeadlessProgramProvider liveProvider = new HeadlessProgramProvider();
+            liveProvider.setCurrentProgram(liveProgram);
+            InterleavingThreadingStrategy interleaving =
+                new InterleavingThreadingStrategy(() ->
+                    builder.withTransaction(() -> {
+                        try {
+                            liveProgram.getMemory().convertToUninitialized(
+                                liveProgram.getMemory().getBlock(
+                                    builder.addr("0x1000")));
+                        }
+                        catch (Exception e) {
+                            throw new AssertionError(e);
+                        }
+                    }));
+            FlowDisassemblyService service =
+                new FlowDisassemblyService(liveProvider, interleaving);
+
+            Response response = service.disassembleFlow(
+                "[\"0x1000\"]",
+                "0x1000",
+                "0x1001",
+                false,
+                true,
+                true,
+                false,
+                false,
+                100,
+                "");
+
+            assertTrue(response.toJson(), response instanceof Response.Err);
+            assertTrue(response.toJson(),
+                response.toJson().contains(
+                    "every seed must be in initialized memory"));
+            assertEquals(0, interleaving.readCalls);
+            assertEquals(1, interleaving.writeCalls);
+            assertTrue(!liveProgram.getMemory()
+                .getBlock(builder.addr("0x1000")).isInitialized());
+            assertEquals(0, liveProgram.getListing().getNumInstructions());
+        }
+        finally {
+            builder.dispose();
+        }
+    }
+
     private static FlowDisassemblyService liveService(ProgramDB liveProgram) {
         HeadlessProgramProvider liveProvider = new HeadlessProgramProvider();
         liveProvider.setCurrentProgram(liveProgram);
@@ -931,10 +1120,12 @@ public class FlowDisassemblyServiceGhidraTest {
     }
 
     private static final class RecordingThreadingStrategy implements ThreadingStrategy {
+        int readCalls;
         int writeCalls;
 
         @Override
         public <T> T executeRead(Callable<T> action) throws Exception {
+            readCalls++;
             return action.call();
         }
 
@@ -945,6 +1136,40 @@ public class FlowDisassemblyServiceGhidraTest {
                 Callable<T> action) throws Exception {
             writeCalls++;
             return action.call();
+        }
+
+        @Override
+        public boolean isHeadless() {
+            return true;
+        }
+    }
+
+    private static final class InterleavingThreadingStrategy
+            implements ThreadingStrategy {
+        private final Runnable beforeWrite;
+        private final DirectThreadingStrategy delegate =
+            new DirectThreadingStrategy();
+        int readCalls;
+        int writeCalls;
+
+        InterleavingThreadingStrategy(Runnable beforeWrite) {
+            this.beforeWrite = beforeWrite;
+        }
+
+        @Override
+        public <T> T executeRead(Callable<T> action) throws Exception {
+            readCalls++;
+            return action.call();
+        }
+
+        @Override
+        public <T> T executeWrite(
+                Program targetProgram,
+                String transactionName,
+                Callable<T> action) throws Exception {
+            writeCalls++;
+            beforeWrite.run();
+            return delegate.executeWrite(targetProgram, transactionName, action);
         }
 
         @Override

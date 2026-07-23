@@ -3,10 +3,15 @@ package com.xebyte.core;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.NavigableMap;
 
 import org.junit.Test;
 
@@ -173,6 +178,42 @@ public class FlowDisassemblyPlannerTest {
             .contains(address(0x1000), address(0x1003)));
         assertFalse(plan.functions().get(0).body().contains(address(0x2000)));
         assertTrue(plan.functions().get(1).body().contains(address(0x2000)));
+    }
+
+    @Test
+    public void reportsConvergingFunctionBodiesForEveryPriorEntry() {
+        FakeSource source = new FakeSource();
+        source.define(instruction(
+            0x1000, 1, RefType.UNCONDITIONAL_JUMP, null, 0x1020));
+        source.define(instruction(
+            0x1010, 1, RefType.UNCONDITIONAL_JUMP, null, 0x1020));
+        source.define(instruction(0x1020, 1, RefType.TERMINATOR, null));
+        source.define(instruction(
+            0x1030, 1, RefType.UNCONDITIONAL_JUMP, null, 0x1020));
+        FlowDisassemblyService.FlowRequest request =
+            new FlowDisassemblyService.FlowRequest(
+                List.of(address(0x1000), address(0x1010), address(0x1030)),
+                new AddressSet(address(0x1000), address(0x2fff)),
+                true,
+                true,
+                true,
+                false,
+                100);
+
+        FlowDisassemblyService.FlowPlan plan =
+            new FlowDisassemblyService.FlowPlanner(source).plan(request);
+
+        assertEquals(
+            List.of(
+                List.of(address(0x1010), address(0x1000)),
+                List.of(address(0x1030), address(0x1000)),
+                List.of(address(0x1030), address(0x1010))),
+            plan.conflicts().stream()
+                .filter(conflict ->
+                    "overlapping_function_bodies".equals(conflict.reason()))
+                .map(conflict ->
+                    List.of(conflict.address(), conflict.origin()))
+                .toList());
     }
 
     @Test
@@ -394,6 +435,60 @@ public class FlowDisassemblyPlannerTest {
         assertEquals(3, plan.instructions().size());
         assertEquals(1, source.decodeCount(address(0x1010)));
         assertTrue(plan.conflicts().isEmpty());
+    }
+
+    @Test
+    public void scheduledDataLookupUsesOneFloorEntryInsteadOfScanningValues() {
+        @SuppressWarnings("unchecked")
+        NavigableMap<Address, FlowDisassemblyService.DataUnit> scheduled =
+            mock(NavigableMap.class);
+        Address middle = address(0x1801);
+        FlowDisassemblyService.DataUnit unit =
+            new FlowDisassemblyService.DataUnit(
+                address(0x1800), address(0x1802));
+        when(scheduled.floorEntry(middle))
+            .thenReturn(Map.entry(unit.start(), unit));
+
+        assertEquals(
+            unit,
+            FlowDisassemblyService.FlowPlanner.scheduledDataContaining(
+                middle, scheduled));
+        verify(scheduled).floorEntry(middle);
+        verify(scheduled, never()).values();
+    }
+
+    @Test
+    public void functionOwnershipWorkScalesWithBodyMemberships() {
+        FlowDisassemblyService.FlowPlanner.FunctionBodyOwnership ownership =
+            new FlowDisassemblyService.FlowPlanner.FunctionBodyOwnership();
+        int functionCount = 512;
+        for (int i = 0; i < functionCount; i++) {
+            Address entry = address(0x1800 + i);
+            assertTrue(ownership.claim(entry, List.of(entry)).isEmpty());
+        }
+
+        assertEquals(functionCount, ownership.claimOperations());
+    }
+
+    @Test
+    public void functionOwnershipReportsEveryPriorOwnerDeterministically() {
+        FlowDisassemblyService.FlowPlanner.FunctionBodyOwnership ownership =
+            new FlowDisassemblyService.FlowPlanner.FunctionBodyOwnership();
+        Address first = address(0x1800);
+        Address second = address(0x1810);
+        Address third = address(0x1820);
+
+        assertTrue(ownership.claim(
+            first, List.of(address(0x1900), address(0x1901))).isEmpty());
+        assertEquals(
+            List.of(first),
+            ownership.claim(
+                second, List.of(address(0x1901), address(0x1902))));
+        assertEquals(
+            List.of(first, second),
+            ownership.claim(
+                third, List.of(address(0x1900), address(0x1902))));
+        assertEquals(6, ownership.claimOperations());
     }
 
     @Test

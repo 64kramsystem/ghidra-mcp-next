@@ -6,8 +6,10 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.NavigableMap;
 import java.util.PriorityQueue;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.TreeSet;
 
 import com.google.gson.JsonElement;
@@ -90,8 +92,15 @@ public final class FlowDisassemblyService {
     }
 
     record PreparedPlan(
+            FlowRequest request,
             FlowPlan flow,
             ListingClearCore.Plan clear) {
+    }
+
+    record CommitAttempt(
+            FlowRequest request,
+            FlowPlan flow,
+            CommitResult commit) {
     }
 
     private final ProgramProvider programProvider;
@@ -215,24 +224,24 @@ public final class FlowDisassemblyService {
         Program program = resolved.program();
 
         try {
-            FlowRequest request = parseRequest(
-                program,
-                seedsJson,
-                restrictStart,
-                restrictEnd,
-                followCalls,
-                preserveDefinedData,
-                createFunctions,
-                enableAnalysis,
-                maxInstructions);
-            PreparedPlan prepared = threadingStrategy.executeRead(() -> {
-                FlowPlan flow = planningEngine.plan(program, request);
-                return new PreparedPlan(flow, prepareClearPlan(program, flow));
-            });
-            FlowPlan plan = prepared.flow();
-            ListingClearCore.Plan clearPlan = prepared.clear();
-
-            if (dryRun || !plan.conflicts().isEmpty()) {
+            if (dryRun) {
+                PreparedPlan prepared = threadingStrategy.executeRead(() -> {
+                    FlowRequest request = parseRequest(
+                        program,
+                        seedsJson,
+                        restrictStart,
+                        restrictEnd,
+                        followCalls,
+                        preserveDefinedData,
+                        createFunctions,
+                        enableAnalysis,
+                        maxInstructions);
+                    FlowPlan flow = planningEngine.plan(program, request);
+                    return new PreparedPlan(
+                        request, flow, prepareClearPlan(program, flow));
+                });
+                FlowRequest request = prepared.request();
+                FlowPlan plan = prepared.flow();
                 String status = plan.conflicts().isEmpty() ? "preview" : "blocked";
                 return Response.ok(resultMap(
                     program,
@@ -247,10 +256,47 @@ public final class FlowDisassemblyService {
                     null));
             }
 
-            CommitResult committed = threadingStrategy.executeWrite(
+            CommitAttempt attempt = threadingStrategy.executeWrite(
                 program,
                 "Bounded flow disassembly",
-                () -> mutationEngine.commit(program, plan, clearPlan));
+                () -> {
+                    FlowRequest request = parseRequest(
+                        program,
+                        seedsJson,
+                        restrictStart,
+                        restrictEnd,
+                        followCalls,
+                        preserveDefinedData,
+                        createFunctions,
+                        enableAnalysis,
+                        maxInstructions);
+                    FlowPlan current = planningEngine.plan(program, request);
+                    ListingClearCore.Plan clearPlan =
+                        prepareClearPlan(program, current);
+                    if (!current.conflicts().isEmpty()) {
+                        return new CommitAttempt(request, current, null);
+                    }
+                    return new CommitAttempt(
+                        request,
+                        current,
+                        mutationEngine.commit(program, current, clearPlan));
+                });
+            FlowRequest request = attempt.request();
+            FlowPlan plan = attempt.flow();
+            CommitResult committed = attempt.commit();
+            if (committed == null) {
+                return Response.ok(resultMap(
+                    program,
+                    request,
+                    plan,
+                    null,
+                    false,
+                    false,
+                    "blocked",
+                    "not_requested",
+                    null,
+                    null));
+            }
 
             String analysisStatus = "not_requested";
             String analysisError = null;
@@ -527,7 +573,8 @@ public final class FlowDisassemblyService {
             List<UnresolvedFlow> unresolved = new ArrayList<>();
             List<Conflict> conflicts = new ArrayList<>();
             List<StopReason> stops = new ArrayList<>();
-            Map<Address, DataUnit> dataToClear = new LinkedHashMap<>();
+            NavigableMap<Address, DataUnit> dataToClear =
+                new TreeMap<>(ADDRESS_ORDER);
             AddressSet plannedBytes = new AddressSet();
             AddressSet existingBytes = new AddressSet();
             boolean capReached = false;
@@ -742,11 +789,13 @@ public final class FlowDisassemblyService {
                 }
             }
 
-            List<FunctionPlan> plans = new ArrayList<>();
+            List<FunctionCandidate> candidates = new ArrayList<>();
             for (Address entry : entries) {
                 AddressSet body = new AddressSet();
                 PriorityQueue<Address> queue = new PriorityQueue<>(ADDRESS_ORDER);
                 Set<Address> visited = new TreeSet<>(ADDRESS_ORDER);
+                Set<Address> bodyInstructionStarts =
+                    new TreeSet<>(ADDRESS_ORDER);
                 queue.add(entry);
                 while (!queue.isEmpty()) {
                     Address address = queue.remove();
@@ -761,30 +810,68 @@ public final class FlowDisassemblyService {
                     body.add(
                         instruction.address(),
                         instruction.address().add(instruction.length() - 1L));
+                    bodyInstructionStarts.add(instruction.address());
                     for (Address successor : successors(instruction, request.followCalls())) {
                         if (byAddress.containsKey(successor)) {
                             queue.add(successor);
                         }
                     }
                 }
-                plans.add(new FunctionPlan(entry, body, false));
+                candidates.add(new FunctionCandidate(
+                    new FunctionPlan(entry, body, false),
+                    List.copyOf(bodyInstructionStarts)));
             }
 
-            for (int i = 0; i < plans.size(); i++) {
-                for (int j = i + 1; j < plans.size(); j++) {
-                    if (plans.get(i).body().intersects(plans.get(j).body())) {
-                        Address entry = plans.get(j).entry();
-                        conflicts.add(new Conflict(
-                            entry,
-                            plans.get(i).entry(),
-                            EdgeKind.SEED,
-                            "overlapping_function_bodies",
-                            plans.get(i).entry(),
-                            entry));
-                    }
+            FunctionBodyOwnership ownership = new FunctionBodyOwnership();
+            List<FunctionPlan> plans = new ArrayList<>();
+            for (FunctionCandidate candidate : candidates) {
+                FunctionPlan function = candidate.plan();
+                for (Address prior : ownership.claim(
+                        function.entry(), candidate.instructionStarts())) {
+                    conflicts.add(new Conflict(
+                        function.entry(),
+                        prior,
+                        EdgeKind.SEED,
+                        "overlapping_function_bodies",
+                        prior,
+                        function.entry()));
                 }
+                plans.add(function);
             }
             return List.copyOf(plans);
+        }
+
+        record FunctionCandidate(
+                FunctionPlan plan,
+                List<Address> instructionStarts) {
+
+            FunctionCandidate {
+                instructionStarts = List.copyOf(instructionStarts);
+            }
+        }
+
+        static final class FunctionBodyOwnership {
+            private final Map<Address, List<Address>> ownersByInstruction =
+                new TreeMap<>(ADDRESS_ORDER);
+            private long claimOperations;
+
+            List<Address> claim(
+                    Address entry,
+                    List<Address> instructionStarts) {
+                Set<Address> overlaps = new TreeSet<>(ADDRESS_ORDER);
+                for (Address instructionStart : instructionStarts) {
+                    claimOperations++;
+                    List<Address> owners = ownersByInstruction.computeIfAbsent(
+                        instructionStart, ignored -> new ArrayList<>());
+                    overlaps.addAll(owners);
+                    owners.add(entry);
+                }
+                return List.copyOf(overlaps);
+            }
+
+            long claimOperations() {
+                return claimOperations;
+            }
         }
 
         private static List<Address> successors(
@@ -863,7 +950,7 @@ public final class FlowDisassemblyService {
         private static void validateDuplicateProvenance(
                 QueueItem item,
                 Map<Address, InstructionRecord> instructions,
-                Map<Address, DataUnit> scheduled,
+                NavigableMap<Address, DataUnit> scheduled,
                 List<Conflict> conflicts) {
             DataUnit unit = scheduledDataContaining(item.address(), scheduled);
             if (unit == null || item.address().equals(unit.start())) {
@@ -877,14 +964,12 @@ public final class FlowDisassemblyService {
             }
         }
 
-        private static DataUnit scheduledDataContaining(
+        static DataUnit scheduledDataContaining(
                 Address address,
-                Map<Address, DataUnit> scheduled) {
-            for (DataUnit unit : scheduled.values()) {
-                if (unit.start().compareTo(address) <= 0 &&
-                    unit.end().compareTo(address) >= 0) {
-                    return unit;
-                }
+                NavigableMap<Address, DataUnit> scheduled) {
+            Map.Entry<Address, DataUnit> floor = scheduled.floorEntry(address);
+            if (floor != null && floor.getValue().end().compareTo(address) >= 0) {
+                return floor.getValue();
             }
             return null;
         }
@@ -1262,7 +1347,7 @@ public final class FlowDisassemblyService {
             boolean followFlow) {
         List<String> messages = new ArrayList<>();
         Disassembler disassembler = Disassembler.getDisassembler(
-            program, TaskMonitor.DUMMY, messages::add);
+            program, false, false, false, TaskMonitor.DUMMY, messages::add);
         return disassembler.disassemble(starts, restriction, followFlow);
     }
 
