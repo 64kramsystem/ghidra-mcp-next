@@ -17,6 +17,32 @@ for _static_tool_name in STATIC_TOOL_NAMES:
     validate_tool_name(_static_tool_name)
 
 
+def _coerce_schema_default(value, json_type: str):
+    """Convert trusted wire-schema defaults to their declared Python type."""
+    if not isinstance(value, str):
+        return value
+    if json_type == "boolean":
+        if value == "true":
+            return True
+        if value == "false":
+            return False
+        raise ValueError(f"invalid boolean schema default: {value!r}")
+    if json_type == "integer":
+        return int(value, 10)
+    if json_type == "number":
+        return float(value)
+    if json_type in {"object", "array"}:
+        parsed = json.loads(value)
+        expected = dict if json_type == "object" else list
+        if not isinstance(parsed, expected):
+            raise ValueError(
+                f"{json_type} schema default must decode to "
+                f"{expected.__name__}"
+            )
+        return parsed
+    return value
+
+
 def _build_tool_function(
     endpoint: str,
     http_method: str,
@@ -121,6 +147,8 @@ def _build_tool_function(
         json_type = pdef.get("type", "string")
         py_type = _TYPE_MAP.get(json_type, str)
         default = pdef.get("default", inspect.Parameter.empty)
+        if default is not inspect.Parameter.empty:
+            default = _coerce_schema_default(default, json_type)
         if pname not in required and default is inspect.Parameter.empty:
             default = None
             py_type = py_type | None if py_type != str else str | None

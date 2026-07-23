@@ -106,7 +106,11 @@ public class AnnotationScanner {
                 method.setAccessible(true);
                 ParamBinding[] bindings = buildBindings(method);
                 EndpointDef.EndpointHandler handler = createHandler(service, method, tool, bindings);
-                endpoints.add(new EndpointDef(tool.path(), tool.method(), handler));
+                endpoints.add(new EndpointDef(
+                    tool.path(),
+                    tool.method(),
+                    handler,
+                    nativeByteLimits(bindings)));
                 // Use @McpTool.category if set, otherwise fall back to @McpToolGroup or class name
                 String category = (tool.category() != null && !tool.category().isEmpty())
                     ? tool.category() : groupCategory;
@@ -139,6 +143,25 @@ public class AnnotationScanner {
         return null;
     }
 
+    private static Map<String, Integer> nativeByteLimits(
+            ParamBinding[] bindings) {
+        Map<String, Integer> limits = new LinkedHashMap<>();
+        for (ParamBinding binding : bindings) {
+            if (binding == null || binding.param.nativeByteLimit() <= 0) {
+                continue;
+            }
+            if (binding.param.source() != ParamSource.BODY) {
+                throw new IllegalArgumentException(
+                    "nativeByteLimit requires a body parameter: "
+                        + binding.param.value());
+            }
+            limits.put(
+                binding.param.value(),
+                binding.param.nativeByteLimit());
+        }
+        return limits;
+    }
+
     // ==================================================================
     // Handler creation
     // ==================================================================
@@ -146,11 +169,17 @@ public class AnnotationScanner {
     private EndpointDef.EndpointHandler createHandler(Object service, Method method,
             McpTool tool, ParamBinding[] bindings) {
         boolean isWrite = "POST".equalsIgnoreCase(tool.method());
+        boolean supportsSyntheticDryRun =
+            tool.supportsDryRun() && tool.supportsSyntheticDryRun();
         return (query, body) -> {
             try {
-                if (isWrite && !tool.supportsDryRun()
+                if (isWrite && !supportsSyntheticDryRun
                         && "true".equalsIgnoreCase(query.get("dry_run"))) {
-                    return Response.err(tool.path() + " does not support dry_run");
+                    return Response.err(
+                        tool.path()
+                            + (tool.supportsDryRun()
+                                ? " does not support synthetic query dry_run"
+                                : " does not support dry_run"));
                 }
                 Object[] args = new Object[bindings.length];
                 for (int i = 0; i < bindings.length; i++) {
@@ -160,7 +189,7 @@ public class AnnotationScanner {
                 }
 
                 // Dry-run support: wrap POST endpoints in a transaction that always rolls back
-                if (isWrite && tool.supportsDryRun()
+                if (isWrite && supportsSyntheticDryRun
                         && "true".equalsIgnoreCase(query.get("dry_run"))
                         && programProvider != null) {
                     Program program = resolveProgramForDryRun(bindings, query);
@@ -300,6 +329,10 @@ public class AnnotationScanner {
         Class<?> type = binding.javaType;
         String def = binding.param.defaultValue();
         boolean hasDef = !NO_DEFAULT.equals(def);
+
+        if (binding.param.nativeByteLimit() > 0) {
+            return raw;
+        }
 
         // Special: fieldsJson conversion (serialize complex objects to JSON string)
         if (binding.param.fieldsJson()) {
@@ -542,7 +575,10 @@ public class AnnotationScanner {
             if (binding == null) continue;
             params.add(new ParamDescriptor(
                 binding.param.value(),
-                jsonType(binding.javaType, binding.param.fieldsJson()),
+                jsonType(
+                    binding.javaType,
+                    binding.param.fieldsJson(),
+                    binding.param.nativeByteLimit() > 0),
                 binding.param.source().name().toLowerCase(),
                 binding.param.optional()
                     || !NO_DEFAULT.equals(binding.param.defaultValue()),
@@ -555,8 +591,10 @@ public class AnnotationScanner {
             category, categoryDescription, tool.supportsDryRun(), params);
     }
 
-    private static String jsonType(Class<?> type, boolean fieldsJson) {
-        if (type == String.class) return fieldsJson ? "json" : "string";
+    private static String jsonType(
+            Class<?> type, boolean fieldsJson, boolean nativeBytes) {
+        if (nativeBytes || fieldsJson) return "json";
+        if (type == String.class) return "string";
         if (type == int.class || type == Integer.class) return "integer";
         if (type == long.class || type == Long.class) return "integer";
         if (type == boolean.class || type == Boolean.class) return "boolean";

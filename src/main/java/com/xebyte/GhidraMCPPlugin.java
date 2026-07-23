@@ -572,7 +572,7 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
             server.createContext(ep.path(), safeHandler(exchange -> {
                 Map<String, String> query = parseQueryParams(exchange);
                 Map<String, Object> body = "POST".equalsIgnoreCase(exchange.getRequestMethod())
-                    ? parseJsonParams(exchange) : Map.of();
+                    ? ep.parseBody(exchange.getRequestBody()) : Map.of();
                 try {
                     sendResponse(exchange, ep.handler().handle(query, body).toJson());
                 } catch (IOException e) {

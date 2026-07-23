@@ -37,8 +37,14 @@ public @interface McpTool {
     String category() default "";
 
     /**
-     * Whether transports may expose the generic transaction-backed synthetic
-     * {@code dry_run} parameter for this POST endpoint.
+     * Whether this endpoint supports dry-run/preview semantics, either through
+     * its own explicit parameter or the generic transaction wrapper.
      */
     boolean supportsDryRun() default true;
+
+    /**
+     * Whether transports may add the generic query-parameter dry run. Set
+     * false when the endpoint owns an explicit dry_run body parameter.
+     */
+    boolean supportsSyntheticDryRun() default true;
 }

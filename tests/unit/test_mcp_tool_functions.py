@@ -9,9 +9,10 @@ GET/POST requests with proper parameter handling.
 import json
 import inspect
 import os
+import asyncio
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
@@ -346,6 +347,247 @@ class TestToolRegistrationRoundTrip(unittest.TestCase):
         # The tool should be registered in the MCP server
         tools = mcp._tool_manager._tools
         self.assertIn("roundtrip_test_tool", tools)
+
+    @patch("bridge_mcp_ghidra.dispatch.dispatch_post")
+    def test_call_tool_coerces_all_generated_memory_defaults_to_native_types(
+        self, mock_post
+    ):
+        from bridge_mcp_ghidra import register_tools_from_schema, mcp
+
+        mock_post.return_value = '{"committed": false}'
+        schema = [
+            {
+                "name": "create_memory_block_defaults_test",
+                "endpoint": "/create_memory_block",
+                "http_method": "POST",
+                "category": "memory",
+                "supports_synthetic_dry_run": False,
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "source": "body"},
+                        "start": {"type": "address", "source": "body"},
+                        "length": {"type": "integer", "source": "body"},
+                        "file_offset": {
+                            "type": "integer",
+                            "source": "body",
+                            "default": "0",
+                        },
+                        "overlay": {
+                            "type": "boolean",
+                            "source": "body",
+                            "default": "false",
+                        },
+                        "read": {
+                            "type": "boolean",
+                            "source": "body",
+                            "default": "true",
+                        },
+                        "write": {
+                            "type": "boolean",
+                            "source": "body",
+                            "default": "false",
+                        },
+                        "execute": {
+                            "type": "boolean",
+                            "source": "body",
+                            "default": "false",
+                        },
+                        "volatile": {
+                            "type": "boolean",
+                            "source": "body",
+                            "default": "false",
+                        },
+                        "dry_run": {
+                            "type": "boolean",
+                            "source": "body",
+                            "default": "true",
+                        },
+                    },
+                    "required": ["name", "start", "length"],
+                },
+            },
+            {
+                "name": "update_memory_block_defaults_test",
+                "endpoint": "/update_memory_block",
+                "http_method": "POST",
+                "category": "memory",
+                "supports_synthetic_dry_run": False,
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "source": "body"},
+                        "dry_run": {
+                            "type": "boolean",
+                            "source": "body",
+                            "default": "true",
+                        },
+                    },
+                    "required": ["name"],
+                },
+            },
+            {
+                "name": "split_memory_block_defaults_test",
+                "endpoint": "/split_memory_block",
+                "http_method": "POST",
+                "category": "memory",
+                "supports_synthetic_dry_run": False,
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "source": "body"},
+                        "split_address": {
+                            "type": "address",
+                            "source": "body",
+                        },
+                        "dry_run": {
+                            "type": "boolean",
+                            "source": "body",
+                            "default": "true",
+                        },
+                    },
+                    "required": ["name", "split_address"],
+                },
+            },
+            {
+                "name": "move_memory_block_defaults_test",
+                "endpoint": "/move_memory_block",
+                "http_method": "POST",
+                "category": "memory",
+                "supports_synthetic_dry_run": False,
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "source": "body"},
+                        "new_start": {
+                            "type": "address",
+                            "source": "body",
+                        },
+                        "dry_run": {
+                            "type": "boolean",
+                            "source": "body",
+                            "default": "true",
+                        },
+                    },
+                    "required": ["name", "new_start"],
+                },
+            },
+            {
+                "name": "write_memory_bytes_defaults_test",
+                "endpoint": "/write_memory_bytes",
+                "http_method": "POST",
+                "category": "memory",
+                "supports_synthetic_dry_run": False,
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "start": {"type": "address", "source": "body"},
+                        "bytes": {"type": "json", "source": "body"},
+                        "conflict_policy": {
+                            "type": "string",
+                            "source": "body",
+                            "default": "error",
+                        },
+                        "dry_run": {
+                            "type": "boolean",
+                            "source": "body",
+                            "default": "true",
+                        },
+                    },
+                    "required": ["start", "bytes"],
+                },
+            },
+        ]
+
+        try:
+            register_tools_from_schema(schema)
+            asyncio.run(
+                mcp.call_tool(
+                    "create_memory_block_defaults_test",
+                    {"name": "bank", "start": "0x8000", "length": 256},
+                )
+            )
+            asyncio.run(
+                mcp.call_tool(
+                    "update_memory_block_defaults_test",
+                    {"name": "bank"},
+                )
+            )
+            asyncio.run(
+                mcp.call_tool(
+                    "split_memory_block_defaults_test",
+                    {"name": "bank", "split_address": "0x8080"},
+                )
+            )
+            asyncio.run(
+                mcp.call_tool(
+                    "move_memory_block_defaults_test",
+                    {"name": "bank", "new_start": "0x9000"},
+                )
+            )
+            asyncio.run(
+                mcp.call_tool(
+                    "write_memory_bytes_defaults_test",
+                    {"start": "0x8000", "bytes": [0, 255, 16]},
+                )
+            )
+
+            self.assertEqual(mock_post.call_count, 5)
+            mock_post.assert_has_calls(
+                [
+                    call(
+                        "/create_memory_block",
+                        data={
+                            "name": "bank",
+                            "start": "0x8000",
+                            "length": 256,
+                            "file_offset": 0,
+                            "overlay": False,
+                            "read": True,
+                            "write": False,
+                            "execute": False,
+                            "volatile": False,
+                            "dry_run": True,
+                        },
+                        query_params=None,
+                    ),
+                    call(
+                        "/update_memory_block",
+                        data={"name": "bank", "dry_run": True},
+                        query_params=None,
+                    ),
+                    call(
+                        "/split_memory_block",
+                        data={
+                            "name": "bank",
+                            "split_address": "0x8080",
+                            "dry_run": True,
+                        },
+                        query_params=None,
+                    ),
+                    call(
+                        "/move_memory_block",
+                        data={
+                            "name": "bank",
+                            "new_start": "0x9000",
+                            "dry_run": True,
+                        },
+                        query_params=None,
+                    ),
+                    call(
+                        "/write_memory_bytes",
+                        data={
+                            "start": "0x8000",
+                            "bytes": [0, 255, 16],
+                            "conflict_policy": "error",
+                            "dry_run": True,
+                        },
+                        query_params=None,
+                    ),
+                ]
+            )
+        finally:
+            register_tools_from_schema([])
 
 
 class TestProgramRequired(unittest.TestCase):

@@ -154,16 +154,11 @@ public class MemoryBlockServiceGhidraTest {
             .get("initialized").getAsBoolean());
 
         assertError(memory.createMemoryBlock(
-            program.getAddressFactory().getDefaultAddressSpace().getName(),
-            "0xa000", null, "01", null, null, null,
-            true, null, true, false, false, false, null, false, ""),
-            "address space");
-        assertError(memory.createMemoryBlock(
             "overlay_on_overlay",
             a.get("address_space").getAsString() + ":9000",
             null, "01", null, null, null,
             true, null, true, false, false, false, null, false, ""),
-            "physical");
+            "existing overlay");
 
         ok(memory.writeMemoryBytes(
             a.get("address_space").getAsString() + ":8000",
@@ -172,6 +167,45 @@ public class MemoryBlockServiceGhidraTest {
             a.get("address_space").getAsString() + ":8000", 2));
         assertArrayEquals(hex("1122"), bytes(
             b.get("address_space").getAsString() + ":8000", 2));
+    }
+
+    @Test
+    public void everyCreateRejectsAnExistingOverlayAsItsBaseInPreviewAndCommit() {
+        JsonObject parent = create(
+            "parent_overlay", "0x8000", null, "0102", null, null,
+            true, null, true, false, false, false, null, false);
+        String overlayStart = parent.getAsJsonObject("after")
+            .get("address_space").getAsString() + ":9000";
+        int blockCount = program.getMemory().getBlocks().length;
+        int spaceCount =
+            program.getAddressFactory().getAddressSpaces().length;
+
+        for (boolean overlay : new boolean[] { false, true }) {
+            for (boolean dryRun : new boolean[] { true, false }) {
+                String name = "nested_" + overlay + "_" + dryRun;
+                Response response = memory.createMemoryBlock(
+                    name, overlayStart, 0x10L, null, null, null, null,
+                    overlay, null, true, false, false, false,
+                    null, dryRun, "");
+                assertError(response, "existing overlay address space");
+                assertNull(program.getMemory().getBlock(name));
+            }
+        }
+        assertEquals(blockCount, program.getMemory().getBlocks().length);
+        assertEquals(
+            spaceCount,
+            program.getAddressFactory().getAddressSpaces().length);
+    }
+
+    @Test
+    public void overlayPreviewPredictsSanitizedAndUniquifiedGhidraSpaceNames() {
+        assertOverlayPreviewCommitSpace("bank:rom", "bank_rom");
+        assertOverlayPreviewCommitSpace("bank rom", "bank_rom.1");
+
+        String physicalName =
+            program.getAddressFactory().getDefaultAddressSpace().getName();
+        assertOverlayPreviewCommitSpace(
+            physicalName, physicalName + ".1");
     }
 
     @Test
@@ -455,6 +489,21 @@ public class MemoryBlockServiceGhidraTest {
         return new MemoryBlockService(
             provider, strategy, SecurityConfig.forFileRootTesting(root),
             MemoryBlockService::readFileRange);
+    }
+
+    private void assertOverlayPreviewCommitSpace(
+            String name, String expectedSpace) {
+        JsonObject preview = create(
+            name, "0xa000", null, "0102", null, null,
+            true, null, true, false, false, false, null, true);
+        JsonObject commit = create(
+            name, "0xa000", null, "0102", null, null,
+            true, null, true, false, false, false, null, false);
+
+        assertEquals(expectedSpace, preview.getAsJsonObject("after")
+            .get("address_space").getAsString());
+        assertEquals(preview.get("after"), commit.get("after"));
+        assertEquals(expectedSpace, commit.get("address_space").getAsString());
     }
 
     private JsonObject create(

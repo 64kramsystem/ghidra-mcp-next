@@ -1,5 +1,6 @@
 package com.xebyte.core;
 
+import java.io.InputStream;
 import java.util.*;
 
 /**
@@ -12,11 +13,40 @@ import java.util.*;
  * @param params      Parameter schema descriptors (for schema generation)
  */
 public record EndpointDef(String path, String method, EndpointHandler handler,
-                          String description, List<ParamDef> params) {
+                          String description, List<ParamDef> params,
+                          Map<String, Integer> nativeByteLimits) {
 
     /** Backward-compatible constructor without schema metadata. */
     public EndpointDef(String path, String method, EndpointHandler handler) {
-        this(path, method, handler, "", List.of());
+        this(path, method, handler, "", List.of(), Map.of());
+    }
+
+    public EndpointDef(
+            String path,
+            String method,
+            EndpointHandler handler,
+            Map<String, Integer> nativeByteLimits) {
+        this(path, method, handler, "", List.of(), nativeByteLimits);
+    }
+
+    public EndpointDef(
+            String path,
+            String method,
+            EndpointHandler handler,
+            String description,
+            List<ParamDef> params) {
+        this(path, method, handler, description, params, Map.of());
+    }
+
+    public EndpointDef {
+        nativeByteLimits = nativeByteLimits == null
+            ? Map.of()
+            : Map.copyOf(nativeByteLimits);
+    }
+
+    /** Parse a request body using this endpoint's compact native-byte hints. */
+    public Map<String, Object> parseBody(InputStream input) {
+        return JsonHelper.parseBody(input, nativeByteLimits);
     }
 
     /** Functional interface for endpoint handlers. */

@@ -69,8 +69,40 @@ public class MemoryBlockServiceSchemaTest {
                 .map(AnnotationScanner.ParamDescriptor::name).toList());
         assertTrue(tools.get("/create_memory_block").description()
             .contains("initialized"));
-        assertFalse(tools.get("/create_memory_block").supportsDryRun());
-        assertFalse(tools.get("/write_memory_bytes").supportsDryRun());
+        for (String path : List.of(
+                "/create_memory_block",
+                "/update_memory_block",
+                "/split_memory_block",
+                "/move_memory_block",
+                "/write_memory_bytes")) {
+            assertTrue(path, tools.get(path).supportsDryRun());
+        }
+    }
+
+    @Test
+    public void scannerEndpointStreamsBytesAndSeparatesExplicitFromSyntheticDryRun()
+            throws Exception {
+        AnnotationScanner scanner = new AnnotationScanner(
+            ServiceFactory.stubProvider(), ServiceFactory.buildAllServices());
+        var create = scanner.getEndpoints().stream()
+            .filter(endpoint -> endpoint.path().equals("/create_memory_block"))
+            .findFirst().orElseThrow();
+
+        Map<String, Object> body = create.parseBody(
+            new ByteArrayInputStream(
+                ("{\"name\":\"bank\",\"start\":\"0x8000\","
+                    + "\"bytes\":[0,255,16],\"dry_run\":true}")
+                    .getBytes(StandardCharsets.UTF_8)));
+        assertTrue(body.get("bytes") instanceof byte[]);
+        assertTrue(java.util.Arrays.equals(
+            new byte[] { 0, (byte) 255, 16 },
+            (byte[]) body.get("bytes")));
+
+        Response synthetic = create.handler().handle(
+            Map.of("dry_run", "true"), Map.of());
+        assertTrue(synthetic.toJson(), synthetic instanceof Response.Err);
+        assertTrue(synthetic.toJson(),
+            synthetic.toJson().contains("synthetic query dry_run"));
     }
 
     @Test
@@ -187,6 +219,20 @@ public class MemoryBlockServiceSchemaTest {
         assertEquals(
             "Create an initialized or uninitialized ordinary or overlay memory block",
             createEntry.get("description").getAsString());
+        for (String path : List.of(
+                "/create_memory_block",
+                "/update_memory_block",
+                "/split_memory_block",
+                "/move_memory_block",
+                "/write_memory_bytes")) {
+            var entry = catalog.getAsJsonArray("endpoints").asList()
+                .stream()
+                .map(element -> element.getAsJsonObject())
+                .filter(element -> element.get("path").getAsString()
+                    .equals(path))
+                .findFirst().orElseThrow();
+            assertFalse(path, entry.has("supports_dry_run"));
+        }
     }
 
     private static long count(String text, String token) {

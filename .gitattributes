@@ -1,3 +1,4 @@
 ghidra_scripts/BSim*.java whitespace=cr-at-eol
 src/main/java/com/xebyte/core/AnnotationScanner.java whitespace=cr-at-eol
+src/main/java/com/xebyte/core/McpTool.java whitespace=cr-at-eol
 src/main/java/com/xebyte/core/Param.java whitespace=cr-at-eol
