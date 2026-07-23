@@ -834,8 +834,11 @@ public class ListingMutationServiceGhidraTest {
                     + "4c 00 50 ea ea ea ea ea ea ea ea ea ea ea ea ea");
             builder.disassemble("0x5000", 2);
             builder.disassemble("0x5010", 3);
+            builder.setBytes("0x5020", "ea 60");
+            builder.disassemble("0x5020", 2);
             builder.createFunction("0x5000");
             builder.createFunction("0x5010");
+            builder.createFunction("0x5020");
             builder.withTransaction(() -> {
                 Function target = liveProgram.getFunctionManager()
                     .getFunctionAt(builder.addr("0x5000"));
@@ -848,6 +851,9 @@ public class ListingMutationServiceGhidraTest {
                 liveProgram.getBookmarkManager().setBookmark(
                     builder.addr("0x5010"), "NOTE", "thunk",
                     "must remain");
+                liveProgram.getListing().setComment(
+                    builder.addr("0x5020"), CommentType.EOL,
+                    "unselected function");
             });
             Function target = liveProgram.getFunctionManager()
                 .getFunctionAt(builder.addr("0x5000"));
@@ -896,6 +902,61 @@ public class ListingMutationServiceGhidraTest {
                 .getBookmarks(builder.addr("0x5010"));
             assertEquals(1, bookmarks.length);
             assertEquals("must remain", bookmarks[0].getComment());
+
+            Response selectedPreview = service.undefineRange(
+                "0x5000", "0x5010",
+                true, false,
+                true, true, true, true,
+                true, true, "");
+            assertFalse(
+                selectedPreview.toJson(),
+                selectedPreview instanceof Response.Err);
+            JsonObject selectedPreviewJson =
+                JsonParser.parseString(selectedPreview.toJson())
+                    .getAsJsonObject();
+            assertTrue(selectedPreviewJson.getAsJsonArray("conflicts").isEmpty());
+            assertEquals(
+                2,
+                selectedPreviewJson.getAsJsonArray("removed_functions").size());
+            assertEquals(
+                builder.addr("0x5010").toString(),
+                selectedPreviewJson.getAsJsonArray("removed_functions")
+                    .get(0).getAsJsonObject().get("entry").getAsString());
+            assertEquals(
+                builder.addr("0x5000").toString(),
+                selectedPreviewJson.getAsJsonArray("removed_functions")
+                    .get(1).getAsJsonObject().get("entry").getAsString());
+
+            Response selectedCommit = service.undefineRange(
+                "0x5000", "0x5010",
+                true, false,
+                true, true, true, true,
+                true, false, "");
+            assertFalse(
+                selectedCommit.toJson(),
+                selectedCommit instanceof Response.Err);
+            assertNull(liveProgram.getFunctionManager()
+                .getFunctionAt(builder.addr("0x5000")));
+            assertNull(liveProgram.getFunctionManager()
+                .getFunctionAt(builder.addr("0x5010")));
+            assertNull(liveProgram.getListing()
+                .getInstructionAt(builder.addr("0x5000")));
+            assertNull(liveProgram.getListing()
+                .getInstructionAt(builder.addr("0x5010")));
+            assertEquals(
+                "disjoint thunk annotation",
+                liveProgram.getListing().getComment(
+                    CommentType.EOL, builder.addr("0x5010")));
+            assertEquals(1, liveProgram.getBookmarkManager()
+                .getBookmarks(builder.addr("0x5010")).length);
+            assertNotNull(liveProgram.getFunctionManager()
+                .getFunctionAt(builder.addr("0x5020")));
+            assertNotNull(liveProgram.getListing()
+                .getInstructionAt(builder.addr("0x5020")));
+            assertEquals(
+                "unselected function",
+                liveProgram.getListing().getComment(
+                    CommentType.EOL, builder.addr("0x5020")));
         }
         finally {
             builder.dispose();

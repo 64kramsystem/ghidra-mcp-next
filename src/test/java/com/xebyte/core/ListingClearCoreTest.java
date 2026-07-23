@@ -236,6 +236,58 @@ public class ListingClearCoreTest {
     }
 
     @Test
+    public void selectedThunkChainsAreOrderedBeforeTargetsAndCyclesConflict() {
+        Address targetEntry = RAM.getAddress(0x1180);
+        Address thunkEntry = RAM.getAddress(0x1190);
+        Address reverseThunkEntry = RAM.getAddress(0x11a0);
+        Fixture fixture = fixture(List.of(
+            unit(Instruction.class, targetEntry, targetEntry),
+            unit(Instruction.class, thunkEntry, thunkEntry),
+            unit(Instruction.class, reverseThunkEntry, reverseThunkEntry)));
+        Function target = function("target", targetEntry);
+        Function thunk = function("thunk", thunkEntry);
+        Function reverseThunk = function("reverse_thunk", reverseThunkEntry);
+        when(target.getFunctionThunkAddresses(false))
+            .thenReturn(new Address[] { thunkEntry });
+        when(thunk.getFunctionThunkAddresses(false))
+            .thenReturn(new Address[] { reverseThunkEntry });
+        when(reverseThunk.getFunctionThunkAddresses(false))
+            .thenReturn(new Address[0]);
+        AddressSet selected = new AddressSet();
+        selected.add(targetEntry);
+        selected.add(thunkEntry);
+        selected.add(reverseThunkEntry);
+        when(fixture.functions().getFunctionsOverlapping(
+            any(AddressSetView.class)))
+                .thenReturn(List.of(target, thunk, reverseThunk).iterator());
+
+        ListingClearCore.Plan ordered = new ListingClearCore().plan(
+            fixture.program(), selected,
+            new ListingClearCore.Selection(true, false, true),
+            new ListingClearCore.Preservation(false, false, false, false));
+
+        assertTrue(ordered.conflicts().isEmpty());
+        assertEquals(
+            List.of(reverseThunkEntry, thunkEntry, targetEntry),
+            ordered.functions().stream()
+                .map(ListingClearCore.FunctionSnapshot::entry).toList());
+
+        when(reverseThunk.getFunctionThunkAddresses(false))
+            .thenReturn(new Address[] { targetEntry });
+        when(fixture.functions().getFunctionsOverlapping(
+            any(AddressSetView.class)))
+                .thenReturn(List.of(target, thunk, reverseThunk).iterator());
+        ListingClearCore.Plan cyclic = new ListingClearCore().plan(
+            fixture.program(), selected,
+            new ListingClearCore.Selection(true, false, true),
+            new ListingClearCore.Preservation(false, false, false, false));
+
+        assertEquals(1, cyclic.conflicts().size());
+        assertTrue(cyclic.conflicts().get(0).contains(
+            "cycle detected among selected direct thunks"));
+    }
+
+    @Test
     public void capturesOnlyPreservedSourcesAndAllCommentAndBookmarkTypes() {
         Address start = RAM.getAddress(0x1200);
         Address end = RAM.getAddress(0x1200);
@@ -662,6 +714,13 @@ public class ListingClearCoreTest {
         when(symbol.getSymbolType()).thenReturn(SymbolType.LABEL);
         when(symbol.getParentNamespace()).thenReturn(mock(Namespace.class));
         return symbol;
+    }
+
+    private static Function function(String name, Address entry) {
+        Function function = mock(Function.class);
+        when(function.getName()).thenReturn(name);
+        when(function.getEntryPoint()).thenReturn(entry);
+        return function;
     }
 
     private static Reference reference(
