@@ -136,6 +136,26 @@ public class AddressEmulationEngineTest {
     }
 
     @Test
+    public void coalescingDoesNotWrapPastMaximumAddress() {
+        for (AddressEmulationEngine.AccessKind kind
+                : AddressEmulationEngine.AccessKind.values()) {
+            List<AddressEmulationEngine.MemoryAccess> ordered = List.of(
+                access(0, 1, kind, 0xffff, 0xaa),
+                access(1, 1, kind, 0x0000, 0xbb));
+
+            List<AddressEmulationEngine.MemoryRange> ranges =
+                AddressEmulationEngine.coalesceAccesses(
+                    ordered, kind);
+
+            assertEquals(2, ranges.size());
+            assertEquals(address(0xffff), ranges.get(0).start());
+            assertEquals(address(0xffff), ranges.get(0).end());
+            assertEquals(address(0x0000), ranges.get(1).start());
+            assertEquals(address(0x0000), ranges.get(1).end());
+        }
+    }
+
+    @Test
     public void selfModifyingWritesIntersectAuthoritativeOrExecutedInstructions() {
         AddressSet authoritative =
             new AddressSet(address(0x1000), address(0x1001));

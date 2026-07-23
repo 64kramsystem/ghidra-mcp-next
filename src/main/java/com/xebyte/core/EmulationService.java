@@ -197,16 +197,19 @@ public class EmulationService {
                 parseLegacyRegisters(program, registersJson);
             Set<String> requestedRegisters =
                 requestedRegisterNames(program, returnRegisters);
+            Set<Register> resultRegisters =
+                new LinkedHashSet<>(registers.keySet());
             for (String registerName : requestedRegisters) {
                 Register register = program.getRegister(registerName);
                 if (register != null) {
-                    registers.putIfAbsent(register, BigInteger.ZERO);
+                    resultRegisters.add(register);
                 }
             }
             LegacyExecution execution = executeLegacy(
                 program,
                 entryAddr,
                 registers,
+                resultRegisters,
                 parseLegacyMemory(program, memoryJson),
                 effectiveMaxSteps);
             AddressEmulationEngine.Result emulation = execution.result();
@@ -356,14 +359,16 @@ public class EmulationService {
                 registers.put(
                     inputRegister,
                     BigInteger.valueOf(SCRATCH_BASE));
-                registers.putIfAbsent(
-                    outputRegister, BigInteger.ZERO);
+                Set<Register> resultRegisters =
+                    new LinkedHashSet<>(registers.keySet());
+                resultRegisters.add(outputRegister);
                 AddressEmulationEngine.MemoryOverride stringMemory =
                     memoryOverride(scratchAddr, stringBytes);
                 LegacyExecution execution = executeLegacy(
                     program,
                     entryAddr,
                     registers,
+                    resultRegisters,
                     List.of(stringMemory),
                     DEFAULT_MAX_STEPS);
                 if (!execution.hitReturn()) {
@@ -420,6 +425,7 @@ public class EmulationService {
             Program program,
             Address entry,
             Map<Register, BigInteger> requestedRegisters,
+            Set<Register> resultRegisters,
             List<AddressEmulationEngine.MemoryOverride> requestedMemory,
             int maxSteps) {
         Map<Register, BigInteger> registers =
@@ -456,6 +462,7 @@ public class EmulationService {
             new AddressEmulationEngine.Request(
                 entry,
                 registers,
+                resultRegisters,
                 memory,
                 Set.of(returnSentinel),
                 List.of(),
@@ -765,6 +772,16 @@ public class EmulationService {
             flow.add(
                 "missing_state",
                 serializeRanges(unresolved.missingState()));
+            JsonObject availableRegisters = new JsonObject();
+            addRegisterValues(
+                availableRegisters,
+                unresolved.availableRegisters());
+            flow.add(
+                "available_registers",
+                availableRegisters);
+            flow.add(
+                "available_memory",
+                serializeRanges(unresolved.availableMemory()));
             json.add("unresolved_control_flow", flow);
         }
 

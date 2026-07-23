@@ -245,7 +245,7 @@ public class AddressEmulationServiceGhidraTest {
         AddressEmulationEngine.Result result = execute(
             "1200",
             "{}",
-            "[]",
+            "[{\"start\":\"2000\",\"bytes\":\"34\"}]",
             "[]",
             "[]",
             null,
@@ -259,7 +259,38 @@ public class AddressEmulationServiceGhidraTest {
         assertNotNull(result.unresolvedControlFlow());
         assertEquals(address("1200"), result.unresolvedControlFlow().instruction());
         assertTrue(result.unresolvedControlFlow().missingState()
-            .stream().anyMatch(range -> range.start().equals(address("2000"))));
+            .stream().anyMatch(range -> range.start().equals(address("2001"))));
+        assertTrue(result.unresolvedControlFlow().availableMemory()
+            .stream().anyMatch(range ->
+                range.start().equals(address("2000"))
+                    && range.bytes().length == 1
+                    && (range.bytes()[0] & 0xff) == 0x34));
+
+        HeadlessProgramProvider provider =
+            new HeadlessProgramProvider();
+        provider.setCurrentProgram(program);
+        JsonObject serialized = JsonParser.parseString(
+            new EmulationService(
+                provider, new DirectThreadingStrategy())
+                .emulateAddress(
+                    "1200",
+                    "{}",
+                    "[{\"start\":\"2000\",\"bytes\":\"34\"}]",
+                    "[]",
+                    "[]",
+                    "",
+                    "execute",
+                    10,
+                    10,
+                    20,
+                    "").toJson()).getAsJsonObject()
+            .getAsJsonObject("unresolved_control_flow");
+        assertTrue(serialized.has("available_registers"));
+        assertEquals(
+            "34",
+            serialized.getAsJsonArray("available_memory")
+                .get(0).getAsJsonObject()
+                .get("bytes").getAsString());
     }
 
     @Test
@@ -308,6 +339,67 @@ public class AddressEmulationServiceGhidraTest {
         assertEquals(result.error(), 3, result.accesses().size());
         assertTrue(result.traceTruncated());
         assertTrue(result.accessLogTruncated());
+    }
+
+    @Test
+    public void selfModificationAfterAccessLogCapIsStillClassified()
+            throws Exception {
+        setBytes("1e00", "a9018510a9ea8d001e60");
+
+        AddressEmulationEngine.Result result = execute(
+            "1e00", "{}", "[]", "[]", "[]",
+            null, "stop", 20, 20, 1);
+
+        assertEquals(1, result.accesses().size());
+        assertTrue(result.accessLogTruncated());
+        assertEquals(1, result.selfModifyingWrites().size());
+        assertEquals(
+            address("1e00"),
+            result.selfModifyingWrites().get(0).start());
+        assertArrayEquals(
+            bytes(0xea),
+            result.selfModifyingWrites().get(0).bytes());
+    }
+
+    @Test
+    public void runtimeWrittenCodeCanExecuteOutsideProgramBlocks()
+            throws Exception {
+        setBytes("1e20",
+            "a9a98d0090"
+                + "a9428d0190"
+                + "a9608d0290"
+                + "a9ea8d0390"
+                + "a9ea8d0490"
+                + "a9ea8d0590"
+                + "a9ea8d0690"
+                + "a9ea8d0790"
+                + "a9ea8d0890"
+                + "a9ea8d0990"
+                + "4c0090");
+
+        AddressEmulationEngine.Result result = execute(
+            "1e20",
+            "{\"SP\":\"0x01fd\"}",
+            "[]",
+            "[]",
+            "[{\"start\":\"9000\",\"end\":\"9009\"}]",
+            null,
+            "stop",
+            40,
+            50,
+            50);
+
+        assertEquals(result.error(),
+            "terminal_instruction", result.stopReason());
+        assertEquals(address("9002"), result.finalPc());
+        assertEquals(
+            BigInteger.valueOf(0x42),
+            result.finalRegisters().get("A"));
+        assertArrayEquals(
+            bytes(0xa9, 0x42, 0x60, 0xea,
+                0xea, 0xea, 0xea, 0xea,
+                0xea, 0xea),
+            result.capturedMemory().get(0).bytes());
     }
 
     @Test
@@ -430,6 +522,63 @@ public class AddressEmulationServiceGhidraTest {
     }
 
     @Test
+    public void overlayJsrRtsAndSyntheticReturnPreserveCodeSpace()
+            throws Exception {
+        builder.createOverlayMemory("bank", "0x1000", 0x100);
+        builder.setBytes("bank::1000", "201010ea");
+        builder.setBytes("bank::1010", "60");
+        builder.setBytes("bank::1020", "60");
+
+        AddressEmulationEngine.Result nested =
+            AddressEmulationEngine.execute(
+                program,
+                AddressEmulationEngine.parseRequest(
+                    program,
+                    "bank:1000",
+                    "{\"SP\":\"0x01fd\"}",
+                    "[]",
+                    "[\"bank:1003\"]",
+                    "[]",
+                    null,
+                    "execute",
+                    10,
+                    20,
+                    20));
+        assertEquals(nested.error(),
+            "stop_address", nested.stopReason());
+        assertEquals(builder.addr("bank::1003"), nested.finalPc());
+        assertEquals(
+            "bank",
+            nested.trace().get(0).address()
+                .getAddressSpace().getName());
+        assertEquals(
+            "bank",
+            nested.trace().get(1).address()
+                .getAddressSpace().getName());
+
+        AddressEmulationEngine.Result synthetic =
+            AddressEmulationEngine.execute(
+                program,
+                AddressEmulationEngine.parseRequest(
+                    program,
+                    "bank:1020",
+                    "{\"SP\":\"0x01fd\"}",
+                    "[]",
+                    "[\"bank:1030\"]",
+                    "[]",
+                    "bank:1030",
+                    "execute",
+                    10,
+                    20,
+                    20));
+        assertEquals(synthetic.error(),
+            "stop_address", synthetic.stopReason());
+        assertEquals(
+            builder.addr("bank::1030"),
+            synthetic.finalPc());
+    }
+
+    @Test
     public void resolvedIndirectAndDirectJumpsReachCallerStops()
             throws Exception {
         setBytes("1a00", "6c0020");
@@ -549,6 +698,132 @@ public class AddressEmulationServiceGhidraTest {
     }
 
     @Test
+    public void x64ChildRegistersSurvivePublicAndLegacyAdapters()
+            throws Exception {
+        ProgramBuilder x64Builder = new ProgramBuilder(
+            "address-emulation-x64-adapters",
+            ProgramBuilder._X64,
+            "gcc",
+            this);
+        try {
+            ProgramDB x64 = x64Builder.getProgram();
+            x64Builder.createMemory("code", "1000", 0x200);
+            x64Builder.setBytes("1000", "b878563412");
+            x64Builder.setBytes("1020", "b878563412c3");
+            x64Builder.setBytes("1040", "b878563412c3");
+            x64Builder.setBytes("1060", "ffe0");
+            HeadlessProgramProvider provider =
+                new HeadlessProgramProvider();
+            provider.setCurrentProgram(x64);
+            EmulationService service = new EmulationService(
+                provider, new DirectThreadingStrategy());
+
+            JsonObject publicResult = JsonParser.parseString(
+                service.emulateAddress(
+                    "1000",
+                    "{\"EAX\":1,\"ECX\":\"0x22\"}",
+                    "[]",
+                    "[\"1005\"]",
+                    "[]",
+                    "",
+                    "execute",
+                    10,
+                    10,
+                    10,
+                    "").toJson()).getAsJsonObject();
+            assertEquals("stop_address",
+                publicResult.get("stop_reason").getAsString());
+            assertEquals("0x12345678",
+                publicResult.getAsJsonObject("final_registers")
+                    .get("EAX").getAsString());
+            assertEquals("0x22",
+                publicResult.getAsJsonObject("final_registers")
+                    .get("ECX").getAsString());
+
+            x64Builder.disassemble("1020", 6);
+            x64Builder.createFunction("1020");
+            JsonObject functionResult = JsonParser.parseString(
+                service.emulateFunction(
+                    "1020",
+                    "{\"EAX\":1,\"ECX\":\"0x22\"}",
+                    "",
+                    20,
+                    "EAX,ECX",
+                    "").toJson()).getAsJsonObject();
+            assertTrue(functionResult.toString(),
+                functionResult.get("success").getAsBoolean());
+            assertEquals("0x12345678",
+                functionResult.getAsJsonObject("registers")
+                    .get("EAX").getAsString());
+            assertEquals("0x22",
+                functionResult.getAsJsonObject("registers")
+                    .get("ECX").getAsString());
+
+            x64Builder.disassemble("1040", 6);
+            x64Builder.createFunction("1040");
+            JsonObject batchResult = JsonParser.parseString(
+                service.emulateHashBatch(
+                    "1040",
+                    "ECX",
+                    "EAX",
+                    "0x12345678",
+                    "[\"name\"]",
+                    "",
+                    false,
+                    "").toJson()).getAsJsonObject();
+            assertTrue(batchResult.toString(),
+                batchResult.get("resolved").getAsBoolean());
+            assertEquals(
+                "name",
+                batchResult.get("best_match").getAsString());
+
+            AddressEmulationEngine.Result indirect =
+                AddressEmulationEngine.execute(
+                    x64,
+                    AddressEmulationEngine.parseRequest(
+                        x64,
+                        "1060",
+                        "{\"RAX\":\"0x9000\"}",
+                        "[]",
+                        "[]",
+                        "[]",
+                        null,
+                        "execute",
+                        10,
+                        10,
+                        10));
+            assertEquals(indirect.error(),
+                "unresolved_flow", indirect.stopReason());
+            assertEquals(
+                BigInteger.valueOf(0x9000),
+                indirect.unresolvedControlFlow()
+                    .availableRegisters().get("RAX"));
+
+            IllegalArgumentException pcOverride = assertThrows(
+                IllegalArgumentException.class,
+                () -> AddressEmulationEngine.parseRequest(
+                    x64,
+                    "1000",
+                    "{\"RIP\":\"0x1000\"}",
+                    "[]",
+                    "[]",
+                    "[]",
+                    null,
+                    "execute",
+                    10,
+                    10,
+                    10));
+            assertTrue(
+                pcOverride.getMessage(),
+                pcOverride.getMessage()
+                    .contains("program counter"));
+        }
+        finally {
+            x64Builder.dispose();
+        }
+    }
+
+    @Test
     public void non6502ExecutionIsGenericAndClassifiesSelfModification()
             throws Exception {
         ProgramBuilder x64Builder = new ProgramBuilder(
@@ -570,6 +845,7 @@ public class AddressEmulationServiceGhidraTest {
 
             assertEquals(result.error(), "stop_address", result.stopReason());
             assertEquals(1, result.steps());
+            assertEquals(1, result.accesses().size());
             assertEquals(1, result.selfModifyingWrites().size());
             assertEquals(
                 x64.getAddressFactory().getDefaultAddressSpace()

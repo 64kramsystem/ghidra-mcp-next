@@ -129,6 +129,7 @@ public final class AddressEmulationEngine {
     record Request(
             Address entry,
             Map<Register, BigInteger> registers,
+            Set<Register> resultRegisters,
             List<MemoryOverride> memory,
             Set<Address> stopAddresses,
             List<CaptureRange> captureMemory,
@@ -139,6 +140,8 @@ public final class AddressEmulationEngine {
         Request {
             registers = Collections.unmodifiableMap(
                 new LinkedHashMap<>(registers));
+            resultRegisters = Collections.unmodifiableSet(
+                new LinkedHashSet<>(resultRegisters));
             memory = List.copyOf(memory);
             stopAddresses = Collections.unmodifiableSet(
                 new LinkedHashSet<>(stopAddresses));
@@ -196,10 +199,15 @@ public final class AddressEmulationEngine {
     record UnresolvedControlFlow(
             Address instruction,
             String instructionText,
-            List<MemoryRange> missingState) {
+            List<MemoryRange> missingState,
+            Map<String, BigInteger> availableRegisters,
+            List<MemoryRange> availableMemory) {
 
         UnresolvedControlFlow {
             missingState = List.copyOf(missingState);
+            availableRegisters = Collections.unmodifiableMap(
+                new LinkedHashMap<>(availableRegisters));
+            availableMemory = List.copyOf(availableMemory);
         }
     }
 
@@ -291,6 +299,7 @@ public final class AddressEmulationEngine {
         return new Request(
             entry,
             registers,
+            registers.keySet(),
             memory,
             stopAddresses,
             captureMemory,
@@ -313,6 +322,12 @@ public final class AddressEmulationEngine {
             if (register == null) {
                 throw new IllegalArgumentException(
                     "Unknown register: " + item.getKey());
+            }
+            if (register.isProgramCounter()) {
+                throw new IllegalArgumentException(
+                    "registers." + item.getKey()
+                        + " cannot override the program counter; "
+                        + "use address to select the execution entry");
             }
             result.put(
                 register,
@@ -531,7 +546,12 @@ public final class AddressEmulationEngine {
                 stopReason = "stop_address";
                 break;
             }
-            if (!isInitialized(request, program, returnInjection, pc)) {
+            if (!isInitialized(
+                    request,
+                    program,
+                    returnInjection,
+                    callbacks.runtimeInitialized(),
+                    pc)) {
                 stopReason = "unmapped_memory";
                 break;
             }
@@ -539,6 +559,20 @@ public final class AddressEmulationEngine {
             try {
                 thread.stepInstruction();
                 steps++;
+                Address nextPc = thread.getCounter();
+                if (!request.stopAddresses().contains(nextPc)
+                        && callbacks.lastInstructionIsIndirect()
+                        && !isInitialized(
+                            request,
+                            program,
+                            returnInjection,
+                            callbacks.runtimeInitialized(),
+                            nextPc)) {
+                    stopReason = "unresolved_flow";
+                    unresolved =
+                        callbacks.unresolvedAtTarget(nextPc);
+                    break;
+                }
             }
             catch (ManualInstructionExecuted executed) {
                 steps++;
@@ -552,12 +586,8 @@ public final class AddressEmulationEngine {
                 Instruction instruction = callbacks.currentInstruction();
                 if (isUnresolvedFlow(instruction, missing)) {
                     stopReason = "unresolved_flow";
-                    unresolved = new UnresolvedControlFlow(
-                        instruction == null
-                            ? pc : instruction.getMinAddress(),
-                        instruction == null
-                            ? null : instruction.toString(),
-                        missingRanges(missing.missing()));
+                    unresolved =
+                        callbacks.unresolved(pc, missing.missing());
                 }
                 else if (missing.decode()) {
                     stopReason = "decode_error";
@@ -577,12 +607,9 @@ public final class AddressEmulationEngine {
                         callbacks.currentInstruction();
                     if (isUnresolvedFlow(instruction, missing)) {
                         stopReason = "unresolved_flow";
-                        unresolved = new UnresolvedControlFlow(
-                            instruction == null
-                                ? pc : instruction.getMinAddress(),
-                            instruction == null
-                                ? null : instruction.toString(),
-                            missingRanges(missing.missing()));
+                        unresolved =
+                            callbacks.unresolved(
+                                pc, missing.missing());
                     }
                     else {
                         stopReason = missing.decode()
@@ -609,7 +636,12 @@ public final class AddressEmulationEngine {
             registerChanges(initialRegisters, finalSnapshot);
         Map<String, BigInteger> finalRegisters =
             requestedAndChangedRegisters(
-                request, finalSnapshot, changed.keySet());
+                program,
+                request,
+                thread,
+                callbacks,
+                finalSnapshot,
+                changed.keySet());
         List<CapturedMemory> captured =
             captureMemory(emulator, request.captureMemory());
         return new Result(
@@ -741,9 +773,13 @@ public final class AddressEmulationEngine {
             Request request,
             Program program,
             ReturnInjection injection,
+            AddressSetView runtimeInitialized,
             Address address) {
         if (program.getMemory().getAllInitializedAddressSet()
                 .contains(address)) {
+            return true;
+        }
+        if (runtimeInitialized.contains(address)) {
             return true;
         }
         for (MemoryOverride override : request.memory()) {
@@ -804,12 +840,25 @@ public final class AddressEmulationEngine {
     }
 
     private static Map<String, BigInteger> requestedAndChangedRegisters(
+            Program program,
             Request request,
+            PcodeThread<byte[]> thread,
+            RecordingCallbacks callbacks,
             Map<String, BigInteger> finalSnapshot,
             Set<String> changed) {
         Map<String, BigInteger> result = new LinkedHashMap<>();
-        for (Register register : request.registers().keySet()) {
-            BigInteger value = finalSnapshot.get(register.getName());
+        for (Register register : request.resultRegisters()) {
+            BigInteger value;
+            if (is6502(program)
+                    && "P".equals(register.getName())) {
+                value = finalSnapshot.get("P");
+            }
+            else if (register.isProgramCounter()) {
+                value = unsignedOffset(thread.getCounter());
+            }
+            else {
+                value = callbacks.readRegister(thread, register);
+            }
             if (value != null) {
                 result.put(register.getName(), value);
             }
@@ -818,6 +867,14 @@ public final class AddressEmulationEngine {
             result.putIfAbsent(name, finalSnapshot.get(name));
         }
         return result;
+    }
+
+    private static BigInteger unsignedOffset(Address address) {
+        if (address == null) {
+            return null;
+        }
+        return new BigInteger(
+            Long.toUnsignedString(address.getUnsignedOffset()));
     }
 
     private static List<CapturedMemory> captureMemory(
@@ -899,12 +956,16 @@ public final class AddressEmulationEngine {
             new AddressSet();
         private final AddressSet executedInstructions =
             new AddressSet();
+        private final AddressSet runtimeInitialized =
+            new AddressSet();
         private final List<TraceRecord> trace = new ArrayList<>();
         private final List<MemoryAccess> accesses = new ArrayList<>();
         private final List<MemoryAccess> selfModifying =
             new ArrayList<>();
         private PcodeThread<byte[]> thread;
         private CurrentTrace current;
+        private CurrentTrace lastCompleted;
+        private PendingLoad pendingLoad;
         private int step;
         private long accessSequence;
         private boolean active;
@@ -945,10 +1006,104 @@ public final class AddressEmulationEngine {
         void beginStep(int nextStep) {
             step = nextStep;
             current = null;
+            pendingLoad = null;
         }
 
         Instruction currentInstruction() {
             return current == null ? null : current.instruction();
+        }
+
+        AddressSetView runtimeInitialized() {
+            return runtimeInitialized;
+        }
+
+        boolean lastInstructionIsIndirect() {
+            if (lastCompleted == null) {
+                return false;
+            }
+            FlowType flow =
+                lastCompleted.instruction().getFlowType();
+            return flow != null
+                && (flow.isIndirect() || flow.isComputed());
+        }
+
+        UnresolvedControlFlow unresolved(
+                Address fallback, AddressSetView missing) {
+            CurrentTrace evidence =
+                current != null ? current : lastCompleted;
+            return unresolved(
+                fallback, missing, evidence);
+        }
+
+        UnresolvedControlFlow unresolvedAtTarget(Address target) {
+            return unresolved(
+                target,
+                new AddressSet(target, target),
+                lastCompleted);
+        }
+
+        private UnresolvedControlFlow unresolved(
+                Address fallback,
+                AddressSetView missing,
+                CurrentTrace evidence) {
+            Instruction instruction =
+                evidence == null ? null : evidence.instruction();
+            return new UnresolvedControlFlow(
+                instruction == null
+                    ? fallback : instruction.getMinAddress(),
+                instruction == null
+                    ? null : instruction.toString(),
+                missingRanges(missing),
+                evidence == null
+                    ? Map.of() : evidence.beforeRegisters(),
+                availableMemory(evidence, missing));
+        }
+
+        private List<MemoryRange> availableMemory(
+                CurrentTrace evidence, AddressSetView missing) {
+            if (evidence == null) {
+                return List.of();
+            }
+            List<MemoryRange> result = new ArrayList<>(
+                coalesceAccesses(
+                    evidence.evidenceReads(), AccessKind.READ));
+            if (evidence == current && pendingLoad != null) {
+                for (int index = 0;
+                        index < pendingLoad.size();
+                        index++) {
+                    Address address;
+                    try {
+                        address =
+                            pendingLoad.start().addNoWrap(index);
+                    }
+                    catch (Exception overflow) {
+                        break;
+                    }
+                    if (missing.contains(address)) {
+                        continue;
+                    }
+                    byte value = thread.getMachine().getSharedState()
+                        .inspectByte(address);
+                    result.add(new MemoryRange(
+                        address, address, new byte[]{value}));
+                }
+            }
+            return List.copyOf(result);
+        }
+
+        BigInteger readRegister(
+                PcodeThread<byte[]> executionThread,
+                Register register) {
+            boolean previouslyActive = active;
+            active = false;
+            try {
+                return executionThread.getState()
+                    .inspectRegisterValue(register)
+                    .getUnsignedValue();
+            }
+            finally {
+                active = previouslyActive;
+            }
         }
 
         @Override
@@ -963,46 +1118,38 @@ public final class AddressEmulationEngine {
                 instruction,
                 instructionBytes(instruction),
                 snapshotRegisters(executionThread),
+                new ArrayList<>(),
                 new ArrayList<>());
             if (request.terminalPolicy() == TerminalPolicy.STOP
                     && isTerminal6502(instruction)) {
-                addTrace(recordTrace(
-                    executionThread, current, false));
+                completeTrace(executionThread, false);
                 throw new TerminalStopException();
             }
             if (request.terminalPolicy() == TerminalPolicy.EXECUTE
                     && is6502(program)
                     && "RTS".equals(instruction.getMnemonicString())) {
                 execute6502Rts(executionThread);
-                addTrace(recordTrace(
-                    executionThread, current, true));
-                current = null;
+                completeTrace(executionThread, true);
                 throw new ManualInstructionExecuted();
             }
             if (request.terminalPolicy() == TerminalPolicy.EXECUTE
                     && is6502(program)
                     && "RTI".equals(instruction.getMnemonicString())) {
                 execute6502Rti(executionThread);
-                addTrace(recordTrace(
-                    executionThread, current, true));
-                current = null;
+                completeTrace(executionThread, true);
                 throw new ManualInstructionExecuted();
             }
             if (request.terminalPolicy() == TerminalPolicy.EXECUTE
                     && is6502(program)
                     && "BRK".equals(instruction.getMnemonicString())) {
                 execute6502Brk(executionThread, instruction);
-                addTrace(recordTrace(
-                    executionThread, current, true));
-                current = null;
+                completeTrace(executionThread, true);
                 throw new ManualInstructionExecuted();
             }
             if (is6502(program)
                     && "JSR".equals(instruction.getMnemonicString())) {
                 execute6502Jsr(executionThread, instruction);
-                addTrace(recordTrace(
-                    executionThread, current, true));
-                current = null;
+                completeTrace(executionThread, true);
                 throw new ManualInstructionExecuted();
             }
         }
@@ -1012,10 +1159,22 @@ public final class AddressEmulationEngine {
                 PcodeThread<byte[]> executionThread,
                 Instruction instruction) {
             if (current != null) {
-                addTrace(recordTrace(
-                    executionThread, current, true));
-                current = null;
+                completeTrace(executionThread, true);
             }
+        }
+
+        private void completeTrace(
+                PcodeThread<byte[]> executionThread,
+                boolean executed) {
+            CurrentTrace completed = current;
+            if (completed == null) {
+                return;
+            }
+            addTrace(recordTrace(
+                executionThread, completed, executed));
+            lastCompleted = completed;
+            current = null;
+            pendingLoad = null;
         }
 
         @Override
@@ -1023,6 +1182,11 @@ public final class AddressEmulationEngine {
                 PcodeThread<byte[]> executionThread,
                 PcodeOp op,
                 ghidra.pcode.exec.PcodeFrame frame) {
+            // Some Sleigh languages, notably 6502, express a semantic
+            // operand read/write as a direct memory varnode instead of a
+            // LOAD/STORE op. These callbacks see decoded p-code only, never
+            // instruction fetches. Flow destinations are excluded below so
+            // only actual operand memory participates in the access log.
             if (op.getOpcode() == PcodeOp.LOAD
                     || op.getOpcode() == PcodeOp.STORE) {
                 return;
@@ -1062,6 +1226,18 @@ public final class AddressEmulationEngine {
         }
 
         @Override
+        public void beforeLoad(
+                PcodeThread<byte[]> executionThread,
+                PcodeOp op,
+                AddressSpace space,
+                byte[] offset,
+                int size) {
+            Address address = executionThread.getArithmetic().toAddress(
+                offset, space, PcodeArithmetic.Purpose.LOAD);
+            pendingLoad = new PendingLoad(address, size);
+        }
+
+        @Override
         public void afterLoad(
                 PcodeThread<byte[]> executionThread,
                 PcodeOp op,
@@ -1072,6 +1248,7 @@ public final class AddressEmulationEngine {
             Address address = executionThread.getArithmetic().toAddress(
                 offset, space, PcodeArithmetic.Purpose.LOAD);
             recordAccess(executionThread, AccessKind.READ, address, size);
+            pendingLoad = null;
         }
 
         @Override
@@ -1105,25 +1282,32 @@ public final class AddressEmulationEngine {
                 Address address,
                 int size) {
             long sequence = accessSequence++;
-            if (accesses.size()
-                    >= request.limits().accessLogLimit()) {
-                accessLogTruncated = true;
-                return;
-            }
             byte[] bytes =
                 executionThread.getMachine().getSharedState()
                     .inspectConcrete(address, size);
             MemoryAccess access =
                 new MemoryAccess(sequence, step, kind, address, bytes);
-            accesses.add(access);
-            if (current != null) {
-                current.accesses().add(access);
+            if (kind == AccessKind.WRITE) {
+                runtimeInitialized.add(
+                    access.start(), access.end());
             }
             if (isSelfModifying(
                     access,
                     authoritativeInstructions,
                     executedInstructions)) {
                 selfModifying.add(access);
+            }
+            if (kind == AccessKind.READ && current != null) {
+                current.evidenceReads().add(access);
+            }
+            if (accesses.size()
+                    >= request.limits().accessLogLimit()) {
+                accessLogTruncated = true;
+                return;
+            }
+            accesses.add(access);
+            if (current != null) {
+                current.accesses().add(access);
             }
         }
 
@@ -1135,12 +1319,12 @@ public final class AddressEmulationEngine {
                 .getUnsignedValue();
             int sp = stackValue == null
                 ? 0 : stackValue.intValue() & 0xff;
-            AddressSpace space =
+            AddressSpace stackSpace =
                 program.getAddressFactory().getDefaultAddressSpace();
             Address lowAddress =
-                space.getAddress(0x100L + ((sp + 1) & 0xff));
+                stackSpace.getAddress(0x100L + ((sp + 1) & 0xff));
             Address highAddress =
-                space.getAddress(0x100L + ((sp + 2) & 0xff));
+                stackSpace.getAddress(0x100L + ((sp + 2) & 0xff));
             byte low = executionThread.getMachine().getSharedState()
                 .inspectByte(lowAddress);
             byte high = executionThread.getMachine().getSharedState()
@@ -1157,7 +1341,8 @@ public final class AddressEmulationEngine {
                     stack,
                     BigInteger.valueOf(
                         0x100L + ((sp + 2) & 0xff))));
-            executionThread.overrideCounter(space.getAddress(target));
+            executionThread.overrideCounter(
+                returnAddressSpace(target).getAddress(target));
         }
 
         private void execute6502Jsr(
@@ -1208,14 +1393,14 @@ public final class AddressEmulationEngine {
                 .getUnsignedValue();
             int sp = stackValue == null
                 ? 0 : stackValue.intValue() & 0xff;
-            AddressSpace space =
+            AddressSpace stackSpace =
                 program.getAddressFactory().getDefaultAddressSpace();
             Address statusAddress =
-                space.getAddress(0x100L + ((sp + 1) & 0xff));
+                stackSpace.getAddress(0x100L + ((sp + 1) & 0xff));
             Address lowAddress =
-                space.getAddress(0x100L + ((sp + 2) & 0xff));
+                stackSpace.getAddress(0x100L + ((sp + 2) & 0xff));
             Address highAddress =
-                space.getAddress(0x100L + ((sp + 3) & 0xff));
+                stackSpace.getAddress(0x100L + ((sp + 3) & 0xff));
             byte status = executionThread.getMachine().getSharedState()
                 .inspectByte(statusAddress);
             byte low = executionThread.getMachine().getSharedState()
@@ -1236,7 +1421,20 @@ public final class AddressEmulationEngine {
                         0x100L + ((sp + 3) & 0xff))));
             int target =
                 ((high & 0xff) << 8) | (low & 0xff);
-            executionThread.overrideCounter(space.getAddress(target));
+            executionThread.overrideCounter(
+                current.instruction().getMinAddress()
+                    .getAddressSpace().getAddress(target));
+        }
+
+        private AddressSpace returnAddressSpace(int target) {
+            Address requested = request.returnAddress();
+            if (requested != null
+                    && requested.getUnsignedOffset()
+                        == Integer.toUnsignedLong(target)) {
+                return requested.getAddressSpace();
+            }
+            return current.instruction().getMinAddress()
+                .getAddressSpace();
         }
 
         private void execute6502Brk(
@@ -1463,7 +1661,11 @@ public final class AddressEmulationEngine {
             Instruction instruction,
             byte[] bytes,
             Map<String, BigInteger> beforeRegisters,
-            List<MemoryAccess> accesses) {
+            List<MemoryAccess> accesses,
+            List<MemoryAccess> evidenceReads) {
+    }
+
+    private record PendingLoad(Address start, int size) {
     }
 
     static byte[] decodeBytes(JsonElement value, String field) {
@@ -1605,12 +1807,15 @@ public final class AddressEmulationEngine {
         Address rangeEnd = null;
         byte[] rangeBytes = null;
         for (MemoryAccess access : accesses) {
+            Address nextAddress =
+                rangeEnd == null ? null : rangeEnd.next();
             boolean extendsRange =
                 previous != null
                     && access.kind() == kind
                     && previous.kind() == kind
                     && previous.sequence() + 1 == access.sequence()
-                    && rangeEnd.next().equals(access.start());
+                    && nextAddress != null
+                    && nextAddress.equals(access.start());
             if (access.kind() == kind && extendsRange) {
                 byte[] joined =
                     Arrays.copyOf(rangeBytes, rangeBytes.length + access.bytes().length);
