@@ -74,7 +74,7 @@ public class ServerManager {
             FlowDisassemblyService flowDisassemblyService =
                 new FlowDisassemblyService(programProvider, ts);
             ListingRangeService listingRangeService =
-                new ListingRangeService(programProvider);
+                new ListingRangeService(programProvider, ts);
             DebuggerService debuggerService = new DebuggerService(programProvider, ts, tool);
             GuiProjectService guiProjectService = new GuiProjectService(this::getActiveTool);
 

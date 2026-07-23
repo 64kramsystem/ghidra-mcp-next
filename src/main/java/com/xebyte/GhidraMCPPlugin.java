@@ -295,7 +295,8 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
         this.flowDisassemblyService =
             new com.xebyte.core.FlowDisassemblyService(programProvider, threadingStrategy);
         this.listingRangeService =
-            new com.xebyte.core.ListingRangeService(programProvider);
+            new com.xebyte.core.ListingRangeService(
+                programProvider, threadingStrategy);
         this.debuggerService = new com.xebyte.core.DebuggerService(programProvider, threadingStrategy, tool);
         Msg.info(GhidraMCPPlugin.class, "============================================");
         Msg.info(GhidraMCPPlugin.class, "GhidraMCP " + VersionInfo.getFullVersion());

@@ -72,7 +72,8 @@ public class ListingRangeServiceGhidraTest {
 
         HeadlessProgramProvider provider = new HeadlessProgramProvider();
         provider.setCurrentProgram(program);
-        service = new ListingRangeService(provider);
+        service = new ListingRangeService(
+            provider, new com.xebyte.headless.DirectThreadingStrategy());
     }
 
     @After

@@ -53,7 +53,8 @@ public final class ServiceFactory {
         ExportService exportService = new ExportService(provider);
         FlowDisassemblyService flowDisassemblyService =
             new FlowDisassemblyService(provider, ts);
-        ListingRangeService listingRangeService = new ListingRangeService(provider);
+        ListingRangeService listingRangeService =
+            new ListingRangeService(provider, ts);
 
         HeadlessManagementService headlessManagementService =
             new HeadlessManagementService(new HeadlessProgramProvider());

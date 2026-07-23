@@ -83,7 +83,8 @@ public class HeadlessEndpointHandler {
         this.flowDisassemblyService =
             new com.xebyte.core.FlowDisassemblyService(programProvider, threadingStrategy);
         this.listingRangeService =
-            new com.xebyte.core.ListingRangeService(programProvider);
+            new com.xebyte.core.ListingRangeService(
+                programProvider, threadingStrategy);
     }
 
     // ==========================================================================
