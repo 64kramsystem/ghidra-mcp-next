@@ -16,6 +16,7 @@
     "memory": "Create, transform, inspect, and write program memory blocks",
     "program": "Program management",
     "project": "Project lifecycle management",
+    "gui": "Current Ghidra GUI context and navigation",
     "export": "Native program export",
     "script": "Script execution",
     "utility": "Utility endpoints",
@@ -1246,9 +1247,9 @@
     {
       "path": "/get_current_address",
       "method": "GET",
-      "category": "getter",
+      "category": "gui",
       "params": [],
-      "description": "Get cursor address (GUI only)"
+      "description": "Return the normalized active GUI program and cursor address"
     },
     {
       "path": "/get_current_function",
@@ -1269,9 +1270,9 @@
     {
       "path": "/get_current_selection",
       "method": "GET",
-      "category": "getter",
+      "category": "gui",
       "params": [],
-      "description": "Get highlighted address ranges in the CodeBrowser listing (GUI only). Returns {program, is_empty, ranges:[{start,end,length}], min_address, max_address, num_addresses} or an empty-selection payload when nothing is highlighted."
+      "description": "Return the normalized GUI context and every selected address range"
     },
     {
       "path": "/get_data_type_size",
@@ -2638,13 +2639,14 @@
       "description": "Switch current program"
     },
     {
-      "path": "/tool/goto_address",
+      "path": "/go_to_address",
       "method": "POST",
-      "category": "utility",
+      "category": "gui",
       "params": [
-        "address"
+        "address",
+        "program"
       ],
-      "description": "Navigate CodeBrowser listing and decompiler to a specific address"
+      "description": "Activate an open program and navigate the GUI to an exact address"
     },
     {
       "path": "/tool/launch_codebrowser",

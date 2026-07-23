@@ -26,7 +26,6 @@ import ghidra.app.decompiler.DecompileResults;
 import ghidra.app.plugin.PluginCategoryNames;
 import ghidra.app.services.CodeViewerService;
 import ghidra.app.services.DebuggerTraceManagerService;
-import ghidra.app.services.GoToService;
 
 import ghidra.app.script.GhidraScriptUtil;
 import ghidra.app.script.GhidraScript;
@@ -64,6 +63,7 @@ import com.xebyte.core.BinaryComparisonService;
 import com.xebyte.core.AnnotationScanner;
 import com.xebyte.core.EndpointDef;
 import com.xebyte.core.FrontEndProgramProvider;
+import com.xebyte.core.GuiContextService;
 import com.xebyte.core.GuiProjectService;
 import com.xebyte.core.JsonHelper;
 import com.xebyte.core.ServerManager;
@@ -90,7 +90,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
@@ -227,6 +226,7 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
     // Program provider for on-demand program access (FrontEnd mode)
     private final Object programConsumer = new Object();
     private final FrontEndProgramProvider programProvider;
+    private final GuiContextService guiContextService;
     private final GuiProjectService guiProjectService;
 
     // Service layer for delegated operations
@@ -255,6 +255,8 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
 
         // Initialize service layer — FrontEnd mode: opens programs on-demand from project
         this.programProvider = new FrontEndProgramProvider(tool, programConsumer);
+        this.guiContextService =
+            new GuiContextService(() -> tool, programProvider);
         this.guiProjectService = new GuiProjectService(() -> tool);
         com.xebyte.core.ThreadingStrategy threadingStrategy = new com.xebyte.headless.DirectThreadingStrategy();
         this.listingService = new com.xebyte.core.ListingService(programProvider);
@@ -546,7 +548,7 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
             memoryBlockService, dataRegionService, symbolProfileService,
             emulationService, exportService, flowDisassemblyService,
             listingRangeService, listingMutationService,
-            debuggerService, guiProjectService);
+            debuggerService, guiProjectService, guiContextService);
 
         for (EndpointDef ep : scanner.getEndpoints()) {
             server.createContext(ep.path(), safeHandler(exchange -> {
@@ -656,23 +658,8 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
         // GUI-ONLY ENDPOINTS (require PluginTool/CodeBrowser/Swing context)
         // ==========================================================================
 
-        server.createContext("/get_current_address", safeHandler(exchange -> {
-            sendResponse(exchange, getCurrentAddress());
-        }));
-
         server.createContext("/get_current_function", safeHandler(exchange -> {
             sendResponse(exchange, getCurrentFunction());
-        }));
-
-        // /get_current_selection — filed by @I-Knight-I on issue #153 as
-        // the third "where am I?" tool an AI client expects, alongside
-        // /get_current_address and /get_current_function. Returns the
-        // address ranges the user has highlighted in the CodeBrowser
-        // listing, or an empty-selection payload when nothing is
-        // highlighted. GUI-only (no equivalent on the headless server
-        // — selection is a UI concept that has no meaning there).
-        server.createContext("/get_current_selection", safeHandler(exchange -> {
-            sendResponse(exchange, getCurrentSelection());
         }));
 
         // GET_DATA_TYPE_SIZE - Get the size in bytes of a data type (not yet in service layer)
@@ -781,12 +768,6 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
             Map<String, Object> params = parseJsonParams(exchange);
             String filePath = params.get("path") != null ? params.get("path").toString() : null;
             sendResponse(exchange, guiProjectService.launchCodeBrowser(filePath));
-        }));
-
-        server.createContext("/tool/goto_address", safeHandler(exchange -> {
-            Map<String, Object> params = parseJsonParams(exchange);
-            String address = params.get("address") != null ? params.get("address").toString() : null;
-            sendResponse(exchange, gotoAddress(address));
         }));
 
         server.createContext("/batch_apply_documentation", safeHandler(exchange -> {
@@ -960,27 +941,6 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
     }
 
     /**
-     * Get current address selected in Ghidra GUI
-     */
-    private String getCurrentAddress() {
-        CodeViewerService service = findCodeViewerService();
-        if (service == null) return "Code viewer service not available";
-
-        ProgramLocation location = service.getCurrentLocation();
-        if (location == null) return "No current location";
-
-        Program program = location.getProgram();
-        String programPath = (program != null && program.getDomainFile() != null)
-                ? program.getDomainFile().getPathname() : null;
-        if (programPath != null) {
-            return JsonHelper.toJson(JsonHelper.mapOf(
-                    "address", location.getAddress().toString(),
-                    "program", programPath));
-        }
-        return location.getAddress().toString();
-    }
-
-    /**
      * Get current function selected in Ghidra GUI
      */
     private String getCurrentFunction() {
@@ -1008,60 +968,6 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
                 "address", func.getEntryPoint().toString(),
                 "program", programPath,
                 "signature", func.getSignature().getPrototypeString()));
-    }
-
-    /**
-     * Get the current selection (highlighted address ranges) from the
-     * CodeBrowser listing. Returns a payload shape that matches the
-     * other GUI-only ``/get_current_*`` tools and that AI clients can
-     * consume directly without scraping prose.
-     *
-     * <p>Shapes:
-     * <ul>
-     *   <li>No CodeBrowser available → ``"Code viewer service not available"``
-     *       (same prose the other current_* tools use, so clients can
-     *       fall through with one error path).</li>
-     *   <li>CodeBrowser running but selection is empty → JSON
-     *       ``{"program": "...", "is_empty": true, "ranges": []}``.</li>
-     *   <li>Selection present → JSON with the program path, an
-     *       ``is_empty: false`` marker, every contiguous range with its
-     *       start/end/length, plus the overall bounds + total address
-     *       count for convenience.</li>
-     * </ul>
-     */
-    private String getCurrentSelection() {
-        CodeViewerService service = findCodeViewerService();
-        if (service == null) return "Code viewer service not available";
-
-        ghidra.program.util.ProgramSelection selection = service.getCurrentSelection();
-        ghidra.program.util.ProgramLocation location = service.getCurrentLocation();
-        Program program = location != null ? location.getProgram() : getCurrentProgram();
-        String programPath = (program != null && program.getDomainFile() != null)
-                ? program.getDomainFile().getPathname()
-                : (program != null ? program.getName() : null);
-
-        if (selection == null || selection.isEmpty()) {
-            return JsonHelper.toJson(JsonHelper.mapOf(
-                    "program", programPath,
-                    "is_empty", true,
-                    "ranges", new java.util.ArrayList<>()));
-        }
-
-        java.util.List<Map<String, Object>> ranges = new java.util.ArrayList<>();
-        for (ghidra.program.model.address.AddressRange range : selection.getAddressRanges()) {
-            ranges.add(JsonHelper.mapOf(
-                    "start", range.getMinAddress().toString(),
-                    "end", range.getMaxAddress().toString(),
-                    "length", range.getLength()));
-        }
-
-        return JsonHelper.toJson(JsonHelper.mapOf(
-                "program", programPath,
-                "is_empty", false,
-                "ranges", ranges,
-                "min_address", selection.getMinAddress().toString(),
-                "max_address", selection.getMaxAddress().toString(),
-                "num_addresses", selection.getNumAddresses()));
     }
 
     /**
@@ -2747,8 +2653,9 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
             if (!firstStep) sb.append(", ");
             firstStep = false;
             try {
-                String gotoResult = gotoAddress(address);
-                boolean gotoOk = gotoResult != null && !gotoResult.contains("\"error\"");
+                String gotoResult =
+                    guiContextService.goToAddress(address, "").toJson();
+                boolean gotoOk = gotoResult.contains("\"success\":true");
                 sb.append("\"goto\": {\"success\": ").append(gotoOk).append("}");
             } catch (Exception e) {
                 sb.append("\"goto\": {\"success\": false, \"error\": ")
@@ -3324,81 +3231,6 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
             return sb.toString();
         } catch (Exception e) {
             return "{\"error\": \"Failed to list tools: " + escapeJson(e.getMessage()) + "\"}";
-        }
-    }
-
-    /**
-     * Navigate the CodeBrowser listing/decompiler to a specific address.
-     * Finds the running CodeBrowser via ToolManager and uses GoToService.
-     */
-    private String gotoAddress(String addressStr) {
-        if (addressStr == null || addressStr.trim().isEmpty()) {
-            return "{\"error\": \"address parameter is required\"}";
-        }
-
-        try {
-            Project project = tool.getProject();
-            if (project == null) {
-                return "{\"error\": \"No project open\"}";
-            }
-
-            // Find a running CodeBrowser
-            ghidra.framework.model.ToolManager tm = project.getToolManager();
-            if (tm == null) {
-                return "{\"error\": \"ToolManager not available\"}";
-            }
-
-            PluginTool codeBrowser = null;
-            for (PluginTool runningTool : tm.getRunningTools()) {
-                if (runningTool.getService(ghidra.app.services.ProgramManager.class) != null) {
-                    codeBrowser = runningTool;
-                    break;
-                }
-            }
-
-            if (codeBrowser == null) {
-                return "{\"error\": \"No CodeBrowser running\"}";
-            }
-
-            // Get GoToService from the CodeBrowser
-            GoToService goToService = codeBrowser.getService(GoToService.class);
-            if (goToService == null) {
-                return "{\"error\": \"GoToService not available in CodeBrowser\"}";
-            }
-
-            // Get the current program from the CodeBrowser
-            ghidra.app.services.ProgramManager pm = codeBrowser.getService(ghidra.app.services.ProgramManager.class);
-            Program program = pm.getCurrentProgram();
-            if (program == null) {
-                return "{\"error\": \"No program open in CodeBrowser\"}";
-            }
-
-            // Parse the address
-            Address addr = program.getAddressFactory().getAddress(addressStr);
-            if (addr == null) {
-                return "{\"error\": \"Invalid address: " + escapeJson(addressStr) + "\"}";
-            }
-
-            // Navigate on the EDT
-            final GoToService gts = goToService;
-            final Address targetAddr = addr;
-            final AtomicBoolean success = new AtomicBoolean(false);
-            SwingUtilities.invokeAndWait(() -> {
-                success.set(gts.goTo(targetAddr));
-            });
-
-            if (success.get()) {
-                // Check if the address is in a function
-                Function func = program.getFunctionManager().getFunctionContaining(addr);
-                String funcInfo = func != null
-                    ? ", \"function\": \"" + escapeJson(func.getName()) + "\""
-                    : "";
-                return "{\"success\": true, \"address\": \"" + addr.toString() + "\"" + funcInfo + "}";
-            } else {
-                return "{\"error\": \"GoToService could not navigate to " + escapeJson(addressStr) + "\"}";
-            }
-        } catch (Exception e) {
-            return "{\"error\": \"Failed to navigate: " + escapeJson(e.getMessage()) + "\"}";
         }
     }
 
