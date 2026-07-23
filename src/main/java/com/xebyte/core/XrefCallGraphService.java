@@ -57,7 +57,7 @@ public class XrefCallGraphService {
             while (refIter.hasNext()) {
                 references.add(refIter.next());
             }
-            references.sort(ListingRangeService.referenceOrder());
+            references.sort(ReferenceOrdering.perDestination());
 
             List<String> refs = new ArrayList<>();
             for (Reference ref : references) {
