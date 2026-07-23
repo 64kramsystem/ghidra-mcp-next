@@ -12,6 +12,13 @@ Complete version history for the Ghidra MCP Server project.
   `go_to_address` MCP tools with normalized program/address context,
   lossless ordered multi-range selections, Swing-safe reads and navigation,
   named-program activation, and final context on navigation failure.
+- Added `emulate_address`, a language-generic, function-independent bounded
+  P-code executor with exact register/memory initialization, stable stop
+  reasons, ordered instruction and semantic memory traces, final memory
+  capture, unresolved-flow evidence, and self-modifying-write
+  classification. Its 6502-family support includes page-one stack behavior,
+  RTS/RTI/BRK terminal policies, and optional collision-checked synthetic
+  return injection without mutating program bytes or listing metadata.
 - Added `patch_bytes`, a dry-run-first raw hexadecimal patch endpoint for
   initialized ordinary and overlay blocks. It supports exact block/space
   resolution, compare-and-swap guards, temporary read-only writes, bounded
@@ -92,7 +99,7 @@ Complete version history for the Ghidra MCP Server project.
   dependency is pinned exactly to `mcp==1.28.1`, the validated private
   registry shape.
 - Streamlined ghidra-mcp around its local GUI/headless analysis stack, with
-  246 cataloged endpoints, schema discovery, TCP/UDS transports, and explicit
+  249 cataloged endpoints, schema discovery, TCP/UDS transports, and explicit
   multi-program selection.
 - Made Maven the only Java build backend while retaining the uv-packaged
   Python bridge and setup commands.
@@ -118,9 +125,9 @@ Complete version history for the Ghidra MCP Server project.
 - Mirrored Ghidra's FrontEnd project-close notification when MCP switches local
   projects, preventing stale listeners from treating the replacement as a
   second active project.
-- Bounded both P-code emulation paths by instruction count; batch hash
-  requests now return on faults or step-limit exhaustion instead of leaving a
-  request in an unbounded emulator run.
+- Routed function and batch-hash emulation through the shared bounded address
+  engine; batch requests return on faults or step-limit exhaustion instead of
+  leaving a request in an unbounded emulator run.
 
 ### Removed
 

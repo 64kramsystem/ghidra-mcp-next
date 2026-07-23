@@ -1,7 +1,7 @@
 {
   "version": "5.15.0",
   "description": "GhidraMCP REST API Endpoint Specification",
-  "total_endpoints": 248,
+  "total_endpoints": 249,
   "categories": {
     "listing": "List program data",
     "getter": "Get specific data",
@@ -20,7 +20,7 @@
     "export": "Native program export",
     "script": "Script execution",
     "utility": "Utility endpoints",
-    "emulation": "P-code emulation (run functions with controlled inputs)"
+    "emulation": "Bounded P-code emulation with controlled inputs"
   },
   "endpoints": [
     {
@@ -1042,6 +1042,25 @@
         "program"
       ],
       "description": "Replace a structure field with an embedded struct type by value (e.g. Rectangle inside LayoutNode). Uses modify_struct_field internally."
+    },
+    {
+      "path": "/emulate_address",
+      "method": "POST",
+      "category": "emulation",
+      "params": [
+        "address",
+        "registers",
+        "memory",
+        "stop_addresses",
+        "capture_memory",
+        "return_address",
+        "terminal_policy",
+        "max_steps",
+        "trace_limit",
+        "access_log_limit",
+        "program"
+      ],
+      "description": "Execute bounded P-code from an exact address without creating or requiring a function. Returns an instruction trace, semantic memory accesses, changed registers, self-modifying writes, and optional final memory captures."
     },
     {
       "path": "/emulate_function",
