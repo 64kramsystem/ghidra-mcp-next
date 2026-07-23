@@ -8,16 +8,21 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 
+import ghidra.program.database.mem.FileBytes;
 import ghidra.program.model.address.Address;
+import ghidra.program.model.address.AddressRange;
+import ghidra.program.model.address.OverlayAddressSpace;
 import ghidra.program.model.address.AddressOverflowException;
 import ghidra.program.model.listing.Program;
 import ghidra.program.model.mem.Memory;
 import ghidra.program.model.mem.MemoryBlock;
+import ghidra.program.model.mem.MemoryBlockSourceInfo;
 import ghidra.util.task.TaskMonitor;
 
 /**
@@ -80,7 +85,33 @@ final class MemoryBlockCore {
             boolean execute,
             String permissions,
             boolean volatileFlag,
-            String comment) {
+            String comment,
+            String type,
+            boolean artificial,
+            boolean loaded,
+            String sourceName,
+            String overlayBaseSpace,
+            List<SourceInfoDescriptor> sourceInfos) {
+    }
+
+    record FileProvenance(
+            String filename,
+            long importedFileOffset,
+            long storedSize) {
+    }
+
+    record MappedRangeDescriptor(String start, String end) {
+    }
+
+    record SourceInfoDescriptor(
+            String minAddress,
+            String maxAddress,
+            long length,
+            String description,
+            FileProvenance file,
+            long fileOffset,
+            MappedRangeDescriptor mappedRange,
+            String byteMappingScheme) {
     }
 
     record CreatePlan(
@@ -490,7 +521,13 @@ final class MemoryBlockCore {
                 : request.volatileFlag(),
             request.comment() == null
                 ? before.comment()
-                : normalizeComment(request.comment()));
+                : normalizeComment(request.comment()),
+            before.type(),
+            before.artificial(),
+            before.loaded(),
+            before.sourceName(),
+            before.overlayBaseSpace(),
+            before.sourceInfos());
         return new UpdatePlan(block, before, predicted, request);
     }
 
@@ -566,7 +603,7 @@ final class MemoryBlockCore {
     MovePlan planMove(
             Program program, String blockName, String destinationText) {
         MemoryBlock block = requireBlock(program, blockName);
-        if (block.isOverlay()) {
+        if (block.getStart().getAddressSpace().isOverlaySpace()) {
             throw new IllegalArgumentException(
                 "moving overlay blocks is unsupported");
         }
@@ -765,7 +802,7 @@ final class MemoryBlockCore {
             block.getEnd().toString(false),
             block.getSize(),
             block.getStart().getAddressSpace().getName(),
-            block.isOverlay(),
+            block.getStart().getAddressSpace().isOverlaySpace(),
             block.isInitialized(),
             source,
             block.isRead(),
@@ -774,7 +811,13 @@ final class MemoryBlockCore {
             permissions(
                 block.isRead(), block.isWrite(), block.isExecute()),
             block.isVolatile(),
-            normalizeComment(block.getComment()));
+            normalizeComment(block.getComment()),
+            block.getType().name(),
+            block.isArtificial(),
+            block.isLoaded(),
+            source,
+            overlayBaseSpace(block),
+            sourceInfos(block));
     }
 
     static List<BlockDescriptor> descriptors(Program program) {
@@ -804,7 +847,24 @@ final class MemoryBlockCore {
             permissions(
                 request.read(), request.write(), request.execute()),
             request.volatileFlag(),
-            normalizeComment(request.comment()));
+            normalizeComment(request.comment()),
+            "DEFAULT",
+            false,
+            start.getAddressSpace().isLoadedMemorySpace(),
+            request.source().source(),
+            request.overlay()
+                ? start.getAddressSpace().getName()
+                : null,
+            List.of(new SourceInfoDescriptor(
+                start.toString(false),
+                end.toString(false),
+                length,
+                (request.source().initialized() ? "init" : "uninit")
+                    + "[0x" + Long.toHexString(length) + "]",
+                null,
+                -1,
+                null,
+                null)));
     }
 
     /**
@@ -848,7 +908,63 @@ final class MemoryBlockCore {
             base.execute(),
             base.permissions(),
             base.volatileFlag(),
-            base.comment());
+            base.comment(),
+            base.type(),
+            base.artificial(),
+            base.loaded(),
+            base.sourceName(),
+            base.overlayBaseSpace(),
+            base.sourceInfos());
+    }
+
+    private static String overlayBaseSpace(MemoryBlock block) {
+        if (!(block.getStart().getAddressSpace()
+                instanceof OverlayAddressSpace overlay)) {
+            return null;
+        }
+        return overlay.getOverlayedSpace().getName();
+    }
+
+    private static List<SourceInfoDescriptor> sourceInfos(MemoryBlock block) {
+        return block.getSourceInfos().stream()
+            .map(MemoryBlockCore::sourceInfo)
+            .sorted(Comparator
+                .comparing(SourceInfoDescriptor::minAddress)
+                .thenComparing(SourceInfoDescriptor::maxAddress))
+            .toList();
+    }
+
+    private static SourceInfoDescriptor sourceInfo(
+            MemoryBlockSourceInfo info) {
+        FileProvenance file = info.getFileBytes()
+            .map(MemoryBlockCore::fileProvenance)
+            .orElse(null);
+        MappedRangeDescriptor mapped = info.getMappedRange()
+            .map(MemoryBlockCore::mappedRange)
+            .orElse(null);
+        String scheme = info.getByteMappingScheme()
+            .map(Object::toString)
+            .orElse(null);
+        return new SourceInfoDescriptor(
+            info.getMinAddress().toString(false),
+            info.getMaxAddress().toString(false),
+            info.getLength(),
+            normalizeComment(info.getDescription()),
+            file,
+            info.getFileBytesOffset(),
+            mapped,
+            scheme);
+    }
+
+    private static FileProvenance fileProvenance(FileBytes file) {
+        return new FileProvenance(
+            file.getFilename(), file.getFileOffset(), file.getSize());
+    }
+
+    private static MappedRangeDescriptor mappedRange(AddressRange range) {
+        return new MappedRangeDescriptor(
+            range.getMinAddress().toString(false),
+            range.getMaxAddress().toString(false));
     }
 
     private static MemoryBlock requireBlock(

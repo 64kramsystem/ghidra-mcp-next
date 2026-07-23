@@ -55,6 +55,46 @@ public class MemoryBlockServiceSchemaTest {
         assertFalse(parameters.get("overlay").get("default").getAsBoolean());
         assertTrue(parameters.get("read").get("default").getAsBoolean());
         assertTrue(parameters.get("dry_run").get("default").getAsBoolean());
+
+        JsonObject resize = schema.getAsJsonArray("tools").asList().stream()
+            .map(element -> element.getAsJsonObject())
+            .filter(tool -> tool.get("path").getAsString()
+                .equals("/resize_memory_block"))
+            .findFirst().orElseThrow();
+        Map<String, JsonObject> resizeParameters =
+            resize.getAsJsonArray("params").asList().stream()
+                .map(element -> element.getAsJsonObject())
+                .collect(Collectors.toMap(
+                    parameter -> parameter.get("name").getAsString(),
+                    Function.identity()));
+        assertTrue(resizeParameters.get("file_offset").get("default")
+            .getAsJsonPrimitive().isNumber());
+        assertEquals(0,
+            resizeParameters.get("file_offset").get("default").getAsInt());
+        assertTrue(resizeParameters.get("dry_run").get("default")
+            .getAsJsonPrimitive().isBoolean());
+        assertTrue(resizeParameters.get("dry_run").get("default")
+            .getAsBoolean());
+        assertEquals("error", resizeParameters.get("on_inbound_refs")
+            .get("default").getAsString());
+
+        JsonObject delete = schema.getAsJsonArray("tools").asList().stream()
+            .map(element -> element.getAsJsonObject())
+            .filter(tool -> tool.get("path").getAsString()
+                .equals("/delete_memory_block"))
+            .findFirst().orElseThrow();
+        Map<String, JsonObject> deleteParameters =
+            delete.getAsJsonArray("params").asList().stream()
+                .map(element -> element.getAsJsonObject())
+                .collect(Collectors.toMap(
+                    parameter -> parameter.get("name").getAsString(),
+                    Function.identity()));
+        assertTrue(deleteParameters.get("dry_run").get("default")
+            .getAsJsonPrimitive().isBoolean());
+        assertTrue(deleteParameters.get("dry_run").get("default")
+            .getAsBoolean());
+        assertEquals("error", deleteParameters.get("on_inbound_refs")
+            .get("default").getAsString());
     }
 
     @Test
@@ -72,7 +112,9 @@ public class MemoryBlockServiceSchemaTest {
                 "/update_memory_block",
                 "/split_memory_block",
                 "/move_memory_block",
-                "/write_memory_bytes")) {
+                "/write_memory_bytes",
+                "/delete_memory_block",
+                "/resize_memory_block")) {
             assertEquals(path, "memory", tools.get(path).category());
         }
         assertEquals(
@@ -101,6 +143,17 @@ public class MemoryBlockServiceSchemaTest {
             List.of("start", "bytes", "conflict_policy", "dry_run", "program"),
             tools.get("/write_memory_bytes").params().stream()
                 .map(AnnotationScanner.ParamDescriptor::name).toList());
+        assertEquals(
+            List.of("name", "on_inbound_refs", "dry_run", "program"),
+            tools.get("/delete_memory_block").params().stream()
+                .map(AnnotationScanner.ParamDescriptor::name).toList());
+        assertEquals(
+            List.of(
+                "name", "new_end", "new_length", "on_inbound_refs",
+                "fill", "bytes", "file_path", "file_offset",
+                "source_length", "dry_run", "program"),
+            tools.get("/resize_memory_block").params().stream()
+                .map(AnnotationScanner.ParamDescriptor::name).toList());
         assertTrue(tools.get("/create_memory_block").description()
             .contains("initialized"));
         assertTrue(tools.get("/write_memory_bytes").description()
@@ -117,7 +170,9 @@ public class MemoryBlockServiceSchemaTest {
                 "/update_memory_block",
                 "/split_memory_block",
                 "/move_memory_block",
-                "/write_memory_bytes")) {
+                "/write_memory_bytes",
+                "/delete_memory_block",
+                "/resize_memory_block")) {
             assertTrue(path, tools.get(path).supportsDryRun());
         }
     }
@@ -277,7 +332,9 @@ public class MemoryBlockServiceSchemaTest {
                 "/update_memory_block",
                 "/split_memory_block",
                 "/move_memory_block",
-                "/write_memory_bytes")) {
+                "/write_memory_bytes",
+                "/delete_memory_block",
+                "/resize_memory_block")) {
             var entry = catalog.getAsJsonArray("endpoints").asList()
                 .stream()
                 .map(element -> element.getAsJsonObject())

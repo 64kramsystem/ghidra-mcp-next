@@ -29,6 +29,7 @@ import ghidra.program.model.address.AddressSpace;
 import ghidra.program.model.listing.Program;
 import ghidra.program.model.mem.Memory;
 import ghidra.program.model.mem.MemoryBlock;
+import ghidra.program.model.mem.MemoryBlockType;
 
 /**
  * Exercises write planning and response creation with adversarial differences
@@ -136,6 +137,8 @@ public class MemoryBlockWriteHeapTest {
         when(block.getStart()).thenReturn(start);
         when(block.getEnd()).thenReturn(end);
         when(block.getSize()).thenReturn((long) LARGE_LENGTH);
+        when(block.getType()).thenReturn(MemoryBlockType.DEFAULT);
+        when(block.getSourceInfos()).thenReturn(java.util.List.of());
         when(block.getSourceName()).thenReturn("fixture");
         when(block.isRead()).thenReturn(true);
         when(block.isWrite()).thenReturn(true);

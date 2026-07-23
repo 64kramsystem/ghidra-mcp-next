@@ -1,7 +1,7 @@
 {
   "version": "5.15.0",
   "description": "GhidraMCP REST API Endpoint Specification",
-  "total_endpoints": 243,
+  "total_endpoints": 244,
   "categories": {
     "listing": "List program data",
     "getter": "Get specific data",
@@ -922,6 +922,18 @@
         "program"
       ],
       "description": "Delete label at address"
+    },
+    {
+      "path": "/delete_memory_block",
+      "method": "POST",
+      "category": "memory",
+      "params": [
+        "name",
+        "on_inbound_refs",
+        "dry_run",
+        "program"
+      ],
+      "description": "Preview and atomically delete one exact memory block with explicit inbound-reference handling"
     },
     {
       "path": "/delete_project",
@@ -2191,6 +2203,25 @@
         "program"
       ],
       "description": "Batch rename variables"
+    },
+    {
+      "path": "/resize_memory_block",
+      "method": "POST",
+      "category": "memory",
+      "params": [
+        "name",
+        "new_end",
+        "new_length",
+        "on_inbound_refs",
+        "fill",
+        "bytes",
+        "file_path",
+        "file_offset",
+        "source_length",
+        "dry_run",
+        "program"
+      ],
+      "description": "Preview and atomically shrink or grow one exact memory block"
     },
     {
       "path": "/resize_struct",

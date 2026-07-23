@@ -30,6 +30,10 @@ import ghidra.framework.ApplicationConfiguration;
 import ghidra.program.database.ProgramBuilder;
 import ghidra.program.database.ProgramDB;
 import ghidra.program.model.address.Address;
+import ghidra.program.model.data.WordDataType;
+import ghidra.program.model.listing.CommentType;
+import ghidra.program.model.symbol.RefType;
+import ghidra.program.model.symbol.SourceType;
 
 /**
  * Real-Ghidra coverage for initialized overlays, transformations, byte writes,
@@ -506,6 +510,236 @@ public class MemoryBlockServiceGhidraTest {
         assertNull(program.getMemory().getBlock("cancelled"));
     }
 
+    @Test
+    public void deletePreviewsCollateralAndAppliesExplicitReferencePolicies()
+            throws Exception {
+        create("source", "0x2000", null, "01020304", null, null,
+            false, null, true, false, false, false, null, false);
+        create("target", "0x3000", null, "aabbccdd", null, null,
+            false, null, true, false, false, false, "obsolete", false);
+        Address source = ServiceUtils.parseAddress(program, "0x2000");
+        Address target = ServiceUtils.parseAddress(program, "0x3000");
+        int transaction = program.startTransaction("collateral");
+        try {
+            var symbol = program.getSymbolTable().createLabel(
+                target, "TARGET_DATA", SourceType.USER_DEFINED);
+            var reference = program.getReferenceManager().addMemoryReference(
+                source, target, RefType.DATA, SourceType.USER_DEFINED, 0);
+            program.getReferenceManager().setAssociation(symbol, reference);
+            program.getListing().setComment(
+                target, CommentType.PLATE, "delete me");
+            program.getBookmarkManager().setBookmark(
+                target, "Info", "test", "delete me");
+        }
+        finally {
+            program.endTransaction(transaction, true);
+        }
+
+        assertError(memory.deleteMemoryBlock(
+            "target", "error", true, ""), "inbound");
+        JsonObject preview = ok(memory.deleteMemoryBlock(
+            "target", "keep", true, ""));
+        assertFalse(preview.get("committed").getAsBoolean());
+        assertEquals(1, preview.getAsJsonObject("counts")
+            .get("symbols").getAsInt());
+        assertEquals(1, preview.getAsJsonObject("counts")
+            .get("bookmarks").getAsInt());
+        JsonObject inbound = preview.getAsJsonArray("inbound_references")
+            .get(0).getAsJsonObject();
+        assertTrue(inbound.get("association_cleared").getAsBoolean());
+        assertEquals(-1,
+            inbound.get("associated_symbol_id_after").getAsLong());
+
+        JsonObject committed = ok(memory.deleteMemoryBlock(
+            "target", "keep", false, ""));
+        assertTrue(committed.get("committed").getAsBoolean());
+        assertNull(program.getMemory().getBlock("target"));
+        var kept = program.getReferenceManager().getReference(
+            source, target, 0);
+        assertTrue(kept != null);
+        assertEquals(-1, kept.getSymbolID());
+
+        create("clear_target", "0x3100", null, "0102", null, null,
+            false, null, true, false, false, false, null, false);
+        Address clearTarget = ServiceUtils.parseAddress(program, "0x3100");
+        transaction = program.startTransaction("clear reference");
+        try {
+            program.getReferenceManager().addMemoryReference(
+                source, clearTarget, RefType.DATA,
+                SourceType.USER_DEFINED, 1);
+        }
+        finally {
+            program.endTransaction(transaction, true);
+        }
+        ok(memory.deleteMemoryBlock(
+            "clear_target", "clear", false, ""));
+        assertNull(program.getReferenceManager().getReference(
+            source, clearTarget, 1));
+    }
+
+    @Test
+    public void resizeGrowsAndShrinksAtomicallyWhilePreservingMetadata() {
+        create("resizable", "0x4000", null, "00010203", null, null,
+            false, null, true, true, true, true, "stable", false);
+        int transaction = program.startTransaction("artificial");
+        try {
+            program.getMemory().getBlock("resizable").setArtificial(true);
+        }
+        finally {
+            program.endTransaction(transaction, true);
+        }
+
+        JsonObject growPreview = ok(memory.resizeMemoryBlock(
+            "resizable", null, 6L, "error", null, "aabb",
+            null, 0L, null, true, ""));
+        assertEquals("grow", growPreview.get("operation").getAsString());
+        assertArrayEquals(hex("00010203"), bytes("0x4000", 4));
+        JsonObject grown = ok(memory.resizeMemoryBlock(
+            "resizable", null, 6L, "error", null, "aabb",
+            null, 0L, null, false, ""));
+        assertArrayEquals(hex("00010203aabb"), bytes("0x4000", 6));
+        JsonObject descriptor = grown.getAsJsonObject("after");
+        assertEquals("rwx", descriptor.get("permissions").getAsString());
+        assertEquals("stable", descriptor.get("comment").getAsString());
+        assertTrue(descriptor.get("volatile").getAsBoolean());
+        assertTrue(descriptor.get("artificial").getAsBoolean());
+
+        JsonObject shrinkPreview = ok(memory.resizeMemoryBlock(
+            "resizable", null, 3L, "error", null, null,
+            null, 0L, null, true, ""));
+        assertEquals("shrink", shrinkPreview.get("operation").getAsString());
+        JsonObject shrunk = ok(memory.resizeMemoryBlock(
+            "resizable", null, 3L, "error", null, null,
+            null, 0L, null, false, ""));
+        assertEquals(3, shrunk.getAsJsonObject("after")
+            .get("length").getAsInt());
+        assertArrayEquals(hex("000102"), bytes("0x4000", 3));
+        assertEquals("stable",
+            program.getMemory().getBlock("resizable").getComment());
+    }
+
+    @Test
+    public void overlayLifecycleChecksBackingAndCleansTheFinalSpace()
+            throws Exception {
+        create("backing", "0x5000", 0x20L, null, null, null,
+            false, 0, true, true, false, false, null, false);
+        JsonObject overlay = create(
+            "bank", "0x5000", null, "01020304", null, null,
+            true, null, true, false, true, false, "banked", false);
+        String space = overlay.getAsJsonObject("after")
+            .get("address_space").getAsString();
+
+        JsonObject grown = ok(memory.resizeMemoryBlock(
+            "bank", null, 6L, "error", 0xff, null,
+            null, 0L, null, false, ""));
+        assertEquals(6, grown.getAsJsonObject("after")
+            .get("length").getAsInt());
+        assertArrayEquals(
+            hex("01020304ffff"),
+            bytes(space + "::0x5000", 6));
+        int transaction = program.startTransaction("second overlay block");
+        try {
+            var overlaySpace =
+                (ghidra.program.model.address.OverlayAddressSpace)
+                    program.getAddressFactory().getAddressSpace(space);
+            program.getMemory().createInitializedBlock(
+                "bank_extra",
+                overlaySpace.getAddressInThisSpaceOnly(0x5010),
+                2,
+                (byte) 0,
+                ghidra.util.task.TaskMonitor.DUMMY,
+                false);
+        }
+        finally {
+            program.endTransaction(transaction, true);
+        }
+        JsonObject deleted = ok(memory.deleteMemoryBlock(
+            "bank", "error", false, ""));
+        assertEquals("retained",
+            deleted.get("overlay_space_observed").getAsString());
+        assertTrue(program.getAddressFactory().getAddressSpace(space) != null);
+        assertError(memory.deleteMemoryBlock(
+            "bank_extra", "keep", true, ""), "final block");
+        deleted = ok(memory.deleteMemoryBlock(
+            "bank_extra", "error", false, ""));
+        assertEquals("removed",
+            deleted.get("overlay_space_observed").getAsString());
+        assertNull(program.getAddressFactory().getAddressSpace(space));
+    }
+
+    @Test
+    public void lifecycleSafetyPoliciesRejectImageMappedAndSplitBoundaries()
+            throws Exception {
+        create("image", "0x0000", null, "00010203", null, null,
+            false, null, true, false, false, false, null, false);
+        create("boundary", "0x6000", null, "00010203", null, null,
+            false, null, true, false, false, false, null, false);
+        int transaction = program.startTransaction("image and data");
+        try {
+            program.getListing().createData(
+                ServiceUtils.parseAddress(program, "0x6002"),
+                WordDataType.dataType);
+        }
+        finally {
+            program.endTransaction(transaction, true);
+        }
+        assertError(memory.deleteMemoryBlock(
+            "image", "error", true, ""), "image base");
+        assertError(memory.resizeMemoryBlock(
+            "boundary", null, 3L, "error", null, null,
+            null, 0L, null, true, ""), "code unit");
+
+        create("mapped_source", "0x7000", 0x10L, null, null, null,
+            false, 0, true, true, false, false, null, false);
+        transaction = program.startTransaction("mapped");
+        try {
+            program.getMemory().createByteMappedBlock(
+                "mapped",
+                ServiceUtils.parseAddress(program, "0x7100"),
+                ServiceUtils.parseAddress(program, "0x7000"),
+                4,
+                false);
+        }
+        finally {
+            program.endTransaction(transaction, true);
+        }
+        assertError(memory.deleteMemoryBlock(
+            "mapped", "error", true, ""), "mapped");
+        assertError(memory.resizeMemoryBlock(
+            "mapped", null, 2L, "error", null, null,
+            null, 0L, null, true, ""), "mapped");
+    }
+
+    @Test
+    public void lifecycleDryRunsAndLateFailuresRollbackCompositeChanges() {
+        create("delete_me", "0x8000", null, "0102", null, null,
+            false, null, true, false, false, false, null, false);
+        create("resize_me", "0x8100", null, "01020304", null, null,
+            false, null, true, true, false, false, "stable", false);
+
+        ok(memory.deleteMemoryBlock(
+            "delete_me", "error", true, ""));
+        ok(memory.resizeMemoryBlock(
+            "resize_me", null, 6L, "error", null, "aabb",
+            null, 0L, null, true, ""));
+        assertTrue(program.getMemory().getBlock("delete_me") != null);
+        assertArrayEquals(hex("01020304"), bytes("0x8100", 4));
+
+        HeadlessProgramProvider provider = new HeadlessProgramProvider();
+        provider.setCurrentProgram(program);
+        MemoryBlockService aborting = new MemoryBlockService(
+            provider, new AbortAfterActionStrategy());
+        assertError(aborting.deleteMemoryBlock(
+            "delete_me", "error", false, ""), "forced rollback");
+        assertTrue(program.getMemory().getBlock("delete_me") != null);
+        assertError(aborting.resizeMemoryBlock(
+            "resize_me", null, 6L, "error", null, "aabb",
+            null, 0L, null, false, ""), "forced rollback");
+        assertEquals(4,
+            program.getMemory().getBlock("resize_me").getSize());
+        assertArrayEquals(hex("01020304"), bytes("0x8100", 4));
+    }
+
     private MemoryBlockService serviceForRoot(
             Path root, DirectThreadingStrategy strategy) {
         HeadlessProgramProvider provider = new HeadlessProgramProvider();
@@ -597,7 +831,9 @@ public class MemoryBlockServiceGhidraTest {
             java.util.Set.of(
                 "name", "start", "end", "length", "address_space",
                 "overlay", "initialized", "source", "read", "write",
-                "execute", "permissions", "volatile", "comment"),
+                "execute", "permissions", "volatile", "comment", "type",
+                "artificial", "loaded", "source_name",
+                "overlay_base_space", "source_infos"),
             descriptor.keySet());
     }
 

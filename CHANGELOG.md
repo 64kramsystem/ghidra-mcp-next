@@ -19,6 +19,11 @@ Complete version history for the Ghidra MCP Server project.
   ordinary and overlay blocks, bounded file and byte sources, metadata
   transforms, dry-run previews, SHA-256 write reporting, and atomic rollback.
   `list_segments` now returns complete structured block descriptors.
+- Added dry-run-first `delete_memory_block` and `resize_memory_block`.
+  Destructive previews enumerate bounded listing collateral and inbound
+  references, require an explicit inbound-reference policy, preserve retained
+  bytes and metadata, verify overlay cleanup, and roll back composite
+  split/remove or create/join failures atomically.
 - Added `export_ascii_listing`, a GUI/headless native `AsciiExporter` endpoint
   for whole-program or inclusive bounded listings. It enforces
   `GHIDRA_MCP_FILE_ROOT`, publishes through a sibling temporary file so failed
