@@ -534,7 +534,12 @@ public final class FlowDisassemblyService {
 
             while (!queue.isEmpty()) {
                 QueueItem item = queue.remove();
-                if (!processed.add(item) || instructions.containsKey(item.address())) {
+                if (!processed.add(item)) {
+                    continue;
+                }
+                if (instructions.containsKey(item.address())) {
+                    validateDuplicateProvenance(
+                        item, instructions, dataToClear, conflicts);
                     continue;
                 }
                 if (instructions.size() >= request.maxInstructions()) {
@@ -853,6 +858,35 @@ public final class FlowDisassemblyService {
             }
             DataUnit unit = scheduled.get(location.unitStart());
             return unit != null && unit.end().equals(location.unitEnd());
+        }
+
+        private static void validateDuplicateProvenance(
+                QueueItem item,
+                Map<Address, InstructionRecord> instructions,
+                Map<Address, DataUnit> scheduled,
+                List<Conflict> conflicts) {
+            DataUnit unit = scheduledDataContaining(item.address(), scheduled);
+            if (unit == null || item.address().equals(unit.start())) {
+                return;
+            }
+            Location location =
+                Location.data(item.address(), unit.start(), unit.end());
+            if (!isVirtualContinuation(location, item, instructions, scheduled)) {
+                conflicts.add(conflict(
+                    item, "middle_of_defined_data", unit.start(), unit.end()));
+            }
+        }
+
+        private static DataUnit scheduledDataContaining(
+                Address address,
+                Map<Address, DataUnit> scheduled) {
+            for (DataUnit unit : scheduled.values()) {
+                if (unit.start().compareTo(address) <= 0 &&
+                    unit.end().compareTo(address) >= 0) {
+                    return unit;
+                }
+            }
+            return null;
         }
 
         private static boolean isVirtualContinuation(
