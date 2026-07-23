@@ -13,6 +13,19 @@ Complete version history for the Ghidra MCP Server project.
   resolution, compare-and-swap guards, temporary read-only writes, bounded
   annotation-preserving code/data clearing, readback verification, compact
   digests for large commits, and transaction-wide rollback.
+- Added a strict bridge/server capability handshake for GUI TCP, GUI UDS, and
+  headless TCP. Every connection generation validates the shared version
+  payload and complete manifest, reports exact server/bridge identities,
+  manifest and callable-schema SHA-256 digests, eager/lazy callable counts,
+  loaded groups, and notification diagnostics through
+  `get_connection_info`, `refresh_connection`, connect results, and
+  generation-aware `check_tools`.
+- Added atomic FastMCP 1.28.1 registry publication. Candidate handlers are
+  built off-registry; connect, refresh, reconnect, load, and unload either
+  publish one complete map or preserve/clear the prior generation according
+  to operation safety. Dynamic handlers validate their captured
+  name/method/path after reconnect, replay only GET requests, and use hidden
+  MCP context for `tools/list_changed`.
 - Added `apply_data_regions` for atomic fixed data ranges, interleaved
   records, and generic contiguous or independently addressed split pointer
   tables with dry-run previews, conflict preservation, cancellation-safe
@@ -63,7 +76,15 @@ Complete version history for the Ghidra MCP Server project.
 
 ### Changed
 
-- Streamlined ghidra-mcp around its local GUI/headless analysis stack, with 246 cataloged endpoints, schema discovery, TCP/UDS transports, and explicit multi-program selection.
+- Renamed the bridge management wrappers to
+  `create_and_connect_project` and `import_file_and_notify`. The server
+  manifest's `create_project` and `import_file` now register normally instead
+  of being silently suppressed by static-name collisions. The bridge runtime
+  dependency is pinned exactly to `mcp==1.28.1`, the validated private
+  registry shape.
+- Streamlined ghidra-mcp around its local GUI/headless analysis stack, with
+  246 cataloged endpoints, schema discovery, TCP/UDS transports, and explicit
+  multi-program selection.
 - Made Maven the only Java build backend while retaining the uv-packaged
   Python bridge and setup commands.
 - Kept caller-supplied annotations unrestricted and retained generated-symbol

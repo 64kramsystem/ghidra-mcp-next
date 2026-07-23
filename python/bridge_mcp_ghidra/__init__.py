@@ -1,9 +1,8 @@
 """GhidraMCP Bridge — thin MCP↔HTTP multiplexer.
 
 On startup: exposes list_instances + connect_instance plus tool-group tools.
-On connect_instance: fetches /mcp/schema from the Ghidra
-server and dynamically registers every analysis tool as a generic HTTP
-dispatcher.
+On connect_instance: validates /get_version and /mcp/schema from the selected
+Ghidra server, then atomically publishes the matching dynamic tool generation.
 
 Supports two transports to Ghidra:
   - UDS (Unix domain sockets) — preferred for local instances

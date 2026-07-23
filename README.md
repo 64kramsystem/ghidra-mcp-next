@@ -120,9 +120,9 @@ project without first opening one manually:
 
 ```text
 list_instances()
-create_project(parent_dir="/tmp/ghidra-projects", name="FileZilla")
-import_file(file_path="/path/to/filezilla", auto_analyze=true)
-import_file(file_path="/path/to/libfilezilla.so", auto_analyze=true)
+create_and_connect_project(parent_dir="/tmp/ghidra-projects", name="FileZilla")
+import_file_and_notify(file_path="/path/to/filezilla", auto_analyze=true)
+import_file_and_notify(file_path="/path/to/libfilezilla.so", auto_analyze=true)
 list_open_programs()
 switch_program(program="filezilla")
 save_program(program="filezilla")
@@ -149,6 +149,20 @@ check_tools("rename_function_by_address,batch_set_comments")
 Load a group once, call its tools by their exposed names, and do not repeatedly
 load the same group in a retry loop. A tool error should be handled as an
 operation error; reloading a group does not change the target's state.
+
+Every connect, switch, reconnect, and `refresh_connection()` validates the
+selected server's `/get_version` and complete `/mcp/schema` before publishing
+any tools. Use `get_connection_info()` to report the exact plugin, bridge,
+transport, manifest digests, callable count, and connection generation.
+`check_tools(...)` includes the active manifest digest and generation.
+Registration failures never leave a partial tool map; a failed explicit switch
+preserves the healthy previous connection, while a failed active refresh or
+reconnect disconnects and removes stale dynamic tools.
+
+The friendly bridge wrappers are named `create_and_connect_project` and
+`import_file_and_notify`. The schema-discovered server tools retain the names
+`create_project` and `import_file`, so both count normally in the server
+manifest without colliding with bridge management tools.
 
 ## TraceRMI dynamic analysis
 

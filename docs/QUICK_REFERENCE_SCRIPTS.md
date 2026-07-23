@@ -39,9 +39,10 @@ Load each group once and call tools by name. Do not loop on
 
 ```text
 list_instances()
-create_project(parent_dir="/tmp/projects", name="analysis")
-import_file(file_path="/path/to/main.exe", auto_analyze=true)
-import_file(file_path="/path/to/library.dll", auto_analyze=true)
+create_and_connect_project(parent_dir="/tmp/projects", name="analysis")
+import_file_and_notify(file_path="/path/to/main.exe", auto_analyze=true)
+import_file_and_notify(file_path="/path/to/library.dll", auto_analyze=true)
+get_connection_info()
 list_open_programs()
 switch_program(program="main.exe")
 save_program(program="main.exe")

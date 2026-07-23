@@ -372,10 +372,7 @@ class TestAutoConnectWindowsTcp(unittest.TestCase):
 
 
 class TestTryReconnectTransportRouting(unittest.TestCase):
-    """dispatch._try_reconnect (the post-Ghidra-restart recovery path) must
-    route by transport capability: UDS when this Python can dial it, the
-    instance's enriched TCP url when it can't (Windows CPython), and give up
-    cleanly when neither is possible."""
+    """The legacy synchronous path cannot publish a partial manifest."""
 
     def setUp(self):
         import bridge_mcp_ghidra as bridge
@@ -393,50 +390,10 @@ class TestTryReconnectTransportRouting(unittest.TestCase):
         bridge.state._transport_mode = "none"
         bridge.state._connected_project = None
 
-    def _instance(self, **extra):
-        return {
-            "socket": r"F:\tmp\ghidra-mcp-benam\ghidra-9020.sock",
-            "pid": 9020,
-            "project": "diablo2",
-            **extra,
-        }
-
-    def test_reconnects_via_uds_when_supported(self):
+    def test_sync_reconnect_is_disabled_without_mutating_transport(self):
         import bridge_mcp_ghidra as bridge
 
-        inst = self._instance(url="http://127.0.0.1:8089")
-        with patch.object(bridge.discovery, "discover_instances", return_value=[inst]), \
-             patch.object(bridge.transport, "uds_supported", return_value=True), \
-             patch.object(bridge.registry, "_fetch_and_register_schema", return_value=0):
-            self.assertTrue(bridge.dispatch._try_reconnect())
-
-        self.assertEqual(bridge.state._transport_mode, "uds")
-        self.assertEqual(bridge.state._active_socket, inst["socket"])
-        self.assertIsNone(bridge.state._active_tcp)
-
-    def test_reconnects_via_tcp_url_when_uds_unsupported(self):
-        import bridge_mcp_ghidra as bridge
-
-        inst = self._instance(url="http://127.0.0.1:8089")
-        with patch.object(bridge.discovery, "discover_instances", return_value=[inst]), \
-             patch.object(bridge.transport, "uds_supported", return_value=False), \
-             patch.object(bridge.registry, "_fetch_and_register_schema", return_value=0):
-            self.assertTrue(bridge.dispatch._try_reconnect())
-
-        self.assertEqual(bridge.state._transport_mode, "tcp")
-        self.assertEqual(bridge.state._active_tcp, "http://127.0.0.1:8089")
-        self.assertIsNone(bridge.state._active_socket)
-
-    def test_gives_up_when_uds_unsupported_and_no_url(self):
-        import bridge_mcp_ghidra as bridge
-
-        inst = self._instance()  # no url — TCP enrichment found nothing
-        with patch.object(bridge.discovery, "discover_instances", return_value=[inst]), \
-             patch.object(bridge.transport, "uds_supported", return_value=False), \
-             patch.object(bridge.registry, "_fetch_and_register_schema") as fetch:
-            self.assertFalse(bridge.dispatch._try_reconnect())
-
-        fetch.assert_not_called()
+        self.assertFalse(bridge.dispatch._try_reconnect())
         self.assertEqual(bridge.state._transport_mode, "none")
 
 

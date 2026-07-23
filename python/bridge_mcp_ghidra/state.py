@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from importlib import metadata
 from typing import Any
 
-from .config import CORE_GROUPS, logger
+from .config import CORE_GROUPS, STATIC_TOOL_NAMES, logger
 
 # --------------------------------------------------------------------------
 # Connection state
@@ -76,6 +76,8 @@ def connection_summary() -> dict[str, Any]:
         **bridge_identity(),
         "connected": bundle.connected,
         "connection_generation": bundle.generation,
+        "static_tool_count": len(STATIC_TOOL_NAMES),
+        "static_tools": sorted(STATIC_TOOL_NAMES),
     }
     if bundle.connected:
         result.update(
@@ -83,7 +85,8 @@ def connection_summary() -> dict[str, Any]:
                 "project": bundle.project,
                 "transport": bundle.transport,
                 "endpoint": bundle.endpoint,
-                "mode": "lazy" if bundle.lazy else "eager",
+                "tool_loading_mode": "lazy" if bundle.lazy else "eager",
+                "lazy": bundle.lazy,
                 "manifest_count": bundle.manifest_count,
                 "callable_dynamic_count": bundle.callable_dynamic_count,
                 "loaded_groups": list(bundle.loaded_groups),

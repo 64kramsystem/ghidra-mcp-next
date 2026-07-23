@@ -69,7 +69,18 @@ class TestLiveServerSmoke:
         payload = json.loads(response.text)
         assert isinstance(payload, dict)
         assert payload.get("plugin_name") == "GhidraMCP"
-        assert "plugin_version" in payload
+        required = {
+            "plugin_version",
+            "build_timestamp",
+            "build_number",
+            "full_version",
+            "ghidra_version",
+            "java_version",
+            "endpoint_count",
+            "mode",
+        }
+        assert required.issubset(payload), payload
+        assert payload["mode"] in {"gui", "headless"}
 
     def test_version_payload_matches_pom(self, http_client):
         """Catch deploys-of-stale-jar: the live plugin's version must

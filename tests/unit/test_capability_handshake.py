@@ -2,10 +2,12 @@ import json
 import asyncio
 import threading
 import time
+import tomllib
 from copy import deepcopy
 from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
+from pathlib import Path
 
 import pytest
 
@@ -81,6 +83,18 @@ def test_manifest_validation_and_digests_are_canonical():
     assert same.manifest_sha256 == candidate.manifest_sha256
     assert same.callable_schema_sha256 == candidate.callable_schema_sha256
 
+    key_reordered = {
+        "tools": [
+            {key: value for key, value in reversed(list(tool.items()))}
+            for tool in SCHEMA["tools"]
+        ],
+        "count": 2,
+    }
+    same_keys = handshake.validate_handshake(
+        deepcopy(VERSION), key_reordered
+    )
+    assert same_keys.manifest_sha256 == candidate.manifest_sha256
+
     parameter_order = deepcopy(SCHEMA)
     parameter_order["tools"][0]["params"].append(
         {"name": "limit", "type": "integer", "required": False}
@@ -94,6 +108,13 @@ def test_manifest_validation_and_digests_are_canonical():
         with_parameter.callable_schema_sha256
         != candidate.callable_schema_sha256
     )
+
+    reversed_parameters = deepcopy(parameter_order)
+    reversed_parameters["tools"][0]["params"].reverse()
+    reversed_digest = handshake.validate_handshake(
+        deepcopy(VERSION), reversed_parameters
+    )
+    assert reversed_digest.manifest_sha256 != with_parameter.manifest_sha256
 
     unknown = deepcopy(SCHEMA)
     unknown["tools"][0]["future"] = "value"
@@ -244,6 +265,13 @@ def test_registry_adapter_rejects_wrong_version_and_stages_atomically(monkeypatc
     assert mcp._tool_manager._tools["dynamic"] is dynamic
 
 
+def test_runtime_dependency_and_startup_adapter_are_exact():
+    root = Path(__file__).resolve().parents[2]
+    project = tomllib.loads((root / "pyproject.toml").read_text())
+    assert "mcp==1.28.1" in project["project"]["dependencies"]
+    assert registry._registry_adapter is not None
+
+
 def _wire_responses(version=None, schema=None):
     version = deepcopy(version or VERSION)
     schema = deepcopy(schema or SCHEMA)
@@ -304,6 +332,19 @@ def test_eager_handshake_publishes_complete_bundle(monkeypatch, clean_connection
     }
     assert set(state._dynamic_tool_names) == {"alpha", "beta"}
     assert state._last_attempt["success"] is True
+
+
+def test_disconnected_info_reports_bridge_and_static_tools_only(
+    clean_connection,
+):
+    info = json.loads(static_tools.get_connection_info())
+    assert info["connected"] is False
+    assert info["connection_generation"] == 0
+    assert info["bridge_package"] == "ghidra-mcp-bridge"
+    assert Path(info["bridge_source"]).is_absolute()
+    assert info["static_tool_count"] == len(static_tools.STATIC_TOOL_NAMES)
+    assert "plugin_version" not in info
+    assert info["last_attempt"] is None
 
 
 def test_lazy_handshake_and_atomic_group_load(monkeypatch, clean_connection):

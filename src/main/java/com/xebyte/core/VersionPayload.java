@@ -1,6 +1,5 @@
 package com.xebyte.core;
 
-import com.xebyte.GhidraMCPPlugin;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.LinkedHashMap;
@@ -16,7 +15,7 @@ public final class VersionPayload {
     private static String buildNumber = "0";
 
     static {
-        try (InputStream input = GhidraMCPPlugin.class
+        try (InputStream input = VersionPayload.class
                 .getResourceAsStream("/com/xebyte/version.properties")) {
             if (input != null) {
                 Properties properties = new Properties();

@@ -27,9 +27,9 @@ forwarded. Cross-program tools must provide both selectors (`source_program` and
 
 ```text
 list_instances()
-create_project(parent_dir="/tmp/projects", name="FileZilla")
-import_file(file_path="/opt/targets/filezilla", auto_analyze=true)
-import_file(file_path="/opt/targets/libfilezilla.so", auto_analyze=true)
+create_and_connect_project(parent_dir="/tmp/projects", name="FileZilla")
+import_file_and_notify(file_path="/opt/targets/filezilla", auto_analyze=true)
+import_file_and_notify(file_path="/opt/targets/libfilezilla.so", auto_analyze=true)
 list_open_programs()
 switch_program(program="filezilla")
 decompile_function(address="0x...", program="filezilla")
@@ -37,7 +37,7 @@ search_functions(query="verify", program="libfilezilla.so")
 save_program(program="filezilla")
 ```
 
-The parent directory for `create_project` must already exist. If
+The parent directory for `create_and_connect_project` must already exist. If
 `GHIDRA_MCP_FILE_ROOT` is configured, project and imported-file paths must stay
 inside its canonical tree.
 
