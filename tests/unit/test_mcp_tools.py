@@ -149,8 +149,7 @@ class TestToolGroupManagement(unittest.TestCase):
         self.assertEqual(loaded, ["grp_test_b"])
         self.assertIn("grp_beta", _loaded_groups)
 
-    def test_load_group_skips_bad_tool_and_continues(self):
-        """Lazy group loading should not abort on one malformed tool."""
+    def test_load_group_rejects_bad_tool_without_partial_publication(self):
         import bridge_mcp_ghidra as bridge
 
         schema = [
@@ -185,19 +184,11 @@ class TestToolGroupManagement(unittest.TestCase):
 
         try:
             bridge.register_tools_from_schema(schema, groups={"grp_alpha"})
-            with mock.patch("sys.stderr") as mock_stderr:
+            previous = set(bridge.state._dynamic_tool_names)
+            with self.assertRaisesRegex(ValueError, "bad-param"):
                 loaded = bridge._load_group("grp_beta")
-
-            self.assertEqual(loaded, ["issue_212_lazy_valid_after"])
-            self.assertIn("grp_beta", bridge.state._loaded_groups)
-            self.assertIn("issue_212_lazy_valid_after", bridge.state._dynamic_tool_names)
-            self.assertNotIn(
-                "issue_212_lazy_bad_signature", bridge.state._dynamic_tool_names
-            )
-            message = mock_stderr.write.call_args.args[0]
-            self.assertIn("1 tool(s) failed to register", message)
-            self.assertIn("issue_212_lazy_bad_signature", message)
-            self.assertIn("bad-param", message)
+            self.assertEqual(set(bridge.state._dynamic_tool_names), previous)
+            self.assertNotIn("grp_beta", bridge.state._loaded_groups)
         finally:
             bridge.register_tools_from_schema([])
 
@@ -209,6 +200,7 @@ class TestConnectInstance(unittest.TestCase):
         import bridge_mcp_ghidra as bridge
 
         schema = {
+            "count": 2,
             "tools": [
                 {
                     "path": "/listing_tool",
@@ -239,42 +231,64 @@ class TestConnectInstance(unittest.TestCase):
         old_dynamic_names = list(bridge.state._dynamic_tool_names)
         old_full_schema = list(bridge.state._full_schema)
         old_loaded_groups = set(bridge.state._loaded_groups)
+        old_bundle = bridge.state._connection
+        old_map = bridge.registry._adapter().snapshot()
 
         try:
             bridge.state._lazy_mode = False
             with mock.patch.object(
                 bridge.discovery,
-                "discover_instances",
+                "discover_all_instances",
                 return_value=[
-                    {"project": "TestProject", "socket": "/tmp/test.sock", "pid": 42}
+                    {
+                        "project": "TestProject",
+                        "socket": "/tmp/test.sock",
+                        "pid": 42,
+                        "uds_reachable": True,
+                    }
                 ],
             ), mock.patch.object(
                 bridge.transport,
-                "do_request",
-                return_value=(json.dumps(schema), 200),
+                "candidate_request",
+                side_effect=[
+                    (
+                        json.dumps(
+                            {
+                                "plugin_name": "GhidraMCP",
+                                "plugin_version": "5.15.0",
+                                "build_timestamp": "dev",
+                                "build_number": "0",
+                                "full_version": "5.15.0 (build 0, dev)",
+                                "ghidra_version": "12.1.2",
+                                "java_version": "21",
+                                "endpoint_count": 2,
+                                "mode": "gui",
+                            }
+                        ),
+                        200,
+                    ),
+                    (json.dumps(schema), 200),
+                ],
             ):
                 result = json.loads(
                     asyncio.run(bridge.connect_instance("TestProject", ctx=ctx))
                 )
 
             self.assertTrue(result["connected"])
-            self.assertEqual(result["tools_registered"], 2)
-            self.assertEqual(result["tools_total"], 2)
+            self.assertEqual(result["callable_dynamic_count"], 2)
+            self.assertEqual(result["manifest_count"], 2)
             self.assertEqual(set(result["loaded_groups"]), {"listing", "datatype"})
-            self.assertEqual(result["note"], "Loaded all 2 tools on connect.")
             session.send_tool_list_changed.assert_awaited_once()
         finally:
-            for name in list(bridge.state._dynamic_tool_names):
-                bridge.mcp._tool_manager._tools.pop(name, None)
-            bridge.state._dynamic_tool_names[:] = old_dynamic_names
-            bridge.state._full_schema[:] = old_full_schema
-            bridge.state._loaded_groups.clear()
-            bridge.state._loaded_groups.update(old_loaded_groups)
+            bridge.registry._adapter().replace_dynamic(
+                {
+                    name: tool
+                    for name, tool in old_map.items()
+                    if name not in bridge.STATIC_TOOL_NAMES
+                }
+            )
+            bridge.state.publish_connection(old_bundle)
             bridge.state._lazy_mode = old_lazy_mode
-            bridge.state._active_socket = old_active_socket
-            bridge.state._active_tcp = old_active_tcp
-            bridge.state._transport_mode = old_transport_mode
-            bridge.state._connected_project = old_connected_project
 
 
 class TestEndpointTimeouts(unittest.TestCase):

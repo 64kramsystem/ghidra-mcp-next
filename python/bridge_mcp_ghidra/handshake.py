@@ -6,6 +6,7 @@ import hashlib
 import json
 import keyword
 import re
+import unicodedata
 from copy import deepcopy
 from dataclasses import dataclass
 from importlib import metadata
@@ -83,7 +84,11 @@ def parse_json_strict(text: str, kind: str) -> Any:
             object_pairs_hook=_reject_duplicate_pairs,
             parse_constant=_reject_non_finite,
         )
-    except HandshakeError:
+    except HandshakeError as exc:
+        if kind == "version":
+            raise HandshakeError(
+                "version-response failure", str(exc)
+            ) from exc
         raise
     except (TypeError, ValueError, json.JSONDecodeError) as exc:
         category = (
@@ -114,7 +119,7 @@ def _canonical_path(value: Any, index: int) -> str:
         raise HandshakeError(
             "malformed schema", f"tool[{index}].path must be a string"
         )
-    if any(ord(char) < 0x20 or ord(char) == 0x7F for char in value):
+    if any(unicodedata.category(char) == "Cc" for char in value):
         raise HandshakeError(
             "malformed schema",
             f"tool[{index}].path contains a control character",

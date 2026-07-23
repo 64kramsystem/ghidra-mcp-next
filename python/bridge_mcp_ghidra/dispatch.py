@@ -2,6 +2,7 @@
 
 import json
 import time
+from typing import Any
 
 from . import discovery
 from . import registry
@@ -195,3 +196,91 @@ def dispatch_post(
             return json.dumps({"error": str(e)})
 
     return json.dumps({"error": "Max retries exceeded"})
+
+
+async def dispatch_dynamic(
+    name: str,
+    method: str,
+    endpoint: str,
+    *,
+    query_params: dict[str, str] | None,
+    body: dict[str, Any] | None,
+    ctx,
+) -> str:
+    """Invoke one manifest identity with safe reconnect and replay semantics."""
+    identity = (method, endpoint)
+    with state._ghidra_lock:
+        bundle = state._connection
+        if not bundle.connected:
+            return json.dumps(
+                {"error": "No Ghidra instance connected. Use connect_instance() first."}
+            )
+        if bundle.identities.get(name) != identity:
+            return json.dumps(
+                {
+                    "error": (
+                        f"stale-handler identity: {name!r} is not "
+                        f"{method} {endpoint} in generation {bundle.generation}"
+                    ),
+                    "category": "stale-handler identity",
+                    "connection_generation": bundle.generation,
+                }
+            )
+    timeout = get_timeout(endpoint, body)
+    try:
+        text, status = transport.do_request(
+            method,
+            endpoint,
+            params=query_params,
+            json_data=body if method == "POST" else None,
+            timeout=timeout,
+        )
+    except (ConnectionError, OSError) as exc:
+        # Import lazily to avoid registry/static-tool import cycles.
+        from .static_tools import _reconnect_active
+
+        reconnect = await _reconnect_active(ctx, cause=str(exc))
+        with state._ghidra_lock:
+            bundle = state._connection
+            current = bundle.identities.get(name) if bundle.connected else None
+            generation = bundle.generation
+        if not reconnect.get("connected"):
+            return json.dumps(reconnect)
+        if current != identity:
+            return json.dumps(
+                {
+                    "error": (
+                        f"stale-handler identity after reconnect: {name!r} "
+                        f"was {method} {endpoint}, now {current!r}"
+                    ),
+                    "category": "stale-handler identity",
+                    "connection_generation": generation,
+                }
+            )
+        if method == "POST":
+            return json.dumps(
+                {
+                    "error": (
+                        "Reconnect completed, but the POST call was not replayed "
+                        "because its outcome is uncertain."
+                    ),
+                    "category": "call not replayed",
+                    "connected": True,
+                    "connection_generation": generation,
+                }
+            )
+        try:
+            text, status = transport.do_request(
+                "GET",
+                endpoint,
+                params=query_params,
+                timeout=timeout,
+            )
+        except Exception as retry_exc:
+            return json.dumps({"error": str(retry_exc)})
+    except Exception as exc:
+        return json.dumps({"error": str(exc)})
+
+    if status == 200:
+        return text.strip() if method == "POST" else text
+    return json.dumps({"error": f"HTTP {status}: {text.strip()}"})

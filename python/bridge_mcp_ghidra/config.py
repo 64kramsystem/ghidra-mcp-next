@@ -62,13 +62,15 @@ logger = logging.getLogger("bridge_mcp_ghidra")
 MANAGEMENT_TOOL_NAMES = {
     "list_instances",
     "connect_instance",
-    "create_project",
+    "create_and_connect_project",
+    "refresh_connection",
+    "get_connection_info",
     "list_tool_groups",
     "load_tool_group",
     "unload_tool_group",
     "check_tools",
     "search_tools",
-    "import_file",
+    "import_file_and_notify",
 }
 
 # Static management tools registered by the bridge itself. TraceRMI debugger

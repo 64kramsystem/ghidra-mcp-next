@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 
+from . import connection
 from . import discovery
 from . import dispatch
 from . import registry
@@ -61,6 +62,13 @@ def _select_instance(
             record for record in instances if _matches_instance(record, selector)
         ]
         if not matches:
+            matches = [
+                record
+                for record in instances
+                if selector.lower()
+                in str(record.get("project", "")).lower()
+            ]
+        if not matches:
             raise InstanceSelectionError(
                 f"Requested instance '{selector}' was not found.", instances
             )
@@ -70,9 +78,15 @@ def _select_instance(
             )
         selected = matches[0]
 
-    if selected.get("uds_reachable") and selected.get("socket"):
+    uds_reachable = selected.get("uds_reachable")
+    if uds_reachable is None:
+        uds_reachable = bool(selected.get("socket")) and transport.uds_supported()
+    tcp_reachable = selected.get("tcp_reachable")
+    if tcp_reachable is None:
+        tcp_reachable = bool(selected.get("url"))
+    if uds_reachable and selected.get("socket"):
         return selected, "uds", str(selected["socket"])
-    if selected.get("tcp_reachable") and selected.get("url"):
+    if tcp_reachable and selected.get("url"):
         return selected, "tcp", str(selected["url"])
     raise InstanceSelectionError(
         "Selected Ghidra instance has no reachable transport.", instances
@@ -85,71 +99,18 @@ def _selection_tool_error(error: InstanceSelectionError) -> RuntimeError:
     )
 
 
-def _create_request(
-    mode: str, endpoint: str, parent_dir: str, name: str
-) -> tuple[str, int]:
-    payload = {"parentDir": parent_dir, "name": name}
-    request = (
-        transport.uds_request if mode == "uds" else transport.tcp_request
-    )
-    return request(
-        endpoint,
-        "POST",
-        "/create_project",
-        json_data=payload,
-        timeout=30,
-    )
-
-
-def _parse_create_response(text: str, status: int) -> dict:
-    try:
-        response = discovery._unwrap_response_data(text)
-    except Exception as e:
-        raise RuntimeError(
-            f"create_project returned invalid JSON after the mutating request: {e}"
-        ) from e
-
-    if status != 200 or not isinstance(response, dict):
-        raise RuntimeError(
-            json.dumps(
-                {
-                    "error": "GUI project creation failed",
-                    "http_status": status,
-                    "response": response,
-                }
-            )
-        )
-    if response.get("success") is not True:
-        raise RuntimeError(
-            json.dumps(
-                {
-                    "error": "GUI project creation failed",
-                    "response": response,
-                }
-            )
-        )
-    if (
-        response.get("active") is not True
-        or not response.get("project")
-        or not response.get("path")
-    ):
-        raise RuntimeError(
-            json.dumps(
-                {
-                    "error": "GUI returned an incomplete create_project success",
-                    "response": response,
-                }
-            )
-        )
-    return response
-
-
 def _instance_summary(instance: dict) -> dict:
     return {
         key: instance[key]
         for key in ("pid", "socket", "url")
         if instance.get(key) is not None
     }
+
+
+@mcp.tool()
+def get_connection_info() -> str:
+    """Return the published connection generation and last attempt, without I/O."""
+    return connection.get_connection_info_json()
 
 
 @mcp.tool()
@@ -186,7 +147,7 @@ def list_instances() -> str:
 
 
 @mcp.tool()
-async def create_project(
+async def create_and_connect_project(
     parent_dir: str,
     name: str,
     instance: str | None = None,
@@ -210,208 +171,220 @@ async def create_project(
     except InstanceSelectionError as e:
         raise _selection_tool_error(e) from e
 
-    refresh_error = None
-    registered_count = 0
+    attempt = {
+        "operation": "create-and-connect",
+        "candidate": {
+            "project": name,
+            "transport": mode,
+            "endpoint": endpoint,
+        },
+        "started_at": connection.timestamp(),
+        "ended_at": None,
+        "success": False,
+        "failure": None,
+        "server_identity": None,
+        "tools_changed": {
+            "attempted": False,
+            "sent": False,
+            "error": None,
+        },
+    }
     with state._ghidra_lock:
         try:
-            text, status = _create_request(mode, endpoint, parent_dir, name)
+            text, status = connection.create_project_request(
+                mode, endpoint, parent_dir, name
+            )
         except Exception as e:
             raise RuntimeError(
                 "create_project request failed with an uncertain outcome; "
                 f"the bridge did not retry another transport: {e}"
             ) from e
 
-        response = _parse_create_response(text, status)
+        response = connection.parse_create_project_response(text, status)
         project = str(response["project"])
         path = str(response["path"])
-
-        if mode == "uds":
-            state._active_socket = endpoint
-            state._active_tcp = None
-        else:
-            state._active_tcp = endpoint
-            state._active_socket = None
-        state._transport_mode = mode
-        state._connected_project = project
-
+        had_dynamic = bool(state._connection.dynamic_names)
         try:
-            registry._clear_dynamic_tools()
-            registered_count = registry._fetch_and_register_schema()
-        except Exception as e:
-            refresh_error = str(e)
-            registry._clear_dynamic_tools()
+            staged = connection.fetch_staged_candidate(mode, endpoint)
+            attempt["server_identity"] = dict(staged.manifest.version)
+            registry.publish_staged(
+                staged,
+                project=project,
+                mode=mode,
+                endpoint=endpoint,
+                generation=state._connection.generation + 1,
+                lazy=state._lazy_mode,
+            )
+            attempt["success"] = True
+            result = {
+                "created": True,
+                "path": path,
+                "instance": _instance_summary(selected),
+                **state.connection_summary(),
+            }
+            notify = True
+        except Exception as exc:
+            if isinstance(exc, registry.handshake.HandshakeError):
+                failure = exc
+            else:
+                failure = registry.handshake.HandshakeError(
+                    "registration failure", str(exc)
+                )
+            attempt["server_identity"] = failure.server_identity
+            attempt["failure"] = failure.as_dict()
+            registry.publish_disconnected()
+            result = {
+                "created": True,
+                "connected": False,
+                "project": project,
+                "path": path,
+                "instance": _instance_summary(selected),
+                "error": str(failure),
+                "failure": failure.as_dict(),
+                **state.connection_summary(),
+            }
+            notify = had_dynamic
+        attempt["ended_at"] = connection.timestamp()
+        state._last_attempt = attempt
 
-        result = {
-            "created": True,
-            "active": True,
-            "connected": refresh_error is None,
-            "project": project,
-            "path": path,
-            "instance": _instance_summary(selected),
-            "registered_tool_count": (
-                registered_count if refresh_error is None else 0
-            ),
-        }
-        if refresh_error is not None:
-            result["refresh_error"] = refresh_error
-
-    await registry._notify_tools_changed(ctx)
+    diagnostics = await connection.send_tools_changed(ctx, notify)
+    with state._ghidra_lock:
+        attempt["tools_changed"] = diagnostics
+        if state._last_attempt is attempt:
+            state._last_attempt = attempt
+    result["tools_changed"] = diagnostics
     return json.dumps(result)
 
 
 @mcp.tool()
 async def connect_instance(project: str, ctx: Context | None = None) -> str:
-    """
-    Switch the MCP bridge to a different Ghidra instance by project name.
-
-    IMPORTANT: Before calling this function only the static bridge tools are
-    exposed (list_instances, connect_instance, tool-group management).
-    After a successful connect the bridge fetches the
-    instance's /mcp/schema and registers Ghidra analysis tools dynamically.
-    By default all tool groups are loaded on connect. When started with
-    --lazy, only the default groups are loaded initially and clients may need
-    to call load_tool_group() for additional categories. Clients that cache
-    the initial tools/list and don't honor tools/list_changed must re-list
-    tools after this call.
-
-    Use list_instances() first to see available instances.
-
-    Args:
-        project: Project name (or substring) to connect to
-    """
-    instances = discovery.discover_instances()
-
-    # Try UDS instances first
-    match = None
-    matched_tcp_url = None
-    if instances:
-        for inst in instances:
-            if inst.get("project", "") == project:
-                match = inst
-                break
-        if not match:
-            for inst in instances:
-                if project.lower() in inst.get("project", "").lower():
-                    match = inst
-                    break
-        if match and not transport.uds_supported():
-            # Windows CPython can't dial the socket it just matched; the
-            # discovery enrichment recorded the instance's TCP url — route
-            # the connection there instead of failing the UDS handshake.
-            matched_tcp_url = match.get("url")
-        elif match:
-            state._active_socket = match["socket"]
-            state._active_tcp = None
-            state._transport_mode = "uds"
-            state._connected_project = match.get("project")
-
-            try:
-                count = registry._fetch_and_register_schema()
-                total = len(state._full_schema)
-                note = (
-                    f"Loaded {count}/{total} tools (default groups). Use load_tool_group() for more."
-                    if state._lazy_mode
-                    else f"Loaded all {count} tools on connect."
+    """Select a running instance and publish its exact capability manifest."""
+    instances = discovery.discover_all_instances()
+    try:
+        selected, mode, endpoint = _select_instance(instances, project)
+    except InstanceSelectionError as error:
+        project_matches = [
+            item for item in instances if item.get("project") == project
+        ]
+        if (
+            instances
+            and (
+                not any(item.get("project") for item in instances)
+                or len(project_matches) == 1
+            )
+        ):
+            scanned = discovery._scan_tcp_for_project(project)
+            if scanned and validate_server_url(scanned):
+                selected = (
+                    {**project_matches[0], "url": scanned}
+                    if project_matches
+                    else {"project": project, "url": scanned}
                 )
-                await registry._notify_tools_changed(ctx)
+                mode, endpoint = "tcp", scanned
+            else:
                 return json.dumps(
                     {
-                        "connected": True,
-                        "transport": "uds",
-                        "project": state._connected_project,
-                        "socket": match["socket"],
-                        "pid": match.get("pid"),
-                        "tools_registered": count,
-                        "tools_total": total,
-                        "loaded_groups": sorted(state._loaded_groups),
-                        "note": note,
+                        "error": str(error),
+                        "available": error.available,
+                        **state.connection_summary(),
                     }
                 )
-            except Exception as e:
-                return json.dumps(
-                    {"error": f"Schema fetch failed: {e}", "socket": state._active_socket}
-                )
+        else:
+            available = [
+                item.get("project", "unknown") for item in instances
+            ]
+            return json.dumps(
+                {
+                    "error": f"No instance matching '{project}'.",
+                    "available": available,
+                    **state.connection_summary(),
+                }
+            )
+    with state._ghidra_lock:
+        preserve = state._connection.connected
+    result = await connection.handshake_candidate(
+        "switch" if preserve else "connect",
+        mode=mode,
+        endpoint=endpoint,
+        project=selected.get("project") or project,
+        ctx=ctx,
+        failure_policy="preserve" if preserve else "clear",
+    )
+    result["instance"] = _instance_summary(selected)
+    return json.dumps(result)
 
-    # Try TCP fallback. The behavior depends on what UDS discovery returned:
-    #
-    #   * If GHIDRA_MCP_URL is set, it always wins (explicit user override).
-    #   * If a UDS instance matched but Python can't dial UDS (Windows), use
-    #     the TCP url discovery recorded for that exact instance.
-    #   * If UDS found one or more instances with project metadata and none
-    #     matched the project, refuse to fall back to TCP -- that's how we
-    #     previously silently connected to the wrong instance (Copilot #196
-    #     review item).
-    #   * If UDS found no usable project metadata, scan the TCP port range
-    #     looking for a /mcp/instance_info that matches the project. Handles
-    #     TCP-only and native Windows cases where AF_UNIX is unavailable.
-    #   * If no scan match either, try the default port as a last resort.
-    env_tcp = os.getenv("GHIDRA_MCP_URL")
-    if env_tcp:
-        tcp_url = env_tcp
-    elif matched_tcp_url:
-        tcp_url = matched_tcp_url
-    elif match is None and instances and any(inst.get("project") for inst in instances):
-        # UDS found instances but none matched the requested project. Don't
-        # randomly pick another instance's tcp_port — that connects to the
-        # wrong project. Return the "no match" error directly.
-        available = [inst.get("project", "unknown") for inst in instances]
-        return json.dumps(
-            {
-                "error": (
-                    f"No instance matching '{project}' (UDS: {len(instances)} found, "
-                    f"none matched). Refusing to use any instance's tcp_port — would "
-                    f"connect to the wrong project. Use list_instances() to see what's "
-                    f"available."
-                ),
-                "available": available,
-            }
+
+@mcp.tool()
+async def refresh_connection(ctx: Context | None = None) -> str:
+    """Re-fetch version and manifest from the active endpoint and republish."""
+    with state._ghidra_lock:
+        active = state._connection
+        if not active.connected:
+            return json.dumps(
+                {
+                    **state.connection_summary(),
+                    "error": "No active connection to refresh.",
+                }
+            )
+        mode = active.transport
+        endpoint = active.endpoint
+        project = active.project
+    result = await connection.handshake_candidate(
+        "refresh",
+        mode=mode,
+        endpoint=endpoint,
+        project=project,
+        ctx=ctx,
+        failure_policy="clear",
+    )
+    return json.dumps(result)
+
+
+async def _reconnect_active(
+    ctx: Context | None, *, cause: str | None = None
+) -> dict:
+    """Reconnect the last selected project through the same handshake core."""
+    with state._ghidra_lock:
+        previous = state._connection
+        project = previous.project or state._connected_project
+        old_mode = previous.transport or state._transport_mode
+        old_endpoint = (
+            previous.endpoint
+            or state._active_socket
+            or state._active_tcp
         )
-    else:
-        # No usable UDS project metadata. Scan the TCP port range to find one
-        # matching the project. _scan_tcp_for_project returns the URL of the
-        # first matching instance, or None if nothing matched.
-        scanned = discovery._scan_tcp_for_project(project)
-        tcp_url = scanned if scanned else DEFAULT_TCP_URL
-    if not validate_server_url(tcp_url):
-        return json.dumps(
-            {
-                "error": f"Refusing to connect to invalid TCP URL: {tcp_url}. Expected http://<127.0.0.1|localhost|::1>:<port> (http scheme and an explicit port are required)."
-            }
-        )
-    try:
-        state._active_tcp = tcp_url
-        state._active_socket = None
-        state._transport_mode = "tcp"
-        state._connected_project = match.get("project") if match else None
-        count = registry._fetch_and_register_schema()
-        total = len(state._full_schema)
-        note = (
-            f"Loaded {count}/{total} tools (default groups). Use load_tool_group() for more."
-            if state._lazy_mode
-            else f"Loaded all {count} tools on connect."
-        )
-        await registry._notify_tools_changed(ctx)
-        return json.dumps(
-            {
-                "connected": True,
-                "transport": "tcp",
-                "url": tcp_url,
-                "tools_registered": count,
-                "tools_total": total,
-                "loaded_groups": sorted(state._loaded_groups),
-                "note": note,
-            }
-        )
-    except Exception as e:
-        state._transport_mode = "none"
-        state._active_tcp = None
-        available = [inst.get("project", "unknown") for inst in instances]
-        return json.dumps(
-            {
-                "error": f"No instance matching '{project}' (UDS: {len(instances)} found, TCP {tcp_url}: {e})",
-                "available": available,
-            }
-        )
+    mode = old_mode
+    endpoint = old_endpoint
+    if project:
+        instances = discovery.discover_all_instances()
+        exact = [
+            item for item in instances if item.get("project") == project
+        ]
+        if not exact:
+            exact = [
+                item
+                for item in instances
+                if project.lower() in str(item.get("project", "")).lower()
+            ]
+        if len(exact) == 1:
+            try:
+                _, mode, endpoint = _select_instance(exact, project)
+            except InstanceSelectionError:
+                pass
+    if mode not in {"uds", "tcp"} or not endpoint:
+        mode = "tcp"
+        endpoint = DEFAULT_TCP_URL
+    result = await connection.handshake_candidate(
+        "reconnect",
+        mode=mode,
+        endpoint=endpoint,
+        project=project,
+        ctx=ctx,
+        failure_policy="clear",
+    )
+    if cause:
+        result["reconnect_cause"] = cause
+    return result
 
 
 @mcp.tool()
@@ -440,60 +413,56 @@ async def load_tool_group(group: str, ctx: Context | None = None) -> str:
     Args:
         group: Category name (e.g. "function", "datatype") or "all"
     """
-    if not state._full_schema:
-        return json.dumps(
-            {"error": "No instance connected. Use connect_instance() first."}
-        )
-
-    if group == "all":
-        # Load all unloaded groups
-        all_groups = {td.get("category", "unknown") for td in state._full_schema}
-        all_loaded: list[str] = []
-        for g in sorted(all_groups):
-            all_loaded.extend(registry._load_group(g))
-        if all_loaded:
-            await registry._notify_tools_changed(ctx)
-        return json.dumps(
-            {
-                "loaded": "all",
-                "new_tools": len(all_loaded),
-                "new_tool_names": sorted(all_loaded),
-                "total_loaded": len(state._dynamic_tool_names),
-            }
-        )
-
-    loaded_names = registry._load_group(group)
-    if not loaded_names:
-        available = sorted({td.get("category", "unknown") for td in state._full_schema})
-        if group in state._loaded_groups:
-            # Already loaded — return the tool names so the agent knows what's callable
-            already = sorted(
-                td["name"] for td in state._full_schema if td.get("category") == group
+    with state._ghidra_lock:
+        active = state._connection
+        if not active.connected:
+            return json.dumps(
+                {"error": "No instance connected. Use connect_instance() first."}
             )
+        available = {
+            definition.get("category", "unknown")
+            for definition in active.full_schema
+        }
+        requested = available if group == "all" else {group}
+        if not requested.issubset(available):
+            return json.dumps(
+                {
+                    "error": f"No tools found for group '{group}'",
+                    "available_groups": sorted(available),
+                }
+            )
+        previous = set(active.loaded_groups)
+        resulting = previous | requested
+        if resulting == previous:
             return json.dumps(
                 {
                     "message": f"Group '{group}' is already loaded.",
-                    "tools": already,
-                    "loaded_groups": sorted(state._loaded_groups),
+                    "loaded_groups": sorted(previous),
+                    "tools_changed": {
+                        "attempted": False,
+                        "sent": False,
+                        "error": None,
+                    },
                 }
             )
-        return json.dumps(
-            {
-                "error": f"No tools found for group '{group}'",
-                "available_groups": available,
-            }
+        try:
+            dynamic = registry.stage_active_groups(resulting)
+            registry.publish_active_groups(dynamic, resulting)
+        except registry.handshake.HandshakeError as exc:
+            return json.dumps({"error": str(exc), "failure": exc.as_dict()})
+        new_names = sorted(
+            set(state._connection.dynamic_names)
+            - set(active.dynamic_names)
         )
-
-    await registry._notify_tools_changed(ctx)
-    return json.dumps(
-        {
+        result = {
             "loaded": group,
-            "new_tools": len(loaded_names),
-            "tools": sorted(loaded_names),
-            "total_loaded": len(state._dynamic_tool_names),
-            "loaded_groups": sorted(state._loaded_groups),
+            "new_tools": len(new_names),
+            "new_tool_names": new_names,
+            "total_loaded": len(dynamic),
+            "loaded_groups": sorted(resulting),
         }
-    )
+    result["tools_changed"] = await connection.send_tools_changed(ctx, True)
+    return json.dumps(result)
 
 
 @mcp.tool()
@@ -504,29 +473,46 @@ async def unload_tool_group(group: str, ctx: Context | None = None) -> str:
     Args:
         group: Category name to unload
     """
-    if group in state._default_groups:
-        return json.dumps(
-            {
-                "error": f"Cannot unload default group '{group}'",
-                "default_groups": sorted(state._default_groups),
-            }
-        )
-
-    removed = registry._unload_group(group)
-    if removed == 0:
-        return json.dumps(
-            {"message": f"Group '{group}' is not loaded or has no tools."}
-        )
-
-    await registry._notify_tools_changed(ctx)
-    return json.dumps(
-        {
+    with state._ghidra_lock:
+        if group in state._default_groups:
+            return json.dumps(
+                {
+                    "error": f"Cannot unload default group '{group}'",
+                    "default_groups": sorted(state._default_groups),
+                }
+            )
+        active = state._connection
+        if not active.connected:
+            return json.dumps(
+                {"error": "No instance connected. Use connect_instance() first."}
+            )
+        previous = set(active.loaded_groups)
+        if group not in previous:
+            return json.dumps(
+                {
+                    "message": f"Group '{group}' is not loaded or has no tools.",
+                    "tools_changed": {
+                        "attempted": False,
+                        "sent": False,
+                        "error": None,
+                    },
+                }
+            )
+        resulting = previous - {group}
+        try:
+            dynamic = registry.stage_active_groups(resulting)
+            registry.publish_active_groups(dynamic, resulting)
+        except registry.handshake.HandshakeError as exc:
+            return json.dumps({"error": str(exc), "failure": exc.as_dict()})
+        removed = len(active.dynamic_names) - len(dynamic)
+        result = {
             "unloaded": group,
             "removed_tools": removed,
-            "total_loaded": len(state._dynamic_tool_names),
-            "loaded_groups": sorted(state._loaded_groups),
+            "total_loaded": len(dynamic),
+            "loaded_groups": sorted(resulting),
         }
-    )
+    result["tools_changed"] = await connection.send_tools_changed(ctx, True)
+    return json.dumps(result)
 
 
 @mcp.tool()
@@ -542,36 +528,41 @@ async def check_tools(tools: str) -> str:
     if not tool_names:
         return json.dumps({"error": "Provide comma-separated tool names"})
 
-    # Build lookup of all known tools -> their group
-    all_known: dict[str, str] = {}
-    for td in state._full_schema:
-        all_known[td["name"]] = td.get("category", "unknown")
-
-    # Check each tool
-    results: dict[str, dict] = {}
-    for name in tool_names:
-        if name in STATIC_TOOL_NAMES:
-            results[name] = {"status": "callable", "type": "static"}
-        elif name in state._dynamic_tool_names:
-            results[name] = {
-                "status": "callable",
-                "group": all_known.get(name, "unknown"),
-            }
-        elif name in all_known:
-            group = all_known[name]
-            results[name] = {
-                "status": "not_loaded",
-                "group": group,
-                "fix": f'load_tool_group("{group}")',
-            }
-        else:
-            results[name] = {"status": "not_found"}
+    with state._ghidra_lock:
+        bundle = state._connection
+        all_known = {
+            definition["name"]: definition.get("category", "unknown")
+            for definition in bundle.full_schema
+        }
+        dynamic = set(bundle.dynamic_names)
+        results: dict[str, dict] = {}
+        for name in tool_names:
+            if name in STATIC_TOOL_NAMES:
+                results[name] = {"status": "callable", "type": "static"}
+            elif name in dynamic:
+                results[name] = {
+                    "status": "callable",
+                    "group": all_known.get(name, "unknown"),
+                }
+            elif name in all_known:
+                group = all_known[name]
+                results[name] = {
+                    "status": "not_loaded",
+                    "group": group,
+                    "fix": f'load_tool_group("{group}")',
+                }
+            else:
+                results[name] = {"status": "not_found"}
+        manifest_sha256 = bundle.manifest_sha256
+        generation = bundle.generation
 
     callable_count = sum(1 for r in results.values() if r["status"] == "callable")
     return json.dumps(
         {
             "results": results,
             "summary": f"{callable_count}/{len(tool_names)} callable",
+            "manifest_sha256": manifest_sha256,
+            "connection_generation": generation,
         }
     )
 
@@ -633,7 +624,7 @@ async def search_tools(query: str, limit: int = 15) -> str:
 
 
 @mcp.tool()
-async def import_file(
+async def import_file_and_notify(
     file_path: str,
     project_folder: str = "/",
     language: str | None = None,
@@ -709,74 +700,58 @@ async def import_file(
 
 def _auto_connect():
     """Try to auto-connect to a single running instance on startup."""
-    # Try UDS first
-    instances = discovery.discover_instances()
-    if len(instances) == 1:
-        inst = instances[0]
-        if transport.uds_supported():
-            state._active_socket = inst["socket"]
-            state._transport_mode = "uds"
-            state._connected_project = inst.get("project")
-            logger.info(f"Auto-connecting via UDS to {state._connected_project or 'unknown'}")
-            try:
-                count = registry._fetch_and_register_schema()
-                logger.info(
-                    f"Auto-registered {count} tools from {state._connected_project or 'unknown'}"
-                )
-                return
-            except Exception as e:
-                logger.warning(f"UDS auto-connect schema fetch failed: {e}")
-                state._active_socket = None
-                state._transport_mode = "none"
-        elif inst.get("url") and validate_server_url(inst["url"]):
-            # Windows CPython can't dial the discovered socket; discovery
-            # enriched it with the instance's TCP url — connect there.
-            state._active_tcp = inst["url"]
-            state._transport_mode = "tcp"
-            state._connected_project = inst.get("project")
-            logger.info(
-                f"Auto-connecting via TCP ({inst['url']}) to "
-                f"{state._connected_project or 'unknown'} (UDS unavailable on this Python)"
-            )
-            try:
-                count = registry._fetch_and_register_schema()
-                logger.info(
-                    f"Auto-registered {count} tools from {state._connected_project or 'unknown'}"
-                )
-                return
-            except Exception as e:
-                logger.warning(f"TCP auto-connect schema fetch failed: {e}")
-                state._active_tcp = None
-                state._transport_mode = "none"
-    elif len(instances) > 1:
-        names = ", ".join(
-            i.get("project") or i.get("socket") or "?" for i in instances
-        )
+    instances = discovery.discover_all_instances()
+    if len(instances) > 1:
         logger.info(
-            f"Multiple UDS instances found ({len(instances)}: {names}). "
-            "Use connect_instance() to choose."
+            "Multiple Ghidra instances found; use connect_instance() to choose."
         )
-        # Do NOT fall through to the TCP fallback — that would silently
-        # connect to whichever Ghidra happened to bind 8089 (possibly a
-        # third instance entirely) right after telling the user to choose.
-        # Stay unconnected until connect_instance() is called explicitly,
-        # matching connect_instance's own multi-instance refusal logic.
+        return
+    if len(instances) == 1:
+        try:
+            selected, mode, endpoint = _select_instance(instances)
+        except InstanceSelectionError as exc:
+            logger.warning("Auto-connect selection failed: %s", exc)
+            return
+        result = asyncio.run(
+            connection.handshake_candidate(
+                "auto-connect",
+                mode=mode,
+                endpoint=endpoint,
+                project=selected.get("project"),
+                ctx=None,
+                failure_policy="clear",
+            )
+        )
+        if result.get("connected"):
+            logger.info(
+                "Auto-connected to %s via %s",
+                selected.get("project") or endpoint,
+                mode,
+            )
+        else:
+            logger.warning("Auto-connect handshake failed: %s", result.get("error"))
         return
 
-    # Try TCP fallback
     tcp_url = os.getenv("GHIDRA_MCP_URL", DEFAULT_TCP_URL)
     if not validate_server_url(tcp_url):
-        logger.warning(f"Refusing to auto-connect to non-local URL: {tcp_url}")
+        logger.warning("Refusing to auto-connect to non-local URL: %s", tcp_url)
         return
-    try:
-        state._active_tcp = tcp_url
-        state._transport_mode = "tcp"
-        count = registry._fetch_and_register_schema()
-        logger.info(f"Auto-connected via TCP to {tcp_url}, registered {count} tools")
-    except Exception:
-        state._active_tcp = None
-        state._transport_mode = "none"
-        if not instances:
-            logger.info(
-                "No Ghidra instances found. Tools will be registered on connect_instance()."
-            )
+    result = asyncio.run(
+        connection.handshake_candidate(
+            "auto-connect",
+            mode="tcp",
+            endpoint=tcp_url,
+            project=None,
+            ctx=None,
+            failure_policy="clear",
+        )
+    )
+    if not result.get("connected"):
+        logger.info(
+            "No Ghidra instances found. Tools will be registered on connect_instance()."
+        )
+
+
+# Python-level aliases ease source migration without retaining the old MCP names.
+create_project = create_and_connect_project
+import_file = import_file_and_notify

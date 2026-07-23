@@ -12,7 +12,7 @@ import re
 import unittest
 import asyncio
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import sys
 
@@ -191,10 +191,15 @@ class TestConnectInstanceTcpFallback(unittest.TestCase):
 
         instances = [{"socket": "/tmp/ghidra-123.sock", "pid": 123}]
 
-        with patch.object(bridge.discovery, "discover_instances", return_value=instances), \
+        handshake_call = AsyncMock(return_value={
+            "connected": True,
+            "transport": "tcp",
+            "endpoint": "http://127.0.0.1:8090",
+        })
+        with patch.object(bridge.discovery, "discover_all_instances", return_value=instances), \
              patch.object(bridge.discovery, "_scan_tcp_for_project", return_value="http://127.0.0.1:8090") as scan, \
              patch.object(bridge.static_tools, "validate_server_url", return_value=True), \
-             patch.object(bridge.registry, "_fetch_and_register_schema", return_value=0), \
+             patch.object(bridge.connection, "handshake_candidate", handshake_call), \
              patch.object(bridge.static_tools, "os") as mock_os:
             mock_os.getenv.return_value = None
             bridge.state._full_schema = []
@@ -205,7 +210,7 @@ class TestConnectInstanceTcpFallback(unittest.TestCase):
         data = json.loads(result)
         self.assertTrue(data["connected"])
         self.assertEqual(data["transport"], "tcp")
-        self.assertEqual(data["url"], "http://127.0.0.1:8090")
+        self.assertEqual(data["endpoint"], "http://127.0.0.1:8090")
         scan.assert_called_once_with("wanted")
 
     def test_real_nonmatching_uds_projects_refuse_tcp_fallback(self):
@@ -216,7 +221,7 @@ class TestConnectInstanceTcpFallback(unittest.TestCase):
             {"socket": "/tmp/ghidra-456.sock", "pid": 456, "project": "also_other"},
         ]
 
-        with patch.object(bridge.discovery, "discover_instances", return_value=instances), \
+        with patch.object(bridge.discovery, "discover_all_instances", return_value=instances), \
              patch.object(bridge.discovery, "_scan_tcp_for_project") as scan, \
              patch.object(bridge.static_tools, "os") as mock_os:
             mock_os.getenv.return_value = None
@@ -234,9 +239,14 @@ class TestConnectInstanceTcpFallback(unittest.TestCase):
 
         instances = [{"socket": "/tmp/ghidra-123.sock", "pid": 123, "project": "wanted"}]
 
-        with patch.object(bridge.discovery, "discover_instances", return_value=instances), \
+        handshake_call = AsyncMock(return_value={
+            "connected": True,
+            "transport": "uds",
+            "endpoint": "/tmp/ghidra-123.sock",
+        })
+        with patch.object(bridge.discovery, "discover_all_instances", return_value=instances), \
              patch.object(bridge.transport, "uds_supported", return_value=True), \
-             patch.object(bridge.registry, "_fetch_and_register_schema", return_value=0):
+             patch.object(bridge.connection, "handshake_candidate", handshake_call):
             bridge.state._full_schema = []
             bridge.state._loaded_groups.clear()
 
@@ -245,7 +255,7 @@ class TestConnectInstanceTcpFallback(unittest.TestCase):
         data = json.loads(result)
         self.assertTrue(data["connected"])
         self.assertEqual(data["transport"], "uds")
-        self.assertEqual(data["socket"], "/tmp/ghidra-123.sock")
+        self.assertEqual(data["endpoint"], "/tmp/ghidra-123.sock")
 
     def test_windows_uds_match_routes_via_enriched_tcp_url(self):
         """Windows CPython can't dial the socket it matched — the connection
@@ -258,13 +268,20 @@ class TestConnectInstanceTcpFallback(unittest.TestCase):
             "pid": 9020,
             "project": "diablo2",
             "url": "http://127.0.0.1:8089",
+            "uds_reachable": False,
+            "tcp_reachable": True,
         }]
 
-        with patch.object(bridge.discovery, "discover_instances", return_value=instances), \
+        handshake_call = AsyncMock(return_value={
+            "connected": True,
+            "transport": "tcp",
+            "endpoint": "http://127.0.0.1:8089",
+        })
+        with patch.object(bridge.discovery, "discover_all_instances", return_value=instances), \
              patch.object(bridge.transport, "uds_supported", return_value=False), \
              patch.object(bridge.discovery, "_scan_tcp_for_project") as scan, \
              patch.object(bridge.static_tools, "validate_server_url", return_value=True), \
-             patch.object(bridge.registry, "_fetch_and_register_schema", return_value=0), \
+             patch.object(bridge.connection, "handshake_candidate", handshake_call), \
              patch.object(bridge.static_tools, "os") as mock_os:
             mock_os.getenv.return_value = None
             bridge.state._full_schema = []
@@ -275,8 +292,7 @@ class TestConnectInstanceTcpFallback(unittest.TestCase):
         data = json.loads(result)
         self.assertTrue(data["connected"])
         self.assertEqual(data["transport"], "tcp")
-        self.assertEqual(data["url"], "http://127.0.0.1:8089")
-        self.assertEqual(bridge.state._connected_project, "diablo2")
+        self.assertEqual(data["endpoint"], "http://127.0.0.1:8089")
         scan.assert_not_called()
 
     def test_windows_uds_match_without_url_falls_back_to_scan(self):
@@ -291,12 +307,17 @@ class TestConnectInstanceTcpFallback(unittest.TestCase):
             "project": "diablo2",
         }]
 
-        with patch.object(bridge.discovery, "discover_instances", return_value=instances), \
+        handshake_call = AsyncMock(return_value={
+            "connected": True,
+            "transport": "tcp",
+            "endpoint": "http://127.0.0.1:8093",
+        })
+        with patch.object(bridge.discovery, "discover_all_instances", return_value=instances), \
              patch.object(bridge.transport, "uds_supported", return_value=False), \
              patch.object(bridge.discovery, "_scan_tcp_for_project",
                           return_value="http://127.0.0.1:8093") as scan, \
              patch.object(bridge.static_tools, "validate_server_url", return_value=True), \
-             patch.object(bridge.registry, "_fetch_and_register_schema", return_value=0), \
+             patch.object(bridge.connection, "handshake_candidate", handshake_call), \
              patch.object(bridge.static_tools, "os") as mock_os:
             mock_os.getenv.return_value = None
             bridge.state._full_schema = []
@@ -307,7 +328,7 @@ class TestConnectInstanceTcpFallback(unittest.TestCase):
         data = json.loads(result)
         self.assertTrue(data["connected"])
         self.assertEqual(data["transport"], "tcp")
-        self.assertEqual(data["url"], "http://127.0.0.1:8093")
+        self.assertEqual(data["endpoint"], "http://127.0.0.1:8093")
         scan.assert_called_once_with("diablo2")
 
 
@@ -333,19 +354,21 @@ class TestAutoConnectWindowsTcp(unittest.TestCase):
             "project": "diablo2",
             "url": "http://127.0.0.1:8089",
         }]
-        with patch.object(bridge.discovery, "discover_instances", return_value=one), \
+        handshake_call = AsyncMock(return_value={"connected": True})
+        with patch.object(bridge.discovery, "discover_all_instances", return_value=one), \
              patch.object(bridge.transport, "uds_supported", return_value=False), \
-             patch.object(bridge.registry, "_fetch_and_register_schema", return_value=7):
+             patch.object(bridge.connection, "handshake_candidate", handshake_call):
             bridge.state._active_socket = None
             bridge.state._active_tcp = None
             bridge.state._transport_mode = "none"
 
             bridge._auto_connect()
 
-        self.assertEqual(bridge.state._transport_mode, "tcp")
-        self.assertEqual(bridge.state._active_tcp, "http://127.0.0.1:8089")
-        self.assertEqual(bridge.state._connected_project, "diablo2")
-        self.assertIsNone(bridge.state._active_socket)
+        handshake_call.assert_awaited_once()
+        self.assertEqual(
+            handshake_call.await_args.kwargs["endpoint"],
+            "http://127.0.0.1:8089",
+        )
 
 
 class TestTryReconnectTransportRouting(unittest.TestCase):
@@ -1219,7 +1242,7 @@ class TestRegisterToolsFromSchema(unittest.TestCase):
         self.assertIn("test_tool_reg_1", _dynamic_tool_names)
         self.assertIn("test_tool_reg_2", _dynamic_tool_names)
 
-    def test_register_skips_bad_tool_and_continues(self):
+    def test_register_rejects_bad_tool_without_partial_publication(self):
         import bridge_mcp_ghidra as bridge
 
         schema = [
@@ -1252,20 +1275,12 @@ class TestRegisterToolsFromSchema(unittest.TestCase):
             },
         ]
 
-        try:
-            with patch("sys.stderr") as mock_stderr:
-                count = bridge.register_tools_from_schema(schema)
-
-            self.assertEqual(count, 2)
-            self.assertIn("issue_212_valid_before", bridge.state._dynamic_tool_names)
-            self.assertIn("issue_212_valid_after", bridge.state._dynamic_tool_names)
-            self.assertNotIn("issue_212_bad_signature", bridge.state._dynamic_tool_names)
-            message = mock_stderr.write.call_args.args[0]
-            self.assertIn("1 tool(s) failed to register", message)
-            self.assertIn("issue_212_bad_signature", message)
-            self.assertIn("bad-param", message)
-        finally:
-            bridge.register_tools_from_schema([])
+        previous = set(bridge.state._dynamic_tool_names)
+        with self.assertRaisesRegex(
+            bridge.handshake.HandshakeError, "failed registration"
+        ):
+            bridge.register_tools_from_schema(schema)
+        self.assertEqual(set(bridge.state._dynamic_tool_names), previous)
 
     def test_clears_previous_tools(self):
         from bridge_mcp_ghidra import register_tools_from_schema, _dynamic_tool_names

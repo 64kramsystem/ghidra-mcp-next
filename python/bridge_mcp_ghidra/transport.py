@@ -274,3 +274,25 @@ def do_request(
             raise ConnectionError(
                 "No Ghidra instance connected. Use connect_instance() first."
             )
+
+
+def candidate_request(
+    mode: str,
+    endpoint: str,
+    method: str,
+    path: str,
+    *,
+    params: dict | None = None,
+    json_data: dict | None = None,
+    timeout: int = 30,
+) -> tuple[str, int]:
+    """Request an explicit candidate without consulting or mutating active state."""
+    if mode == "uds":
+        return uds_request(
+            endpoint, method, path, params, json_data, timeout
+        )
+    if mode == "tcp":
+        return tcp_request(
+            endpoint, method, path, params, json_data, timeout
+        )
+    raise ValueError(f"Unsupported candidate transport: {mode!r}")

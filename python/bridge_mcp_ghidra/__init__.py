@@ -25,8 +25,10 @@ from . import validation  # noqa: F401
 from . import transport  # noqa: F401
 from . import discovery  # noqa: F401
 from . import schema  # noqa: F401
+from . import handshake  # noqa: F401
 from . import dispatch  # noqa: F401
 from . import registry  # noqa: F401
+from . import connection  # noqa: F401
 from . import static_tools  # noqa: F401
 from . import cli  # noqa: F401
 
@@ -60,6 +62,7 @@ from .validation import (  # noqa: F401
 from .transport import (  # noqa: F401
     UnixHTTPConnection,
     do_request,
+    candidate_request,
     get_socket_dir,
     get_socket_dir_candidates,
     tcp_request,
@@ -76,6 +79,7 @@ from .dispatch import (  # noqa: F401
     _ensure_connected,
     _try_reconnect,
     dispatch_get,
+    dispatch_dynamic,
     dispatch_post,
     get_timeout,
 )
@@ -93,12 +97,16 @@ from .static_tools import (  # noqa: F401
     _auto_connect,
     check_tools,
     connect_instance,
+    create_and_connect_project,
     create_project,
+    get_connection_info,
     import_file,
+    import_file_and_notify,
     list_instances,
     list_tool_groups,
     load_tool_group,
     search_tools,
+    refresh_connection,
     unload_tool_group,
 )
 # These two are only ever mutated in place (clear/append/add/discard), so the
