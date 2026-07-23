@@ -304,7 +304,7 @@ Classify each candidate into one of these types based on scanner output and quic
 ### Type E: Undisassembled — Atypical Start (LOW)
 - **Pattern**: `MOV_R32_RM32`, `MOV_EAX_MEM`, `PUSH_IMM8`, `CALL_REL32`, `MOV_RM32_R32`, `MOV_RM8_R8`, `CMP_R32_RM32`, `ALU_RM8_IMM8`, etc.
 - **Confidence**: Low — could be data, jump table entries, or code fragments
-- **Action**: Inspect first. Use `inspect_memory_content` or `disassemble_bytes` to preview. Only create if the disassembly forms a coherent function.
+- **Action**: Inspect first. Use `inspect_memory_content` or a dry-run `disassemble_flow` request to preview. Only create if the disassembly forms a coherent function.
 - **Priority**: Low
 - **Red flags**:
   - Bytes that look like address tables (consecutive 4-byte aligned values near the program's image base)
@@ -314,7 +314,7 @@ Classify each candidate into one of these types based on scanner output and quic
 ### Type G: Undisassembled — Unknown Prologue (REVIEW)
 - **Pattern**: Pass 3 hit — non-padding bytes with a RET instruction, but first byte doesn't match any known prologue pattern
 - **Confidence**: Requires manual review — the scanner cannot classify the start bytes
-- **Action**: Always inspect first with `disassemble_bytes` or `inspect_memory_content`. Check `MULTI-RET(N)` flag — if N > 1, the gap likely contains multiple adjacent functions
+- **Action**: Always inspect first with a dry-run `disassemble_flow` request or `inspect_memory_content`. Check `MULTI-RET(N)` flag — if N > 1, the gap likely contains multiple adjacent functions
 - **Priority**: Low (but can contain real functions that use unusual instruction sequences)
 - **Common causes**:
   - Compiler-specific optimizations (computed jumps, table-driven dispatchers)

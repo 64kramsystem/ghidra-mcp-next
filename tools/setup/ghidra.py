@@ -89,7 +89,7 @@ FILEZILLA_CONTRACT_TOOLS = {
     "get_xrefs_to",
     "get_xrefs_from",
     "decompile_function",
-    "disassemble_bytes",
+    "disassemble_flow",
     "clear_flow_and_repair",
     "rename_function",
     "rename_label",

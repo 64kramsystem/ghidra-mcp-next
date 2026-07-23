@@ -602,15 +602,6 @@ public class EndpointRegistry {
             (q, b) -> functionService.createFunctionAtAddress(bodyStr(b, "address"), bodyStr(b, "name"),
                 bodyBool(b, "disassemble_first", true), str(q, "program")));
 
-        post("/disassemble_bytes", "Disassemble a range of bytes",
-            params(bStr("start_address"), bStrOpt("end_address"), bInt("length", 0),
-                bBool("restrict_to_execute_memory"), pProg()),
-            (q, b) -> {
-            Integer length = b.get("length") != null ? JsonHelper.getInt(b.get("length"), 0) : null;
-            if (length != null && length == 0) length = null;
-            return functionService.disassembleBytes(bodyStr(b, "start_address"), bodyStr(b, "end_address"),
-                length, bodyBool(b, "restrict_to_execute_memory", true), str(q, "program"));
-        });
     }
 
     // ======================================================================

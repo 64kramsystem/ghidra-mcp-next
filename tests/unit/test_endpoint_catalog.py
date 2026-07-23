@@ -110,6 +110,7 @@ class TestAnnotatedEndpoints(unittest.TestCase):
             "MalwareSecurityService",
             "ProgramScriptService",
             "ExportService",
+            "FlowDisassemblyService",
         ]
         for svc in expected_services:
             path = CORE_SRC / f"{svc}.java"
@@ -294,6 +295,7 @@ class TestAnnotationScannerExists(unittest.TestCase):
             "MalwareSecurityService",
             "ProgramScriptService",
             "ExportService",
+            "FlowDisassemblyService",
         ]
         for name in expected:
             path = CORE_SRC / f"{name}.java"

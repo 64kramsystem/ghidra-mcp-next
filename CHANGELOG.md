@@ -14,6 +14,10 @@ Complete version history for the Ghidra MCP Server project.
   exports cannot replace a valid destination, and intentionally returns
   Ghidra's human-readable listing format rather than round-trip assembler
   source.
+- Added `disassemble_flow`, a bounded recursive-descent disassembler with
+  side-effect-free previews, explicit traversal limits, code/data conflict
+  reporting, optional call following and function creation, and opt-in
+  post-commit analysis.
 - Added `debugger_attach` for exact-offer, typed TraceRMI PID attachment. The attach-only flow supports native local GDB without synthesizing debugger commands; required-image Wine launchers remain on the existing launch path.
 - Added `debugger_wait_for_stop` for event-driven, bounded waits with explicit stopped, terminated, and timeout results.
 - Added `debugger_memory_maps` for sorted current-snapshot region enumeration with optional process-PID filtering.
@@ -47,6 +51,8 @@ Complete version history for the Ghidra MCP Server project.
 ### Removed
 
 - Gradle, Docker, the alternate build-backend selector, and their CI paths.
+- The linear `disassemble_bytes` contract, replaced by bounded,
+  flow-following `disassemble_flow`.
 - The fun-doc/performance stack, documentation archive/propagation/indexing
   services, repository-server administration/version-control endpoints, the
   standalone dbgeng HTTP proxy, naming-policy configuration and prompt

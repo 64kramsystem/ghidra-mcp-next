@@ -32,7 +32,6 @@ import ghidra.util.task.TaskMonitor;
 import java.io.File;
 import java.util.*;
 
-import ghidra.app.cmd.disassemble.DisassembleCommand;
 
 /**
  * Headless endpoint handler implementation.
@@ -60,6 +59,7 @@ public class HeadlessEndpointHandler {
     private final com.xebyte.core.ProgramScriptService programScriptService;
     private final com.xebyte.core.EmulationService emulationService;
     private final com.xebyte.core.ExportService exportService;
+    private final com.xebyte.core.FlowDisassemblyService flowDisassemblyService;
 
     public HeadlessEndpointHandler(ProgramProvider programProvider, ThreadingStrategy threadingStrategy) {
         this.programProvider = programProvider;
@@ -79,6 +79,8 @@ public class HeadlessEndpointHandler {
         this.programScriptService = new com.xebyte.core.ProgramScriptService(programProvider, threadingStrategy);
         this.emulationService = new com.xebyte.core.EmulationService(programProvider, threadingStrategy);
         this.exportService = new com.xebyte.core.ExportService(programProvider);
+        this.flowDisassemblyService =
+            new com.xebyte.core.FlowDisassemblyService(programProvider, threadingStrategy);
     }
 
     // ==========================================================================
@@ -97,6 +99,9 @@ public class HeadlessEndpointHandler {
     public com.xebyte.core.ProgramScriptService getProgramScriptService() { return programScriptService; }
     public com.xebyte.core.EmulationService getEmulationService() { return emulationService; }
     public com.xebyte.core.ExportService getExportService() { return exportService; }
+    public com.xebyte.core.FlowDisassemblyService getFlowDisassemblyService() {
+        return flowDisassemblyService;
+    }
     public ProgramProvider getProgramProvider() { return programProvider; }
 
     // ==========================================================================
@@ -2104,10 +2109,6 @@ public class HeadlessEndpointHandler {
 
     public String validateFunctionPrototype(String functionAddress, String prototype, String callingConvention, String programName) {
         return dataTypeService.validateFunctionPrototype(functionAddress, prototype, callingConvention, programName).toJson();
-    }
-
-    public String disassembleBytes(String startAddress, String endAddress, int length, String programName) {
-        return functionService.disassembleBytes(startAddress, endAddress, length > 0 ? length : null, false, programName).toJson();
     }
 
     public String runScriptInline(String scriptContent, String args) {

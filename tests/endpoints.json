@@ -8,6 +8,7 @@
     "rename": "Rename symbols",
     "search": "Search functionality",
     "decompile": "Decompilation/disassembly",
+    "disassembly": "Safe bounded instruction discovery",
     "comment": "Set comments",
     "xref": "Cross-references",
     "datatype": "Data type operations",
@@ -943,19 +944,23 @@
       "description": "Diff two functions"
     },
     {
-      "path": "/disassemble_bytes",
+      "path": "/disassemble_flow",
       "method": "POST",
-      "category": "decompile",
+      "category": "disassembly",
+      "supports_dry_run": false,
       "params": [
-        "start_address",
-        "end_address",
-        "length",
-        "restrict_to_execute_memory",
-        "include_instructions",
+        "seeds",
+        "restrict_start",
+        "restrict_end",
+        "dry_run",
+        "follow_calls",
+        "preserve_defined_data",
+        "create_functions",
+        "enable_analysis",
         "max_instructions",
         "program"
       ],
-      "description": "Disassemble byte range"
+      "description": "Preview or commit bounded recursive-descent disassembly from explicit seeds"
     },
     {
       "path": "/disassemble_function",

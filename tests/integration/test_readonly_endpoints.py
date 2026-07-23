@@ -604,11 +604,17 @@ class TestMemoryInspection:
         # May be 404 if not available
         assert response.status_code in [200, 404]
 
-    def test_disassemble_bytes(self, http_client, sample_address):
-        """Disassemble bytes at address."""
-        response = http_client.get(
-            "/disassemble_bytes",
-            params={"address": sample_address, "length": 16},
+    def test_disassemble_flow_preview(self, http_client, sample_address):
+        """Preview bounded flow-following disassembly at an address."""
+        response = http_client.post(
+            "/disassemble_flow",
+            json={
+                "seeds": [sample_address],
+                "restrict_start": sample_address,
+                "restrict_end": sample_address,
+                "dry_run": True,
+                "max_instructions": 1,
+            },
         )
         # May be 404 if not available
         assert response.status_code in [200, 404]
