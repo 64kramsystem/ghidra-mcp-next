@@ -2670,7 +2670,7 @@
         "dry_run",
         "program"
       ],
-      "description": "Atomically write bytes inside one existing initialized memory block"
+      "description": "Atomically write bytes inside one initialized block; overwrite_bytes reports at most 4096 coalesced differing ranges, so split requests that exceed the limit"
     }
   ]
 }

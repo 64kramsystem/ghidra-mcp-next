@@ -379,6 +379,30 @@ public class MemoryBlockServiceGhidraTest {
     }
 
     @Test
+    public void byteWriteRangeLimitIsAtomicAtTheExactBoundary() {
+        int limit = 4096;
+        byte[] accepted = alternatingDifferences(limit);
+        byte[] rejected = alternatingDifferences(limit + 1);
+        create("bounded_write", "0xa000", (long) rejected.length,
+            null, null, null, false, 0,
+            true, true, false, false, null, false);
+
+        JsonObject preview = ok(memory.writeMemoryBytes(
+            "0xa000", accepted, "overwrite_bytes", true, ""));
+        assertEquals(limit,
+            preview.getAsJsonArray("differing_ranges").size());
+        assertFalse(preview.get("committed").getAsBoolean());
+
+        Response response = memory.writeMemoryBytes(
+            "0xa000", rejected, "overwrite_bytes", false, "");
+        assertError(response, "4096");
+        assertTrue(response.toJson(), response.toJson().contains("split"));
+        assertArrayEquals(
+            new byte[rejected.length],
+            bytes("0xa000", rejected.length));
+    }
+
+    @Test
     public void dryRunsAndInjectedFailuresRollbackEveryMutation() {
         create("ram", "0x6000", null, "00010203", null, null,
             false, null, true, true, false, false, "stable", false);
@@ -547,6 +571,14 @@ public class MemoryBlockServiceGhidraTest {
                 value.substring(i * 2, i * 2 + 2), 16);
         }
         return result;
+    }
+
+    private static byte[] alternatingDifferences(int rangeCount) {
+        byte[] requested = new byte[Math.multiplyExact(rangeCount, 2) - 1];
+        for (int index = 0; index < requested.length; index += 2) {
+            requested[index] = 1;
+        }
+        return requested;
     }
 
     private static JsonObject ok(Response response) {

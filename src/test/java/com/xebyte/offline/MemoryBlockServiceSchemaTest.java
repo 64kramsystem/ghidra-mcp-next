@@ -69,6 +69,15 @@ public class MemoryBlockServiceSchemaTest {
                 .map(AnnotationScanner.ParamDescriptor::name).toList());
         assertTrue(tools.get("/create_memory_block").description()
             .contains("initialized"));
+        assertTrue(tools.get("/write_memory_bytes").description()
+            .contains("4096"));
+        assertTrue(tools.get("/write_memory_bytes").description()
+            .contains("split"));
+        var conflictPolicy = tools.get("/write_memory_bytes").params().stream()
+            .filter(parameter -> parameter.name().equals("conflict_policy"))
+            .findFirst().orElseThrow();
+        assertTrue(conflictPolicy.description().contains("4096"));
+        assertTrue(conflictPolicy.description().contains("split"));
         for (String path : List.of(
                 "/create_memory_block",
                 "/update_memory_block",
@@ -219,6 +228,16 @@ public class MemoryBlockServiceSchemaTest {
         assertEquals(
             "Create an initialized or uninitialized ordinary or overlay memory block",
             createEntry.get("description").getAsString());
+        var writeEntry = catalog.getAsJsonArray("endpoints").asList()
+            .stream()
+            .map(element -> element.getAsJsonObject())
+            .filter(element -> element.get("path").getAsString()
+                .equals("/write_memory_bytes"))
+            .findFirst().orElseThrow();
+        assertTrue(writeEntry.get("description").getAsString()
+            .contains("4096"));
+        assertTrue(writeEntry.get("description").getAsString()
+            .contains("split"));
         for (String path : List.of(
                 "/create_memory_block",
                 "/update_memory_block",

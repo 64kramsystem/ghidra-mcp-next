@@ -349,6 +349,35 @@ public class MemoryBlockCoreTest {
             MemoryBlockCore.sha256(requested));
     }
 
+    @Test
+    public void differingRangesAcceptTheLimitAndRejectTheNextRange() {
+        int limit = 4096;
+        byte[] atLimit = alternatingDifferences(limit);
+        byte[] overLimit = alternatingDifferences(limit + 1);
+
+        List<MemoryBlockCore.DifferingRange> accepted =
+            MemoryBlockCore.differingRanges(
+                "ram", 0x1000, new byte[atLimit.length], atLimit);
+        IllegalArgumentException rejected = assertThrows(
+            IllegalArgumentException.class,
+            () -> MemoryBlockCore.differingRanges(
+                "ram", 0x1000, new byte[overLimit.length], overLimit));
+
+        assertEquals(limit, accepted.size());
+        assertTrue(rejected.getMessage(),
+            rejected.getMessage().contains("4096"));
+        assertTrue(rejected.getMessage(),
+            rejected.getMessage().contains("split"));
+    }
+
+    private static byte[] alternatingDifferences(int rangeCount) {
+        byte[] requested = new byte[Math.multiplyExact(rangeCount, 2) - 1];
+        for (int index = 0; index < requested.length; index += 2) {
+            requested[index] = 1;
+        }
+        return requested;
+    }
+
     private static byte[] readRange(Path path, long offset, int length)
             throws java.io.IOException {
         byte[] result = new byte[length];

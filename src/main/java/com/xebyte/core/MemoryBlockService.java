@@ -445,7 +445,9 @@ public final class MemoryBlockService {
         path = "/write_memory_bytes",
         method = "POST",
         description =
-            "Atomically write bytes inside one existing initialized memory block",
+            "Atomically write bytes inside one initialized block; "
+                + "overwrite_bytes reports at most 4096 coalesced differing "
+                + "ranges, so split requests that exceed the limit",
         category = "memory",
         supportsSyntheticDryRun = false)
     public Response writeMemoryBytes(
@@ -462,7 +464,11 @@ public final class MemoryBlockService {
             @Param(
                 value = "conflict_policy",
                 source = ParamSource.BODY,
-                defaultValue = "error")
+                defaultValue = "error",
+                description =
+                    "error rejects the first mismatch; overwrite_bytes permits "
+                        + "at most 4096 coalesced differing ranges and requires "
+                        + "splitting a request that exceeds the limit")
                 String conflictPolicy,
             @Param(
                 value = "dry_run",
