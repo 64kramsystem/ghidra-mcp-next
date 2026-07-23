@@ -35,6 +35,7 @@ public class AddressCommentCoreTest {
     private Memory memory;
     private AddressFactory addressFactory;
     private Address address;
+    private AddressCommentCore.ResolvedAddress target;
     private AddressCommentCore core;
 
     @Before
@@ -50,6 +51,8 @@ public class AddressCommentCoreTest {
         when(addressFactory.getAddressSpace("ram")).thenReturn(RAM);
         when(memory.contains(address)).thenReturn(true);
         core = new AddressCommentCore();
+        target =
+            new AddressCommentCore.ResolvedAddress(program, address);
     }
 
     @Test
@@ -59,7 +62,7 @@ public class AddressCommentCoreTest {
 
         AddressCommentCore.Plan plan = core.plan(
             program,
-            address,
+            target,
             CommentType.PLATE,
             "after",
             AddressCommentCore.WriteMode.REPLACE);
@@ -79,7 +82,7 @@ public class AddressCommentCoreTest {
     public void applyWritesOnlyChangedPlans() {
         AddressCommentCore.Plan changed = core.plan(
             program,
-            address,
+            target,
             CommentType.PLATE,
             "after",
             AddressCommentCore.WriteMode.REPLACE);
@@ -96,7 +99,7 @@ public class AddressCommentCoreTest {
             .thenReturn("same");
         AddressCommentCore.Plan plan = core.plan(
             program,
-            address,
+            target,
             CommentType.PLATE,
             "same",
             AddressCommentCore.WriteMode.REPLACE);
@@ -115,7 +118,7 @@ public class AddressCommentCoreTest {
 
         AddressCommentCore.Plan plan = core.plan(
             program,
-            address,
+            target,
             CommentType.PLATE,
             "",
             AddressCommentCore.WriteMode.REMOVE);
@@ -135,13 +138,13 @@ public class AddressCommentCoreTest {
 
         AddressCommentCore.Plan repeated = core.plan(
             program,
-            address,
+            target,
             CommentType.EOL,
             "second",
             AddressCommentCore.WriteMode.APPEND_IDEMPOTENT);
         AddressCommentCore.Plan appended = core.plan(
             program,
-            address,
+            target,
             CommentType.EOL,
             "third",
             AddressCommentCore.WriteMode.APPEND_IDEMPOTENT);
@@ -162,14 +165,16 @@ public class AddressCommentCoreTest {
         IllegalArgumentException unmappedError =
             assertThrows(IllegalArgumentException.class, () -> core.plan(
                 program,
-                unmapped,
+                new AddressCommentCore.ResolvedAddress(
+                    program, unmapped),
                 CommentType.PLATE,
                 "text",
                 AddressCommentCore.WriteMode.REPLACE));
         IllegalArgumentException externalError =
             assertThrows(IllegalArgumentException.class, () -> core.plan(
                 program,
-                external,
+                new AddressCommentCore.ResolvedAddress(
+                    program, external),
                 CommentType.PLATE,
                 "text",
                 AddressCommentCore.WriteMode.REPLACE));
@@ -183,17 +188,16 @@ public class AddressCommentCoreTest {
     }
 
     @Test
-    public void foreignAddressSpaceWithSameNameAndOffsetIsRejected() {
-        GenericAddressSpace foreignRam =
-            new GenericAddressSpace(
-                "ram", 16, AddressSpace.TYPE_RAM, 7);
-        Address foreignAddress = foreignRam.getAddress(0x1000);
-        when(memory.contains(foreignAddress)).thenReturn(true);
+    public void tokenOwnedByOtherProgramIsRejectedBeforeListingRead() {
+        Program otherProgram = mock(Program.class);
+        AddressCommentCore.ResolvedAddress foreignTarget =
+            new AddressCommentCore.ResolvedAddress(
+                otherProgram, address);
 
         IllegalArgumentException error =
             assertThrows(IllegalArgumentException.class, () -> core.plan(
                 program,
-                foreignAddress,
+                foreignTarget,
                 CommentType.PLATE,
                 "text",
                 AddressCommentCore.WriteMode.REPLACE));
@@ -201,26 +205,26 @@ public class AddressCommentCoreTest {
         assertTrue(
             error.getMessage().toLowerCase().contains("target program"));
         verify(listing, never()).getComment(
-            CommentType.PLATE, foreignAddress);
+            CommentType.PLATE, address);
     }
 
     @Test
     public void nullCommentTypeTextAndModeAreRejected() {
         assertThrows(NullPointerException.class, () -> core.plan(
             program,
-            address,
+            target,
             null,
             "text",
             AddressCommentCore.WriteMode.REPLACE));
         assertThrows(NullPointerException.class, () -> core.plan(
             program,
-            address,
+            target,
             CommentType.PLATE,
             null,
             AddressCommentCore.WriteMode.REPLACE));
         assertThrows(NullPointerException.class, () -> core.plan(
             program,
-            address,
+            target,
             CommentType.PLATE,
             "text",
             null));

@@ -27,20 +27,39 @@ final class AddressCommentCore {
         APPEND_IDEMPOTENT
     }
 
+    /**
+     * An address resolved by this core for one exact Program instance.
+     *
+     * <p>Ghidra physical {@link AddressSpace} objects can be shared by
+     * same-language programs, so a raw {@link Address} cannot carry sufficient
+     * ownership evidence by itself.
+     */
+    record ResolvedAddress(Program owner, Address address) {
+        ResolvedAddress {
+            Objects.requireNonNull(owner, "owner");
+            Objects.requireNonNull(address, "address");
+        }
+    }
+
     record Plan(
-            Address address,
+            ResolvedAddress target,
             CommentType type,
             String previous,
             String requested,
             String resulting,
             boolean changed) {
+
+        Address address() {
+            return target.address();
+        }
     }
 
     /**
      * Resolve an address without silently choosing between mapped spaces that
      * share an unqualified offset.
      */
-    Address resolveAddress(Program program, String addressText) {
+    ResolvedAddress resolveAddress(
+            Program program, String addressText) {
         Objects.requireNonNull(program, "program");
         if (addressText == null || addressText.isBlank()) {
             throw new IllegalArgumentException("Address is required");
@@ -66,24 +85,25 @@ final class AddressCommentCore {
             }
         }
         validateAddress(program, resolved);
-        return resolved;
+        return new ResolvedAddress(program, resolved);
     }
 
     Plan plan(
             Program program,
-            Address address,
+            ResolvedAddress target,
             CommentType type,
             String text,
             WriteMode mode) {
         Objects.requireNonNull(program, "program");
-        Objects.requireNonNull(address, "address");
+        Objects.requireNonNull(target, "target");
         Objects.requireNonNull(type, "type");
         Objects.requireNonNull(text, "text");
         Objects.requireNonNull(mode, "mode");
-        validateAddress(program, address);
+        validateTarget(program, target);
 
         String previous =
-            program.getListing().getComment(type, address);
+            program.getListing().getComment(
+                type, target.address());
         String resulting = switch (mode) {
             case REMOVE -> null;
             case REPLACE -> text;
@@ -91,7 +111,7 @@ final class AddressCommentCore {
                 appendOnce(previous, text);
         };
         return new Plan(
-            address,
+            target,
             type,
             previous,
             text,
@@ -102,11 +122,20 @@ final class AddressCommentCore {
     void apply(Program program, Plan plan) {
         Objects.requireNonNull(program, "program");
         Objects.requireNonNull(plan, "plan");
-        validateAddress(program, plan.address());
+        validateTarget(program, plan.target());
         if (plan.changed()) {
             program.getListing().setComment(
                 plan.address(), plan.type(), plan.resulting());
         }
+    }
+
+    private static void validateTarget(
+            Program program, ResolvedAddress target) {
+        if (target.owner() != program) {
+            throw new IllegalArgumentException(
+                "Resolved address belongs to a different target program");
+        }
+        validateAddress(program, target.address());
     }
 
     private static void validateAddress(
@@ -121,10 +150,9 @@ final class AddressCommentCore {
 
         AddressSpace programSpace =
             program.getAddressFactory().getAddressSpace(space.getName());
-        // Address does not carry a Program owner. Space identity is therefore
-        // the strongest available ownership boundary (and is decisive for
-        // program-local overlay spaces); service callers additionally resolve
-        // raw address text through the target program's own factory.
+        // Space identity remains useful for rejecting foreign program-local
+        // overlays. Physical spaces may be shared, so owner identity is
+        // enforced separately by ResolvedAddress.
         if (programSpace == null || programSpace != space) {
             throw new IllegalArgumentException(
                 "Address does not belong to the target program: "

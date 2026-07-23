@@ -3,6 +3,8 @@ package com.xebyte.core;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assume.assumeTrue;
 
@@ -10,6 +12,12 @@ import java.io.File;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.After;
 import org.junit.Before;
@@ -69,7 +77,7 @@ public class CommentServiceAddressGhidraTest {
         builder.disassemble("0x1000", 2);
         builder.applyDataType("0x1010", ByteDataType.dataType);
         builder.createLabel("0x1030", "label_only");
-        builder.createMemory(".bank-base", "0x2000", 0x20);
+        builder.createMemory(".bank-base", "0x2000", 0x100);
         builder.createOverlayMemory("bank", "0x2000", 0x20);
 
         HeadlessProgramProvider provider = new HeadlessProgramProvider();
@@ -272,6 +280,150 @@ public class CommentServiceAddressGhidraTest {
     }
 
     @Test
+    public void lateOverlayMakesBareSetAddressAmbiguousInsideWriteBoundary() {
+        builder.createComment(
+            "0x2040", "physical before", CommentType.PLATE);
+        HeadlessProgramProvider provider = new HeadlessProgramProvider();
+        provider.setCurrentProgram(program);
+        LateOverlayStrategy strategy =
+            new LateOverlayStrategy(builder, "late_set", "0x2040");
+        CommentService interleaved =
+            new CommentService(provider, strategy);
+
+        Response response =
+            interleaved.setPlateComment("0x2040", "physical after", "");
+
+        assertTrue(response.toJson(), response instanceof Response.Err);
+        assertTrue(
+            response.toJson(),
+            response.toJson().toLowerCase().contains("ambiguous") &&
+                response.toJson().contains("late_set"));
+        assertEquals(1, strategy.writeCalls());
+        assertEquals(
+            "physical before",
+            program.getListing().getComment(
+                CommentType.PLATE, builder.addr("0x2040")));
+        assertNull(program.getListing().getComment(
+            CommentType.PLATE, builder.addr("late_set::2040")));
+    }
+
+    @Test
+    public void lateOverlayMakesBareBatchAddressAmbiguousInsideWriteBoundary() {
+        builder.createComment(
+            "0x2060", "physical before", CommentType.PLATE);
+        HeadlessProgramProvider provider = new HeadlessProgramProvider();
+        provider.setCurrentProgram(program);
+        LateOverlayStrategy strategy =
+            new LateOverlayStrategy(builder, "late_batch", "0x2060");
+        CommentService interleaved =
+            new CommentService(provider, strategy);
+
+        Response response = interleaved.batchSetComments(
+            "0x2060", List.of(), List.of(), "physical after", "");
+
+        assertTrue(response.toJson(), response instanceof Response.Err);
+        assertTrue(
+            response.toJson(),
+            response.toJson().toLowerCase().contains("ambiguous") &&
+                response.toJson().contains("late_batch"));
+        assertEquals(1, strategy.writeCalls());
+        assertEquals(
+            "physical before",
+            program.getListing().getComment(
+                CommentType.PLATE, builder.addr("0x2060")));
+        assertNull(program.getListing().getComment(
+            CommentType.PLATE, builder.addr("late_batch::2060")));
+    }
+
+    @Test
+    public void batchUsesInjectedWriteStrategyExactlyOnce() {
+        HeadlessProgramProvider provider = new HeadlessProgramProvider();
+        provider.setCurrentProgram(program);
+        TrackingWriteStrategy strategy =
+            new TrackingWriteStrategy();
+        CommentService tracked =
+            new CommentService(provider, strategy);
+
+        Response response = tracked.batchSetComments(
+            "0x1030", List.of(), List.of(), "tracked", "");
+
+        assertTrue(response.toJson(), response instanceof Response.Ok);
+        assertEquals(1, strategy.writeCalls());
+        assertTrue(strategy.actionObservedInsideStrategy());
+        assertEquals(
+            "tracked",
+            program.getListing().getComment(
+                CommentType.PLATE, builder.addr("0x1030")));
+    }
+
+    @Test
+    public void concurrentBatchesAreSerializedByInjectedHeadlessStrategy()
+            throws Exception {
+        HeadlessProgramProvider provider = new HeadlessProgramProvider();
+        provider.setCurrentProgram(program);
+        BlockingHeadlessStrategy strategy =
+            new BlockingHeadlessStrategy();
+        CommentService serialized =
+            new CommentService(provider, strategy);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+
+        try {
+            Future<Response> first = executor.submit(
+                () -> serialized.batchSetComments(
+                    "0x1030", List.of(), List.of(), "first", ""));
+            assertTrue(strategy.awaitFirstAction());
+
+            Future<Response> second = executor.submit(
+                () -> serialized.batchSetComments(
+                    "0x1030", List.of(), List.of(), "second", ""));
+            assertTrue(strategy.awaitSecondAttempt());
+            assertFalse(second.isDone());
+            assertEquals(1, strategy.maximumConcurrentActions());
+
+            strategy.releaseFirstAction();
+            Response firstResponse =
+                first.get(5, TimeUnit.SECONDS);
+            Response secondResponse =
+                second.get(5, TimeUnit.SECONDS);
+            assertTrue(firstResponse.toJson(),
+                firstResponse instanceof Response.Ok);
+            assertTrue(secondResponse.toJson(),
+                secondResponse instanceof Response.Ok);
+            assertEquals(2, strategy.writeCalls());
+            assertEquals(1, strategy.maximumConcurrentActions());
+            assertEquals(
+                "second",
+                program.getListing().getComment(
+                    CommentType.PLATE, builder.addr("0x1030")));
+        }
+        finally {
+            strategy.releaseFirstAction();
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    public void failedBatchTransactionRollsBackPreviousComment() {
+        builder.createComment("0x1030", "before", CommentType.PLATE);
+        HeadlessProgramProvider provider = new HeadlessProgramProvider();
+        provider.setCurrentProgram(program);
+        CommentService aborting =
+            new CommentService(provider, new AbortAfterActionStrategy());
+
+        Response response = aborting.batchSetComments(
+            "0x1030", List.of(), List.of(), "after", "");
+
+        assertTrue(response.toJson(), response instanceof Response.Err);
+        assertTrue(
+            response.toJson(),
+            response.toJson().contains("forced rollback"));
+        assertEquals(
+            "before",
+            program.getListing().getComment(
+                CommentType.PLATE, builder.addr("0x1030")));
+    }
+
+    @Test
     public void plateWritesCreateNoProgramArtifactsAtAnyAddressKind() {
         ProgramState before = state();
 
@@ -281,6 +433,54 @@ public class CommentServiceAddressGhidraTest {
         setPlate("0x1030", "label");
 
         assertEquals(before, state());
+    }
+
+    @Test
+    public void resolvedTokenCannotCrossSameLanguagePrograms()
+            throws Exception {
+        ProgramBuilder otherBuilder = new ProgramBuilder(
+            "address-comments-other-6502",
+            "6502:LE:16:default",
+            "default",
+            this);
+        try {
+            ProgramDB otherProgram = otherBuilder.getProgram();
+            otherBuilder.createMemory(".ram", "0x1000", 0x20);
+            assertSame(
+                "same-language programs share the physical address space",
+                program.getAddressFactory().getDefaultAddressSpace(),
+                otherProgram.getAddressFactory().getDefaultAddressSpace());
+
+            AddressCommentCore core = new AddressCommentCore();
+            AddressCommentCore.ResolvedAddress otherTarget =
+                core.resolveAddress(otherProgram, "0x1000");
+            long thisModification = program.getModificationNumber();
+            long otherModification = otherProgram.getModificationNumber();
+
+            IllegalArgumentException error =
+                assertThrows(IllegalArgumentException.class, () -> core.plan(
+                    program,
+                    otherTarget,
+                    CommentType.PLATE,
+                    "must not write",
+                    AddressCommentCore.WriteMode.REPLACE));
+
+            assertTrue(
+                error.getMessage(),
+                error.getMessage().toLowerCase().contains(
+                    "target program"));
+            assertNull(program.getListing().getComment(
+                CommentType.PLATE, builder.addr("0x1000")));
+            assertNull(otherProgram.getListing().getComment(
+                CommentType.PLATE, otherBuilder.addr("0x1000")));
+            assertEquals(
+                thisModification, program.getModificationNumber());
+            assertEquals(
+                otherModification, otherProgram.getModificationNumber());
+        }
+        finally {
+            otherBuilder.dispose();
+        }
     }
 
     private JsonObject setPlate(String address, String text) {
@@ -336,6 +536,173 @@ public class CommentServiceAddressGhidraTest {
                 program.endTransaction(transaction, false);
             }
             throw new IllegalStateException("forced rollback");
+        }
+
+        @Override
+        public boolean isHeadless() {
+            return true;
+        }
+    }
+
+    private static final class TrackingWriteStrategy
+            implements ThreadingStrategy {
+
+        private final DirectThreadingStrategy delegate =
+            new DirectThreadingStrategy();
+        private int writeCalls;
+        private boolean actionObservedInsideStrategy;
+
+        @Override
+        public <T> T executeRead(Callable<T> action) throws Exception {
+            return delegate.executeRead(action);
+        }
+
+        @Override
+        public <T> T executeWrite(
+                Program program, String txName, Callable<T> action)
+                throws Exception {
+            writeCalls++;
+            return delegate.executeWrite(
+                program,
+                txName,
+                () -> {
+                    actionObservedInsideStrategy = true;
+                    return action.call();
+                });
+        }
+
+        int writeCalls() {
+            return writeCalls;
+        }
+
+        boolean actionObservedInsideStrategy() {
+            return actionObservedInsideStrategy;
+        }
+
+        @Override
+        public boolean isHeadless() {
+            return true;
+        }
+    }
+
+    private static final class LateOverlayStrategy
+            implements ThreadingStrategy {
+
+        private final DirectThreadingStrategy delegate =
+            new DirectThreadingStrategy();
+        private final ProgramBuilder builder;
+        private final String overlayName;
+        private final String overlayStart;
+        private int writeCalls;
+
+        LateOverlayStrategy(
+                ProgramBuilder builder,
+                String overlayName,
+                String overlayStart) {
+            this.builder = builder;
+            this.overlayName = overlayName;
+            this.overlayStart = overlayStart;
+        }
+
+        @Override
+        public <T> T executeRead(Callable<T> action) throws Exception {
+            return delegate.executeRead(action);
+        }
+
+        @Override
+        public <T> T executeWrite(
+                Program program, String txName, Callable<T> action)
+                throws Exception {
+            writeCalls++;
+            builder.createOverlayMemory(
+                overlayName, overlayStart, 0x10);
+            return delegate.executeWrite(
+                program, txName, action);
+        }
+
+        int writeCalls() {
+            return writeCalls;
+        }
+
+        @Override
+        public boolean isHeadless() {
+            return true;
+        }
+    }
+
+    private static final class BlockingHeadlessStrategy
+            implements ThreadingStrategy {
+
+        private final DirectThreadingStrategy delegate =
+            new DirectThreadingStrategy();
+        private final AtomicInteger writeCalls =
+            new AtomicInteger();
+        private final AtomicInteger activeActions =
+            new AtomicInteger();
+        private final AtomicInteger maximumConcurrentActions =
+            new AtomicInteger();
+        private final CountDownLatch firstAction =
+            new CountDownLatch(1);
+        private final CountDownLatch secondAttempt =
+            new CountDownLatch(1);
+        private final CountDownLatch releaseFirst =
+            new CountDownLatch(1);
+
+        @Override
+        public <T> T executeRead(Callable<T> action) throws Exception {
+            return delegate.executeRead(action);
+        }
+
+        @Override
+        public <T> T executeWrite(
+                Program program, String txName, Callable<T> action)
+                throws Exception {
+            int call = writeCalls.incrementAndGet();
+            if (call == 2) {
+                secondAttempt.countDown();
+            }
+            return delegate.executeWrite(
+                program,
+                txName,
+                () -> {
+                    int active = activeActions.incrementAndGet();
+                    maximumConcurrentActions.accumulateAndGet(
+                        active, Math::max);
+                    try {
+                        if (call == 1) {
+                            firstAction.countDown();
+                            if (!releaseFirst.await(
+                                    5, TimeUnit.SECONDS)) {
+                                throw new IllegalStateException(
+                                    "timed out waiting to release first action");
+                            }
+                        }
+                        return action.call();
+                    }
+                    finally {
+                        activeActions.decrementAndGet();
+                    }
+                });
+        }
+
+        boolean awaitFirstAction() throws InterruptedException {
+            return firstAction.await(5, TimeUnit.SECONDS);
+        }
+
+        boolean awaitSecondAttempt() throws InterruptedException {
+            return secondAttempt.await(5, TimeUnit.SECONDS);
+        }
+
+        void releaseFirstAction() {
+            releaseFirst.countDown();
+        }
+
+        int writeCalls() {
+            return writeCalls.get();
+        }
+
+        int maximumConcurrentActions() {
+            return maximumConcurrentActions.get();
         }
 
         @Override
