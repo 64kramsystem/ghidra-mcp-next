@@ -3,7 +3,6 @@ package com.xebyte.core;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.math.BigDecimal;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -13,10 +12,6 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
-
-import com.google.gson.JsonArray;
-import com.google.gson.JsonElement;
-import com.google.gson.JsonParser;
 
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressOverflowException;
@@ -144,7 +139,7 @@ final class MemoryBlockCore {
 
     static SourceData normalizeSource(
             Long length,
-            String encodedBytes,
+            Object encodedBytes,
             Path filePath,
             Long fileOffset,
             Long sourceLength,
@@ -212,10 +207,6 @@ final class MemoryBlockCore {
         if (path == null) {
             throw new IllegalArgumentException("file_path is required");
         }
-        if (!Files.isRegularFile(path) || !Files.isReadable(path)) {
-            throw new IllegalArgumentException(
-                "file_path must be a regular readable file: " + path);
-        }
         if (fileOffset < 0) {
             throw new IllegalArgumentException(
                 "file_offset must be non-negative");
@@ -225,18 +216,6 @@ final class MemoryBlockCore {
                 "source_length must be positive");
         }
         validatePayloadLength(sourceLength);
-        long size;
-        try {
-            size = Files.size(path);
-        }
-        catch (IOException error) {
-            throw new IllegalArgumentException(
-                "cannot inspect file_path: " + error.getMessage(), error);
-        }
-        if (fileOffset > size || sourceLength > size - fileOffset) {
-            throw new IllegalArgumentException(
-                "file_offset plus source_length exceeds file size");
-        }
         try {
             byte[] selected =
                 reader.read(path, fileOffset, Math.toIntExact(sourceLength));
@@ -252,53 +231,101 @@ final class MemoryBlockCore {
         }
     }
 
-    static byte[] decodeBytes(String encoded) {
+    static byte[] decodeBytes(Object encoded) {
         if (encoded == null) {
             throw new IllegalArgumentException("bytes is required");
         }
-        String value = encoded.trim();
-        if (value.startsWith("[")) {
-            JsonElement parsed;
-            try {
-                parsed = JsonParser.parseString(value);
-            }
-            catch (RuntimeException error) {
-                throw new IllegalArgumentException(
-                    "bytes must be a hex string or byte array", error);
-            }
-            if (!parsed.isJsonArray()) {
-                throw new IllegalArgumentException(
-                    "bytes must be a hex string or byte array");
-            }
-            JsonArray array = parsed.getAsJsonArray();
-            validatePayloadLength(array.size());
-            byte[] result = new byte[array.size()];
-            for (int i = 0; i < array.size(); i++) {
-                JsonElement element = array.get(i);
-                if (!element.isJsonPrimitive()
-                        || !element.getAsJsonPrimitive().isNumber()) {
-                    throw new IllegalArgumentException(
-                        "bytes array values must be integers from 0 to 255");
-                }
-                Integer item = exactByte(
-                    new BigDecimal(element.getAsString()), "bytes[" + i + "]");
+        if (encoded instanceof byte[] compact) {
+            validatePayloadLength(compact.length);
+            return compact;
+        }
+        if (encoded instanceof List<?> values) {
+            validatePayloadLength(values.size());
+            byte[] result = new byte[values.size()];
+            for (int i = 0; i < values.size(); i++) {
+                Integer item = exactByte(values.get(i), "bytes[" + i + "]");
                 result[i] = (byte) (item & 0xff);
             }
             return result;
         }
-        String hex = value.replaceAll("\\s+", "");
-        if ((hex.length() & 1) != 0) {
+        if (!(encoded instanceof String text)) {
+            throw new IllegalArgumentException(
+                "bytes must be a hex string or byte array");
+        }
+        String value = text;
+        int first = 0;
+        while (first < value.length()
+                && isHexWhitespace(value.charAt(first))) {
+            first++;
+        }
+        if (first < value.length() && value.charAt(first) == '[') {
+            try {
+                return decodeJsonByteArray(value);
+            }
+            catch (RuntimeException error) {
+                if (error instanceof IllegalArgumentException argument) {
+                    throw argument;
+                }
+                throw new IllegalArgumentException(
+                    "bytes must be a hex string or byte array", error);
+            }
+        }
+        int digits = 0;
+        for (int i = 0; i < value.length(); i++) {
+            if (!isHexWhitespace(value.charAt(i))) {
+                digits++;
+            }
+        }
+        if ((digits & 1) != 0) {
             throw new IllegalArgumentException(
                 "hex bytes must contain an even number of digits");
         }
-        validatePayloadLength(hex.length() / 2L);
-        try {
-            return HexFormat.of().parseHex(hex);
+        validatePayloadLength(digits / 2L);
+        byte[] result = new byte[digits / 2];
+        int high = -1;
+        int output = 0;
+        for (int i = 0; i < value.length(); i++) {
+            char character = value.charAt(i);
+            if (isHexWhitespace(character)) {
+                continue;
+            }
+            int nibble = hexNibble(character);
+            if (nibble < 0) {
+                throw new IllegalArgumentException(
+                    "bytes contains invalid hexadecimal digits");
+            }
+            if (high < 0) {
+                high = nibble;
+            }
+            else {
+                result[output++] = (byte) ((high << 4) | nibble);
+                high = -1;
+            }
         }
-        catch (IllegalArgumentException error) {
-            throw new IllegalArgumentException(
-                "bytes contains invalid hexadecimal digits", error);
+        return result;
+    }
+
+    private static boolean isHexWhitespace(char value) {
+        return value == ' ' || value == '\t' || value == '\n'
+            || value == '\u000b' || value == '\f' || value == '\r';
+    }
+
+    private static int hexNibble(char value) {
+        if (value >= '0' && value <= '9') {
+            return value - '0';
         }
+        if (value >= 'a' && value <= 'f') {
+            return value - 'a' + 10;
+        }
+        if (value >= 'A' && value <= 'F') {
+            return value - 'A' + 10;
+        }
+        return -1;
+    }
+
+    private static byte[] decodeJsonByteArray(String value) {
+        return JsonHelper.parseNativeByteArray(
+            value, "bytes", Math.toIntExact(MAX_SOURCE_BYTES));
     }
 
     static void validatePayloadLength(long length) {
@@ -361,17 +388,9 @@ final class MemoryBlockCore {
                 "memory block name already exists: " + request.name());
         }
         Address start = parseAddress(program, request.start(), "start");
-        if (request.overlay()) {
-            if (start.getAddressSpace().isOverlaySpace()) {
-                throw new IllegalArgumentException(
-                    "overlay start must use a physical address space");
-            }
-            if (program.getAddressFactory().getAddressSpace(
-                    request.name()) != null) {
-                throw new IllegalArgumentException(
-                    "overlay name collides with an existing address space: "
-                        + request.name());
-            }
+        if (start.getAddressSpace().isOverlaySpace()) {
+            throw new IllegalArgumentException(
+                "create start must not use an existing overlay address space");
         }
         long length = request.source().size();
         if (length <= 0) {
@@ -382,7 +401,13 @@ final class MemoryBlockCore {
             rejectOverlap(program.getMemory(), start, end, null);
         }
         BlockDescriptor predicted = predictedCreate(
-            request, start, end, length);
+            request,
+            start,
+            end,
+            length,
+            request.overlay()
+                ? predictOverlaySpaceName(program, request.name())
+                : start.getAddressSpace().getName());
         return new CreatePlan(request, start, length, predicted);
     }
 
@@ -710,10 +735,8 @@ final class MemoryBlockCore {
             CreateRequest request,
             Address start,
             Address end,
-            long length) {
-        String space = request.overlay()
-            ? request.name()
-            : start.getAddressSpace().getName();
+            long length,
+            String space) {
         return new BlockDescriptor(
             request.name(),
             start.toString(false),
@@ -730,6 +753,27 @@ final class MemoryBlockCore {
                 request.read(), request.write(), request.execute()),
             request.volatileFlag(),
             normalizeComment(request.comment()));
+    }
+
+    /**
+     * Mirrors MemoryMapDB.fixupOverlaySpaceName/createUniqueOverlaySpace so a
+     * dry run reports the exact address-space name Ghidra will assign.
+     */
+    private static String predictOverlaySpaceName(
+            Program program, String blockName) {
+        StringBuilder fixed = new StringBuilder(blockName.length());
+        for (int i = 0; i < blockName.length(); i++) {
+            char value = blockName.charAt(i);
+            fixed.append(value == ':' || value <= ' ' ? '_' : value);
+        }
+        String base = fixed.toString();
+        String candidate = base;
+        int suffix = 1;
+        while (program.getAddressFactory().getAddressSpace(candidate)
+                != null) {
+            candidate = base + "." + suffix++;
+        }
+        return candidate;
     }
 
     private static BlockDescriptor descriptorWithRange(

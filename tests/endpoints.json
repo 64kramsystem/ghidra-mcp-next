@@ -584,7 +584,6 @@
       "path": "/create_memory_block",
       "method": "POST",
       "category": "memory",
-      "supports_dry_run": false,
       "params": [
         "name",
         "start",
@@ -1972,7 +1971,6 @@
       "path": "/move_memory_block",
       "method": "POST",
       "category": "memory",
-      "supports_dry_run": false,
       "params": [
         "name",
         "new_start",
@@ -2539,7 +2537,6 @@
       "path": "/split_memory_block",
       "method": "POST",
       "category": "memory",
-      "supports_dry_run": false,
       "params": [
         "name",
         "split_address",
@@ -2616,7 +2613,6 @@
       "path": "/update_memory_block",
       "method": "POST",
       "category": "memory",
-      "supports_dry_run": false,
       "params": [
         "name",
         "new_name",
@@ -2667,7 +2663,6 @@
       "path": "/write_memory_bytes",
       "method": "POST",
       "category": "memory",
-      "supports_dry_run": false,
       "params": [
         "start",
         "bytes",

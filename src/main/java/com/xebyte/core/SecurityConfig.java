@@ -2,9 +2,22 @@ package com.xebyte.core;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.channels.SeekableByteChannel;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.DirectoryStream;
+import java.nio.file.LinkOption;
+import java.nio.file.OpenOption;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.SecureDirectoryStream;
+import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.BasicFileAttributeView;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Set;
 
 /**
  * Read-once, thread-safe snapshot of security-relevant environment variables.
@@ -212,6 +225,145 @@ public final class SecurityConfig {
             return requested;  // no allow-list configured
         }
         return requested.startsWith(fileRootCanonical) ? requested : null;
+    }
+
+    /**
+     * Read one bounded file range through directory handles anchored at the
+     * filesystem root. Every path component is opened with
+     * {@link LinkOption#NOFOLLOW_LINKS}, so replacing an approved file,
+     * parent, or configured root with a symlink cannot escape the allow-list.
+     *
+     * <p>This deliberately fails closed on providers without
+     * {@link SecureDirectoryStream}; standard Java has no portable
+     * race-free fallback for rooted path traversal.
+     */
+    byte[] readFileRangeWithinRoot(
+            Path authorizedPath, long offset, int length)
+            throws IOException {
+        if (fileRootCanonical == null) {
+            throw new IOException("GHIDRA_MCP_FILE_ROOT is not configured");
+        }
+        if (authorizedPath == null) {
+            throw new IOException("file path was not authorized");
+        }
+        Path requested = authorizedPath.toAbsolutePath().normalize();
+        if (!requested.startsWith(fileRootCanonical)) {
+            throw new IOException(
+                "file path is outside GHIDRA_MCP_FILE_ROOT");
+        }
+        if (requested.equals(fileRootCanonical)
+                || requested.getFileName() == null) {
+            throw new IOException("file_path must name a regular file");
+        }
+
+        Path anchor = fileRootCanonical.getRoot();
+        if (anchor == null) {
+            throw new IOException(
+                "GHIDRA_MCP_FILE_ROOT must be an absolute path");
+        }
+        List<Path> directories = new ArrayList<>();
+        for (Path component : anchor.relativize(fileRootCanonical)) {
+            directories.add(component);
+        }
+        Path relative = fileRootCanonical.relativize(requested);
+        Path parent = relative.getParent();
+        if (parent != null) {
+            for (Path component : parent) {
+                directories.add(component);
+            }
+        }
+
+        List<SecureDirectoryStream<Path>> opened = new ArrayList<>();
+        Throwable primaryFailure = null;
+        try {
+            DirectoryStream<Path> rootStream =
+                java.nio.file.Files.newDirectoryStream(anchor);
+            if (!(rootStream instanceof SecureDirectoryStream<?>)) {
+                rootStream.close();
+                throw new IOException(
+                    "filesystem provider does not support secure file-root traversal");
+            }
+            @SuppressWarnings("unchecked")
+            SecureDirectoryStream<Path> current =
+                (SecureDirectoryStream<Path>) rootStream;
+            opened.add(current);
+            for (Path component : directories) {
+                current = current.newDirectoryStream(
+                    component, LinkOption.NOFOLLOW_LINKS);
+                opened.add(current);
+            }
+
+            Path fileName = requested.getFileName();
+            BasicFileAttributeView view = current.getFileAttributeView(
+                fileName,
+                BasicFileAttributeView.class,
+                LinkOption.NOFOLLOW_LINKS);
+            if (view == null) {
+                throw new IOException(
+                    "filesystem provider cannot inspect file_path securely");
+            }
+            BasicFileAttributes attributes = view.readAttributes();
+            if (!attributes.isRegularFile()) {
+                throw new IOException(
+                    "file_path must be a regular readable file: "
+                        + requested);
+            }
+
+            Set<OpenOption> options = Set.of(
+                StandardOpenOption.READ,
+                LinkOption.NOFOLLOW_LINKS);
+            try (SeekableByteChannel channel =
+                    current.newByteChannel(fileName, options)) {
+                long size = channel.size();
+                if (offset > size || length > size - offset) {
+                    throw new IOException(
+                        "file_offset plus source_length exceeds file size");
+                }
+                byte[] result = new byte[length];
+                channel.position(offset);
+                ByteBuffer buffer = ByteBuffer.wrap(result);
+                while (buffer.hasRemaining()) {
+                    int count = channel.read(buffer);
+                    if (count < 0) {
+                        break;
+                    }
+                }
+                if (buffer.hasRemaining()) {
+                    throw new IOException(
+                        "file changed while reading; requested range no longer fits");
+                }
+                return result;
+            }
+        }
+        catch (IOException | RuntimeException | Error error) {
+            primaryFailure = error;
+            throw error;
+        }
+        finally {
+            Collections.reverse(opened);
+            IOException closeFailure = null;
+            for (SecureDirectoryStream<Path> stream : opened) {
+                try {
+                    stream.close();
+                }
+                catch (IOException error) {
+                    if (closeFailure == null) {
+                        closeFailure = error;
+                    }
+                    else {
+                        closeFailure.addSuppressed(error);
+                    }
+                }
+            }
+            if (closeFailure != null) {
+                if (primaryFailure != null) {
+                    primaryFailure.addSuppressed(closeFailure);
+                }
+                else {
+                    throw closeFailure;
+                }
+            }
+        }
     }
 
     /**

@@ -1,5 +1,7 @@
 package com.xebyte.offline;
 
+import static org.junit.Assert.assertThrows;
+
 import com.google.gson.JsonNull;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -11,6 +13,7 @@ import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /** Characterizes JSON escaping and typed conversion used by endpoint schemas and requests. */
 public class JsonHelperTest extends TestCase {
@@ -34,6 +37,34 @@ public class JsonHelperTest extends TestCase {
         assertEquals("demo", parsed.get("name"));
         assertEquals(3, ((Number) parsed.get("count")).intValue());
         assertTrue(parsed.get("nested") instanceof Map<?, ?>);
+    }
+
+    public void testStreamsMarkedNativeByteArraysWithoutMaterializingAList() {
+        String json =
+            "{\"name\":\"bank\",\"bytes\":[0,255,16],\"count\":3}";
+        Map<String, Object> parsed = JsonHelper.parseBody(
+            new ByteArrayInputStream(json.getBytes(StandardCharsets.UTF_8)),
+            Map.of("bytes", 3));
+
+        assertEquals("bank", parsed.get("name"));
+        assertTrue(parsed.get("bytes") instanceof byte[]);
+        assertTrue(java.util.Arrays.equals(
+            new byte[] { 0, (byte) 255, 16 },
+            (byte[]) parsed.get("bytes")));
+        assertEquals(3, ((Number) parsed.get("count")).intValue());
+    }
+
+    public void testStreamingByteArraysRejectOverflowAndNonBytesExactly() {
+        assertThrows(IllegalArgumentException.class, () ->
+            JsonHelper.parseBody(
+                new ByteArrayInputStream(
+                    "{\"bytes\":[0,1,2,3]}".getBytes(StandardCharsets.UTF_8)),
+                Map.of("bytes", 3)));
+        assertThrows(IllegalArgumentException.class, () ->
+            JsonHelper.parseBody(
+                new ByteArrayInputStream(
+                    "{\"bytes\":[1.5]}".getBytes(StandardCharsets.UTF_8)),
+                Map.of("bytes", 3)));
     }
 
     public void testConvertsJsonArrayObjectsToStringMaps() {

@@ -406,7 +406,7 @@ public class GhidraMCPHeadlessServer implements GhidraLaunchable {
                 try {
                     Map<String, String> query = parseQueryParams(exchange);
                     Map<String, Object> body = "POST".equalsIgnoreCase(exchange.getRequestMethod())
-                        ? JsonHelper.parseBody(exchange.getRequestBody()) : Map.of();
+                        ? ep.parseBody(exchange.getRequestBody()) : Map.of();
                     sendResponse(exchange, ep.handler().handle(query, body).toJson());
                 } catch (Exception e) {
                     String msg = e.getMessage() != null ? e.getMessage() : e.toString();

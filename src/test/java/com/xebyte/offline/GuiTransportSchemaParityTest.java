@@ -137,6 +137,19 @@ public class GuiTransportSchemaParityTest extends TestCase {
                         + "managementService\\).*"));
     }
 
+    public void testAllAnnotatedTransportsUseEndpointSpecificBodyParsing()
+            throws IOException {
+        for (String relative : Set.of(
+                "src/main/java/com/xebyte/GhidraMCPPlugin.java",
+                "src/main/java/com/xebyte/core/ServerManager.java",
+                "src/main/java/com/xebyte/headless/GhidraMCPHeadlessServer.java")) {
+            String source = Files.readString(ROOT.resolve(relative));
+            assertTrue(
+                relative + " must honor endpoint native-byte parse hints",
+                source.contains("ep.parseBody(exchange.getRequestBody())"));
+        }
+    }
+
     private Set<String> parameterNames(AnnotationScanner.ToolDescriptor tool) {
         return tool.params().stream()
                 .map(AnnotationScanner.ParamDescriptor::name)

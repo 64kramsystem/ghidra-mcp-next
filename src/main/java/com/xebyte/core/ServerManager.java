@@ -140,7 +140,7 @@ public class ServerManager {
                 try {
                     Map<String, String> query = parseQueryString(exchange.getRequestURI().getRawQuery());
                     Map<String, Object> body = "POST".equalsIgnoreCase(exchange.getRequestMethod())
-                        ? JsonHelper.parseBody(exchange.getRequestBody()) : Map.of();
+                        ? ep.parseBody(exchange.getRequestBody()) : Map.of();
                     String json = ep.handler().handle(query, body).toJson();
                     sendJsonResponse(exchange, json);
                 } catch (Exception e) {

@@ -49,6 +49,13 @@ public @interface Param {
      */
     boolean fieldsJson() default false;
 
+    /**
+     * When positive, stream a body native numeric array into a compact
+     * {@code byte[]} with this maximum length before endpoint binding. String
+     * values remain strings for the endpoint's hex decoder.
+     */
+    int nativeByteLimit() default 0;
+
     /** Human-readable description of this parameter. */
     String description() default "";
 

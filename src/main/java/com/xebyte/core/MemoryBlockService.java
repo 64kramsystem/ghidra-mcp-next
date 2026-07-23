@@ -77,7 +77,7 @@ public final class MemoryBlockService {
         description =
             "Create an initialized or uninitialized ordinary or overlay memory block",
         category = "memory",
-        supportsDryRun = false)
+        supportsSyntheticDryRun = false)
     public Response createMemoryBlock(
             @Param(value = "name", source = ParamSource.BODY)
                 String name,
@@ -96,8 +96,8 @@ public final class MemoryBlockService {
                 value = "bytes",
                 source = ParamSource.BODY,
                 optional = true,
-                fieldsJson = true)
-                String bytes,
+                nativeByteLimit = (int) MemoryBlockCore.MAX_SOURCE_BYTES)
+                Object bytes,
             @Param(
                 value = "file_path",
                 source = ParamSource.BODY,
@@ -169,6 +169,7 @@ public final class MemoryBlockService {
                 description = "Target program name")
                 String programName) {
         try {
+            Program program = requireProgram(programName);
             Path resolvedFile = null;
             if (filePath != null && !filePath.isBlank()) {
                 resolvedFile = security.resolveWithinFileRoot(filePath);
@@ -181,13 +182,14 @@ public final class MemoryBlockService {
             MemoryBlockCore.SourceData source =
                 MemoryBlockCore.normalizeSource(
                     length,
-                    normalizeOptional(bytes),
+                    normalizeOptionalBytes(bytes),
                     resolvedFile,
                     fileOffset,
                     sourceLength,
-                    fileReader);
+                    security.hasFileRoot()
+                        ? security::readFileRangeWithinRoot
+                        : fileReader);
             source = MemoryBlockCore.withFill(source, fill);
-            Program program = requireProgram(programName);
             MemoryBlockCore.CreateRequest request =
                 new MemoryBlockCore.CreateRequest(
                     name,
@@ -232,7 +234,7 @@ public final class MemoryBlockService {
         description =
             "Atomically rename or update memory-block metadata",
         category = "memory",
-        supportsDryRun = false)
+        supportsSyntheticDryRun = false)
     public Response updateMemoryBlock(
             @Param(value = "name", source = ParamSource.BODY)
                 String name,
@@ -326,7 +328,7 @@ public final class MemoryBlockService {
         description =
             "Split a memory block while preserving bytes and metadata",
         category = "memory",
-        supportsDryRun = false)
+        supportsSyntheticDryRun = false)
     public Response splitMemoryBlock(
             @Param(value = "name", source = ParamSource.BODY)
                 String name,
@@ -387,7 +389,7 @@ public final class MemoryBlockService {
         description =
             "Move a non-overlay memory block after complete overlap validation",
         category = "memory",
-        supportsDryRun = false)
+        supportsSyntheticDryRun = false)
     public Response moveMemoryBlock(
             @Param(value = "name", source = ParamSource.BODY)
                 String name,
@@ -445,7 +447,7 @@ public final class MemoryBlockService {
         description =
             "Atomically write bytes inside one existing initialized memory block",
         category = "memory",
-        supportsDryRun = false)
+        supportsSyntheticDryRun = false)
     public Response writeMemoryBytes(
             @Param(
                 value = "start",
@@ -455,8 +457,8 @@ public final class MemoryBlockService {
             @Param(
                 value = "bytes",
                 source = ParamSource.BODY,
-                fieldsJson = true)
-                String bytes,
+                nativeByteLimit = (int) MemoryBlockCore.MAX_SOURCE_BYTES)
+                Object bytes,
             @Param(
                 value = "conflict_policy",
                 source = ParamSource.BODY,
@@ -508,9 +510,19 @@ public final class MemoryBlockService {
 
     static byte[] readFileRange(
             Path path, long offset, int length) throws IOException {
+        if (!java.nio.file.Files.isRegularFile(path)
+                || !java.nio.file.Files.isReadable(path)) {
+            throw new IOException(
+                "file_path must be a regular readable file: " + path);
+        }
         byte[] result = new byte[length];
         try (FileChannel channel = FileChannel.open(
                 path, StandardOpenOption.READ)) {
+            long size = channel.size();
+            if (offset > size || length > size - offset) {
+                throw new IOException(
+                    "file_offset plus source_length exceeds file size");
+            }
             channel.position(offset);
             ByteBuffer buffer = ByteBuffer.wrap(result);
             while (buffer.hasRemaining()) {
@@ -520,8 +532,8 @@ public final class MemoryBlockService {
                 }
             }
             if (buffer.hasRemaining()) {
-                return java.util.Arrays.copyOf(
-                    result, length - buffer.remaining());
+                throw new IOException(
+                    "file changed while reading; requested range no longer fits");
             }
             return result;
         }
@@ -652,5 +664,12 @@ public final class MemoryBlockService {
 
     private static String normalizeOptional(String value) {
         return value == null || value.isBlank() ? null : value;
+    }
+
+    private static Object normalizeOptionalBytes(Object value) {
+        if (value instanceof String text && text.isBlank()) {
+            return null;
+        }
+        return value;
     }
 }
