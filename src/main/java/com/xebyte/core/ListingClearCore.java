@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.Deque;
+import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -69,6 +70,11 @@ final class ListingClearCore {
         STACK,
         REGISTER,
         EXTERNAL
+    }
+
+    private enum VisitState {
+        VISITING,
+        VISITED
     }
 
     record Selection(
@@ -260,13 +266,22 @@ final class ListingClearCore {
                 }
             }
         }
-        functions.sort(Comparator.comparing(FunctionSnapshot::entry));
         if (!selection.removeIntersectingFunctions()) {
             functions = List.of();
         }
         else {
+            FunctionRemovalOrder removalOrder =
+                orderFunctionRemovals(intersectingFunctions);
+            functions = removalOrder.functions();
+            conflicts.addAll(removalOrder.conflicts());
             conflicts.addAll(preflightFunctionRemoval(
-                program, intersectingFunctions, expanded, preservation));
+                program,
+                intersectingFunctions,
+                functions.stream()
+                    .map(FunctionSnapshot::entry)
+                    .collect(java.util.stream.Collectors.toSet()),
+                expanded,
+                preservation));
         }
         conflicts.sort(String::compareTo);
 
@@ -383,9 +398,73 @@ final class ListingClearCore {
             AnnotationSnapshot removed) {
     }
 
+    private record FunctionRemovalOrder(
+            List<FunctionSnapshot> functions,
+            List<String> conflicts) {
+    }
+
+    private static FunctionRemovalOrder orderFunctionRemovals(
+            List<Function> functions) {
+        Map<Address, Function> selectedByEntry = new LinkedHashMap<>();
+        functions.stream()
+            .sorted(Comparator.comparing(Function::getEntryPoint))
+            .forEach(function ->
+                selectedByEntry.put(function.getEntryPoint(), function));
+        Map<Address, VisitState> states = new HashMap<>();
+        List<FunctionSnapshot> ordered = new ArrayList<>();
+        Set<String> conflicts = new LinkedHashSet<>();
+        for (Function function : selectedByEntry.values()) {
+            visitFunctionForRemoval(
+                function, selectedByEntry, states, ordered, conflicts);
+        }
+        return new FunctionRemovalOrder(
+            List.copyOf(ordered), List.copyOf(conflicts));
+    }
+
+    private static void visitFunctionForRemoval(
+            Function function,
+            Map<Address, Function> selectedByEntry,
+            Map<Address, VisitState> states,
+            List<FunctionSnapshot> ordered,
+            Set<String> conflicts) {
+        Address entry = function.getEntryPoint();
+        VisitState state = states.get(entry);
+        if (state == VisitState.VISITED) {
+            return;
+        }
+        if (state == VisitState.VISITING) {
+            conflicts.add(
+                "cycle detected among selected direct thunks at " + entry);
+            return;
+        }
+
+        states.put(entry, VisitState.VISITING);
+        Address[] directThunkAddresses =
+            function.getFunctionThunkAddresses(false);
+        if (directThunkAddresses != null) {
+            List<Address> sortedThunks =
+                new ArrayList<>(List.of(directThunkAddresses));
+            sortedThunks.sort(Address::compareTo);
+            for (Address thunkAddress : sortedThunks) {
+                Function selectedThunk = selectedByEntry.get(thunkAddress);
+                if (selectedThunk != null) {
+                    visitFunctionForRemoval(
+                        selectedThunk,
+                        selectedByEntry,
+                        states,
+                        ordered,
+                        conflicts);
+                }
+            }
+        }
+        states.put(entry, VisitState.VISITED);
+        ordered.add(new FunctionSnapshot(entry, function.getName()));
+    }
+
     private static List<String> preflightFunctionRemoval(
             Program program,
             List<Function> functions,
+            Set<Address> selectedFunctionEntries,
             AddressSetView expanded,
             Preservation preservation) {
         SymbolTable symbolTable = program.getSymbolTable();
@@ -397,11 +476,14 @@ final class ListingClearCore {
                 function.getFunctionThunkAddresses(false);
             if (directThunkAddresses != null) {
                 for (Address thunkAddress : directThunkAddresses) {
-                    conflicts.add(
-                        "removing function " + function.getName() + " at "
-                            + function.getEntryPoint()
-                            + " would also remove direct thunk at "
-                            + thunkAddress);
+                    if (!selectedFunctionEntries.contains(thunkAddress)) {
+                        conflicts.add(
+                            "removing function " + function.getName() + " at "
+                                + function.getEntryPoint()
+                                + " would also remove direct thunk at "
+                                + thunkAddress
+                                + " outside the explicit function removal set");
+                    }
                 }
             }
 
