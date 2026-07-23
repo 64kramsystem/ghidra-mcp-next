@@ -20,16 +20,20 @@ import com.xebyte.headless.HeadlessProgramProvider;
 import com.xebyte.headless.DirectThreadingStrategy;
 
 import ghidra.GhidraApplicationLayout;
+import ghidra.app.plugin.core.analysis.AutoAnalysisManager;
 import ghidra.framework.Application;
 import ghidra.framework.ApplicationConfiguration;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressFactory;
 import ghidra.program.model.address.AddressSet;
+import ghidra.program.model.address.AddressSetView;
 import ghidra.program.model.address.AddressSpace;
 import ghidra.program.model.address.GenericAddressSpace;
+import ghidra.program.model.data.ArrayDataType;
 import ghidra.program.model.data.ByteDataType;
 import ghidra.program.database.ProgramBuilder;
 import ghidra.program.database.ProgramDB;
+import ghidra.program.model.listing.CommentType;
 import ghidra.program.model.listing.Program;
 import ghidra.program.model.mem.Memory;
 import ghidra.program.model.symbol.RefType;
@@ -143,6 +147,31 @@ public class FlowDisassemblyServiceGhidraTest {
     }
 
     @Test
+    public void queuedAnalysisReturnsRequestDescriptor() {
+        FlowDisassemblyService service = service(
+            (ignoredProgram, request) -> plan,
+            (ignoredProgram, ignoredPlan, ignoredClearPlan) ->
+                new FlowDisassemblyService.CommitResult(
+                    plan.plannedNewInstructions(), List.of()),
+            (ignoredProgram, ignoredSet) -> {
+                analysisCalls.incrementAndGet();
+                return new FlowDisassemblyService.AnalysisSubmission(
+                    true, "analysis-request-42");
+            });
+
+        Response response = call(service, false, true);
+
+        assertTrue(response.toJson(), response instanceof Response.Ok);
+        assertTrue(response.toJson(),
+            response.toJson().contains("\"analysis_status\":\"queued\""));
+        assertTrue(response.toJson(),
+            response.toJson().contains("\"request_identity\":\"analysis-request-42\""));
+        assertTrue(response.toJson(),
+            response.toJson().contains("\"analysis_request\""));
+        assertEquals(1, analysisCalls.get());
+    }
+
+    @Test
     public void rejectsSeedOutsideRestrictionBeforePlanning() {
         FlowDisassemblyService service = service(
             (ignoredProgram, request) -> {
@@ -240,6 +269,61 @@ public class FlowDisassemblyServiceGhidraTest {
     }
 
     @Test
+    public void commitUsesOneFlowFollowingInvocationFromMinimalUndefinedFrontier() {
+        Address existing = address(0x1000);
+        Address crossedRoot = address(0x1001);
+        Address continued = address(0x1002);
+        Address undefinedSeed = address(0x1010);
+        FlowDisassemblyService.FlowPlan frontierPlan =
+            new FlowDisassemblyService.FlowPlan(
+                List.of(existing, undefinedSeed),
+                new AddressSet(existing, address(0x10ff)),
+                List.of(
+                    new FlowDisassemblyService.InstructionRecord(
+                        existing, 1, "existing", true, crossedRoot,
+                        List.of(), RefType.FLOW),
+                    new FlowDisassemblyService.InstructionRecord(
+                        crossedRoot, 1, "crossed", false, continued,
+                        List.of(), RefType.FLOW),
+                    new FlowDisassemblyService.InstructionRecord(
+                        continued, 1, "continued", false, null,
+                        List.of(), RefType.TERMINATOR),
+                    new FlowDisassemblyService.InstructionRecord(
+                        undefinedSeed, 1, "seed", false, null,
+                        List.of(), RefType.TERMINATOR)),
+                new AddressSet(crossedRoot, continued)
+                    .union(new AddressSet(undefinedSeed, undefinedSeed)),
+                new AddressSet(existing, existing),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                false);
+        RecordingStockDisassembler stock = new RecordingStockDisassembler();
+        FlowDisassemblyService service = new FlowDisassemblyService(
+            provider,
+            threading,
+            (ignoredProgram, request) -> frontierPlan,
+            stock,
+            (ignoredProgram, ignoredSet) ->
+                new FlowDisassemblyService.AnalysisSubmission(true, null));
+
+        Response response = call(service, false, false);
+
+        assertTrue(response.toJson(), response instanceof Response.Ok);
+        assertEquals(1, stock.calls);
+        assertTrue(stock.starts.hasSameAddresses(
+            new AddressSet(crossedRoot, crossedRoot)
+                .union(new AddressSet(undefinedSeed, undefinedSeed))));
+        assertTrue(stock.restriction.hasSameAddresses(
+            frontierPlan.plannedNewInstructions()));
+        assertTrue(stock.followFlow);
+    }
+
+    @Test
     public void live6502DryRunAndCommitHaveEqualNewInstructionSet() throws Exception {
         initializeGhidraOrSkip();
         ProgramBuilder builder =
@@ -266,11 +350,15 @@ public class FlowDisassemblyServiceGhidraTest {
             int referenceDestinationsBefore =
                 liveProgram.getReferenceManager().getReferenceDestinationCount();
             AtomicInteger events = new AtomicInteger();
+            boolean hadAnalysisManager =
+                AutoAnalysisManager.hasAutoAnalysisManager(liveProgram);
+            boolean analyzingBefore = hadAnalysisManager &&
+                AutoAnalysisManager.getAnalysisManager(liveProgram).isAnalyzing();
             liveProgram.flushEvents();
             liveProgram.addListener(event -> events.addAndGet(event.numRecords()));
 
             Response preview = service.disassembleFlow(
-                "[\"0x1000\"]",
+                "[\"0x1000\",\"0x100e\",\"0x100f\",\"0x1013\"]",
                 "0x1000",
                 "0x1013",
                 true,
@@ -294,11 +382,22 @@ public class FlowDisassemblyServiceGhidraTest {
                 liveProgram.getReferenceManager().getReferenceSourceCount());
             assertEquals(referenceDestinationsBefore,
                 liveProgram.getReferenceManager().getReferenceDestinationCount());
+            assertEquals(hadAnalysisManager,
+                AutoAnalysisManager.hasAutoAnalysisManager(liveProgram));
+            if (hadAnalysisManager) {
+                assertEquals(analyzingBefore,
+                    AutoAnalysisManager.getAnalysisManager(liveProgram).isAnalyzing());
+            }
             JsonObject previewJson =
                 JsonParser.parseString(preview.toJson()).getAsJsonObject();
+            assertTrue(preview.toJson(), preview.toJson().contains("\"text\":\"RTS\""));
+            assertTrue(preview.toJson(), preview.toJson().contains("\"text\":\"RTI\""));
+            assertTrue(preview.toJson(), preview.toJson().contains("\"text\":\"BRK\""));
+            assertTrue(preview.toJson(), preview.toJson().contains("\"decode_failure\""));
+            assertTrue(preview.toJson(), preview.toJson().contains("\"COMPUTED_JUMP\""));
 
             Response commit = service.disassembleFlow(
-                "[\"0x1000\"]",
+                "[\"0x1000\",\"0x100e\",\"0x100f\",\"0x1013\"]",
                 "0x1000",
                 "0x1013",
                 false,
@@ -317,7 +416,7 @@ public class FlowDisassemblyServiceGhidraTest {
             assertEquals(0, liveProgram.getFunctionManager().getFunctionCount());
             assertTrue("unreachable byte was disassembled",
                 liveProgram.getListing().getInstructionAt(builder.addr("0x100b")) == null);
-            assertTrue(commit.toJson(), commit.toJson().contains("\"computed_jump\""));
+            assertTrue(commit.toJson(), commit.toJson().contains("\"COMPUTED_JUMP\""));
             assertTrue(commit.toJson(), commit.toJson().contains("\"restricted_boundary\""));
         }
         finally {
@@ -401,6 +500,372 @@ public class FlowDisassemblyServiceGhidraTest {
         }
     }
 
+    @Test
+    public void liveExistingInstructionCanCrossIntoUndefinedCommitFrontier()
+            throws Exception {
+        initializeGhidraOrSkip();
+        ProgramBuilder builder =
+            new ProgramBuilder("flow-existing-frontier-6502",
+                "6502:LE:16:default", "default", this);
+        try {
+            ProgramDB liveProgram = builder.getProgram();
+            builder.createMemory(".ram", "0x1000", 0x20);
+            builder.setBytes("0x1000", "4c 05 10 ea ea a9 01 60");
+            builder.disassemble("0x1000", 3);
+            assertTrue(liveProgram.getListing()
+                .getInstructionAt(builder.addr("0x1000")) != null);
+            assertTrue(liveProgram.getListing()
+                .getInstructionAt(builder.addr("0x1005")) == null);
+
+            FlowDisassemblyService service = liveService(liveProgram);
+            Response preview = service.disassembleFlow(
+                "[\"0x1000\"]",
+                "0x1000",
+                "0x1007",
+                true,
+                true,
+                true,
+                false,
+                false,
+                100,
+                "");
+            Response commit = service.disassembleFlow(
+                "[\"0x1000\"]",
+                "0x1000",
+                "0x1007",
+                false,
+                true,
+                true,
+                false,
+                false,
+                100,
+                "");
+
+            assertTrue(preview.toJson(), preview instanceof Response.Ok);
+            assertTrue(commit.toJson(), commit instanceof Response.Ok);
+            JsonObject previewJson =
+                JsonParser.parseString(preview.toJson()).getAsJsonObject();
+            JsonObject commitJson =
+                JsonParser.parseString(commit.toJson()).getAsJsonObject();
+            assertEquals(
+                previewJson.get("candidate_instruction_ranges"),
+                commitJson.get("created_instruction_ranges"));
+            assertTrue(liveProgram.getListing()
+                .getInstructionAt(builder.addr("0x1005")) != null);
+            assertTrue(liveProgram.getListing()
+                .getInstructionAt(builder.addr("0x1007")) != null);
+        }
+        finally {
+            builder.dispose();
+        }
+    }
+
+    @Test
+    public void liveMultiByteDataClearsOnceAndPreservesInteriorAnnotations()
+            throws Exception {
+        initializeGhidraOrSkip();
+        ProgramBuilder builder =
+            new ProgramBuilder("flow-array-data-6502",
+                "6502:LE:16:default", "default", this);
+        try {
+            ProgramDB liveProgram = builder.getProgram();
+            builder.createMemory(".ram", "0x1000", 0x20);
+            builder.setBytes("0x1000", "ea ea 60");
+            builder.applyDataType(
+                "0x1000", new ArrayDataType(ByteDataType.dataType, 3, 1));
+            builder.createLabel("0x1001", "interior_data_label");
+            builder.createComment(
+                "0x1001", "interior data comment", CommentType.EOL);
+            builder.createMemoryReference(
+                "0x1001", "0x1010", RefType.DATA,
+                ghidra.program.model.symbol.SourceType.USER_DEFINED);
+
+            FlowDisassemblyService service = liveService(liveProgram);
+            Response preview = service.disassembleFlow(
+                "[\"0x1000\"]",
+                "0x1000",
+                "0x1002",
+                true,
+                true,
+                false,
+                false,
+                false,
+                100,
+                "");
+
+            assertTrue(preview.toJson(), preview instanceof Response.Ok);
+            JsonObject previewJson =
+                JsonParser.parseString(preview.toJson()).getAsJsonObject();
+            assertEquals(1, previewJson.getAsJsonArray("cleared_data").size());
+            JsonObject cleared =
+                previewJson.getAsJsonArray("cleared_data").get(0).getAsJsonObject();
+            assertEquals("1000", cleared.get("start").getAsString());
+            assertEquals("1002", cleared.get("end").getAsString());
+            assertTrue(liveProgram.getListing()
+                .getDefinedDataAt(builder.addr("0x1000")) != null);
+
+            Response commit = service.disassembleFlow(
+                "[\"0x1000\"]",
+                "0x1000",
+                "0x1002",
+                false,
+                true,
+                false,
+                false,
+                false,
+                100,
+                "");
+
+            assertTrue(commit.toJson(), commit instanceof Response.Ok);
+            assertTrue(liveProgram.getListing()
+                .getDefinedDataAt(builder.addr("0x1000")) == null);
+            assertTrue(liveProgram.getListing()
+                .getInstructionAt(builder.addr("0x1000")) != null);
+            assertTrue(liveProgram.getListing()
+                .getInstructionAt(builder.addr("0x1001")) != null);
+            assertTrue(liveProgram.getListing()
+                .getInstructionAt(builder.addr("0x1002")) != null);
+            assertTrue(liveProgram.getSymbolTable()
+                .getSymbolsAsIterator(builder.addr("0x1001")).hasNext());
+            assertEquals(
+                "interior data comment",
+                liveProgram.getListing().getComment(
+                    CommentType.EOL, builder.addr("0x1001")));
+            assertTrue(java.util.Arrays.stream(liveProgram.getReferenceManager()
+                .getReferencesFrom(builder.addr("0x1001")))
+                .anyMatch(reference ->
+                    reference.getToAddress().equals(builder.addr("0x1010"))));
+        }
+        finally {
+            builder.dispose();
+        }
+    }
+
+    @Test
+    public void liveDecodeFailureDoesNotClearDefinedData() throws Exception {
+        initializeGhidraOrSkip();
+        ProgramBuilder builder =
+            new ProgramBuilder("flow-decode-failure-data-6502",
+                "6502:LE:16:default", "default", this);
+        try {
+            ProgramDB liveProgram = builder.getProgram();
+            builder.createMemory(".ram", "0x1000", 1);
+            builder.setBytes("0x1000", "02");
+            builder.applyDataType("0x1000", ByteDataType.dataType);
+
+            Response response = liveService(liveProgram).disassembleFlow(
+                "[\"0x1000\"]",
+                "0x1000",
+                "0x1000",
+                false,
+                true,
+                false,
+                false,
+                false,
+                100,
+                "");
+
+            assertTrue(response.toJson(), response instanceof Response.Ok);
+            assertTrue(response.toJson(), response.toJson().contains("\"decode_failure\""));
+            assertTrue(liveProgram.getListing()
+                .getDefinedDataAt(builder.addr("0x1000")) != null);
+            assertEquals(0, liveProgram.getListing().getNumInstructions());
+        }
+        finally {
+            builder.dispose();
+        }
+    }
+
+    @Test
+    public void liveBoundaryCrossingDoesNotClearDefinedData() throws Exception {
+        initializeGhidraOrSkip();
+        ProgramBuilder builder =
+            new ProgramBuilder("flow-boundary-data-6502",
+                "6502:LE:16:default", "default", this);
+        try {
+            ProgramDB liveProgram = builder.getProgram();
+            builder.createMemory(".ram", "0x1000", 3);
+            builder.setBytes("0x1000", "4c 00 10");
+            builder.applyDataType("0x1000", ByteDataType.dataType);
+
+            Response response = liveService(liveProgram).disassembleFlow(
+                "[\"0x1000\"]",
+                "0x1000",
+                "0x1001",
+                false,
+                true,
+                false,
+                false,
+                false,
+                100,
+                "");
+
+            assertTrue(response.toJson(), response instanceof Response.Ok);
+            assertTrue(response.toJson(),
+                response.toJson().contains("\"restricted_boundary\""));
+            assertTrue(liveProgram.getListing()
+                .getDefinedDataAt(builder.addr("0x1000")) != null);
+            assertEquals(0, liveProgram.getListing().getNumInstructions());
+        }
+        finally {
+            builder.dispose();
+        }
+    }
+
+    @Test
+    public void liveFailedDisassemblyRollsBackDataClearAndAnnotations()
+            throws Exception {
+        initializeGhidraOrSkip();
+        ProgramBuilder builder =
+            new ProgramBuilder("flow-rollback-data-6502",
+                "6502:LE:16:default", "default", this);
+        try {
+            ProgramDB liveProgram = builder.getProgram();
+            builder.createMemory(".ram", "0x1000", 2);
+            builder.setBytes("0x1000", "ea 60");
+            builder.applyDataType(
+                "0x1000", new ArrayDataType(ByteDataType.dataType, 2, 1));
+            builder.createLabel("0x1001", "rollback_label");
+            builder.createComment("0x1001", "rollback comment", CommentType.EOL);
+
+            HeadlessProgramProvider liveProvider = new HeadlessProgramProvider();
+            liveProvider.setCurrentProgram(liveProgram);
+            FlowDisassemblyService planningService =
+                new FlowDisassemblyService(
+                    liveProvider, new DirectThreadingStrategy());
+            FlowDisassemblyService service = new FlowDisassemblyService(
+                liveProvider,
+                new DirectThreadingStrategy(),
+                planningService::plan,
+                (ignoredProgram, ignoredStarts, ignoredRestriction, ignoredFollowFlow) -> {
+                    throw new IllegalStateException("injected disassembler failure");
+                },
+                (ignoredProgram, ignoredSet) ->
+                    new FlowDisassemblyService.AnalysisSubmission(true, null));
+
+            Response response = service.disassembleFlow(
+                "[\"0x1000\"]",
+                "0x1000",
+                "0x1001",
+                false,
+                true,
+                false,
+                false,
+                false,
+                100,
+                "");
+
+            assertTrue(response.toJson(), response instanceof Response.Err);
+            assertTrue(response.toJson(),
+                response.toJson().contains("injected disassembler failure"));
+            assertTrue(liveProgram.getListing()
+                .getDefinedDataAt(builder.addr("0x1000")) != null);
+            assertEquals(0, liveProgram.getListing().getNumInstructions());
+            assertTrue(liveProgram.getSymbolTable()
+                .getSymbolsAsIterator(builder.addr("0x1001")).hasNext());
+            assertEquals(
+                "rollback comment",
+                liveProgram.getListing().getComment(
+                    CommentType.EOL, builder.addr("0x1001")));
+        }
+        finally {
+            builder.dispose();
+        }
+    }
+
+    @Test
+    public void liveFunctionCreationSeparatesSeedAndDirectCallTarget()
+            throws Exception {
+        initializeGhidraOrSkip();
+        ProgramBuilder builder =
+            new ProgramBuilder("flow-functions-6502",
+                "6502:LE:16:default", "default", this);
+        try {
+            ProgramDB liveProgram = builder.getProgram();
+            builder.createMemory(".ram", "0x1000", 0x20);
+            builder.setBytes("0x1000", "20 05 10 60 ea 60");
+
+            Response response = liveService(liveProgram).disassembleFlow(
+                "[\"0x1000\"]",
+                "0x1000",
+                "0x1005",
+                false,
+                true,
+                true,
+                true,
+                false,
+                100,
+                "");
+
+            assertTrue(response.toJson(), response instanceof Response.Ok);
+            assertTrue(response.toJson(),
+                response.toJson().contains("\"commit_status\":\"committed\""));
+            assertTrue(liveProgram.getFunctionManager()
+                .getFunctionAt(builder.addr("0x1000")) != null);
+            assertTrue(liveProgram.getFunctionManager()
+                .getFunctionAt(builder.addr("0x1005")) != null);
+            assertTrue(liveProgram.getFunctionManager()
+                .getFunctionAt(builder.addr("0x1000")).getBody()
+                .contains(builder.addr("0x1003")));
+            assertTrue(!liveProgram.getFunctionManager()
+                .getFunctionAt(builder.addr("0x1000")).getBody()
+                .contains(builder.addr("0x1005")));
+        }
+        finally {
+            builder.dispose();
+        }
+    }
+
+    @Test
+    public void liveFunctionPreflightBlocksBodyOverlap() throws Exception {
+        initializeGhidraOrSkip();
+        ProgramBuilder builder =
+            new ProgramBuilder("flow-function-overlap-6502",
+                "6502:LE:16:default", "default", this);
+        try {
+            ProgramDB liveProgram = builder.getProgram();
+            builder.createMemory(".ram", "0x1000", 3);
+            builder.setBytes("0x1000", "ea ea 60");
+            builder.disassemble("0x1002", 1);
+            builder.createFunction("0x1002");
+
+            Response response = liveService(liveProgram).disassembleFlow(
+                "[\"0x1000\"]",
+                "0x1000",
+                "0x1002",
+                false,
+                true,
+                true,
+                true,
+                false,
+                100,
+                "");
+
+            assertTrue(response.toJson(), response instanceof Response.Ok);
+            assertTrue(response.toJson(),
+                response.toJson().contains("\"commit_status\":\"blocked\""));
+            assertTrue(response.toJson(),
+                response.toJson().contains(
+                    "\"function_body_overlaps_existing_function\""));
+            assertTrue(liveProgram.getFunctionManager()
+                .getFunctionAt(builder.addr("0x1000")) == null);
+            assertTrue(liveProgram.getFunctionManager()
+                .getFunctionAt(builder.addr("0x1002")) != null);
+            assertTrue(liveProgram.getListing()
+                .getInstructionAt(builder.addr("0x1000")) == null);
+        }
+        finally {
+            builder.dispose();
+        }
+    }
+
+    private static FlowDisassemblyService liveService(ProgramDB liveProgram) {
+        HeadlessProgramProvider liveProvider = new HeadlessProgramProvider();
+        liveProvider.setCurrentProgram(liveProgram);
+        return new FlowDisassemblyService(
+            liveProvider, new DirectThreadingStrategy());
+    }
+
     private FlowDisassemblyService service(
             FlowDisassemblyService.PlanningEngine planning,
             FlowDisassemblyService.MutationEngine mutation,
@@ -452,10 +917,11 @@ public class FlowDisassemblyServiceGhidraTest {
     }
 
     private static void initializeGhidraOrSkip() throws Exception {
-        String installDir = System.getenv("GHIDRA_INSTALL_DIR");
+        String installDir = System.getProperty("ghidra.test.install.dir");
         assumeTrue(
-            "GHIDRA_INSTALL_DIR is required for real Ghidra tests",
-            installDir != null && !installDir.isBlank());
+            "A Ghidra install is required for ProgramBuilder-backed tests",
+            installDir != null && !installDir.isBlank() &&
+                new File(installDir).isDirectory());
         if (!Application.isInitialized()) {
             ApplicationConfiguration configuration = new ApplicationConfiguration();
             configuration.setInitializeLogging(false);
@@ -484,6 +950,27 @@ public class FlowDisassemblyServiceGhidraTest {
         @Override
         public boolean isHeadless() {
             return true;
+        }
+    }
+
+    private static final class RecordingStockDisassembler
+            implements FlowDisassemblyService.StockDisassembler {
+        int calls;
+        AddressSet starts = new AddressSet();
+        AddressSet restriction = new AddressSet();
+        boolean followFlow;
+
+        @Override
+        public AddressSet disassemble(
+                Program ignoredProgram,
+                AddressSetView requestedStarts,
+                AddressSetView requestedRestriction,
+                boolean requestedFollowFlow) {
+            calls++;
+            starts = new AddressSet(requestedStarts);
+            restriction = new AddressSet(requestedRestriction);
+            followFlow = requestedFollowFlow;
+            return new AddressSet(requestedRestriction);
         }
     }
 }
