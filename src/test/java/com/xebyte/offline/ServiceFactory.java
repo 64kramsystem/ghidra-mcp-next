@@ -18,6 +18,7 @@ import com.xebyte.core.EmulationService;
 import com.xebyte.core.ExportService;
 import com.xebyte.core.ProgramScriptService;
 import com.xebyte.core.SymbolLabelService;
+import com.xebyte.core.SymbolProfileService;
 import com.xebyte.core.ThreadingStrategy;
 import com.xebyte.core.XrefCallGraphService;
 import com.xebyte.headless.HeadlessManagementService;
@@ -56,6 +57,8 @@ public final class ServiceFactory {
             new MemoryBlockService(provider, ts);
         DataRegionService dataRegionService =
             new DataRegionService(provider, ts);
+        SymbolProfileService symbolProfileService =
+            new SymbolProfileService(provider, ts);
         EmulationService emulationService = new EmulationService(provider, ts);
         ExportService exportService = new ExportService(provider);
         FlowDisassemblyService flowDisassemblyService =
@@ -85,6 +88,7 @@ public final class ServiceFactory {
             programScriptService,
             memoryBlockService,
             dataRegionService,
+            symbolProfileService,
             emulationService,
             exportService,
             flowDisassemblyService,

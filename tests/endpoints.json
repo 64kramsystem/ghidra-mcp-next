@@ -1,7 +1,7 @@
 {
   "version": "5.15.0",
   "description": "GhidraMCP REST API Endpoint Specification",
-  "total_endpoints": 246,
+  "total_endpoints": 248,
   "categories": {
     "listing": "List program data",
     "getter": "Get specific data",
@@ -213,6 +213,20 @@
         "strict_mode"
       ],
       "description": "Apply data type"
+    },
+    {
+      "path": "/apply_symbol_profile",
+      "method": "POST",
+      "category": "symbols",
+      "params": [
+        "profile",
+        "dry_run",
+        "conflict_policy",
+        "replace_user_definitions",
+        "create_memory_blocks",
+        "program"
+      ],
+      "description": "Preview or atomically apply a generic symbol profile"
     },
     {
       "path": "/archive_project",
@@ -2716,6 +2730,16 @@
         "program"
       ],
       "description": "Validate function prototype"
+    },
+    {
+      "path": "/validate_symbol_profile",
+      "method": "POST",
+      "category": "symbols",
+      "params": [
+        "profile",
+        "program"
+      ],
+      "description": "Strictly validate and normalize a generic symbol profile"
     },
     {
       "path": "/write_memory_bytes",

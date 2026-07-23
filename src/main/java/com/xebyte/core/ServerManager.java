@@ -73,6 +73,8 @@ public class ServerManager {
                 new MemoryBlockService(programProvider, ts);
             DataRegionService dataRegionService =
                 new DataRegionService(programProvider, ts);
+            SymbolProfileService symbolProfileService =
+                new SymbolProfileService(programProvider, ts);
             EmulationService emulationService = new EmulationService(programProvider, ts);
             ExportService exportService = new ExportService(programProvider);
             FlowDisassemblyService flowDisassemblyService =
@@ -88,7 +90,8 @@ public class ServerManager {
                 listingService, functionService, commentService, symbolLabelService,
                 xrefCallGraphService, dataTypeService, analysisService,
                 binaryComparisonService, malwareSecurityService, programScriptService,
-                memoryBlockService, dataRegionService, emulationService, exportService, flowDisassemblyService,
+                memoryBlockService, dataRegionService, symbolProfileService,
+                emulationService, exportService, flowDisassemblyService,
                 listingRangeService, listingMutationService,
                 debuggerService, guiProjectService);
 

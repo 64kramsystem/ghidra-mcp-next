@@ -59,6 +59,8 @@ public class GuiTransportSchemaParityTest extends TestCase {
                 "new com.xebyte.core.MemoryBlockService(programProvider, threadingStrategy)"));
         assertTrue("TCP must construct DataRegionService", source.contains(
                 "new com.xebyte.core.DataRegionService(programProvider, threadingStrategy)"));
+        assertTrue("TCP must construct SymbolProfileService", source.contains(
+                "new com.xebyte.core.SymbolProfileService(programProvider, threadingStrategy)"));
         assertTrue("TCP must construct FlowDisassemblyService", source.contains(
                 "new com.xebyte.core.FlowDisassemblyService(programProvider, threadingStrategy)"));
         assertTrue("TCP must construct ListingRangeService with GUI threading",
@@ -70,6 +72,7 @@ public class GuiTransportSchemaParityTest extends TestCase {
         assertTrue("TCP scanner must include GuiProjectService so schema and routes agree",
                 source.matches("(?s).*new AnnotationScanner\\(programProvider,.*"
                         + "programScriptService,\\s*memoryBlockService,\\s*dataRegionService,\\s*"
+                        + "symbolProfileService,\\s*"
                         + "emulationService,\\s*exportService,\\s*"
                         + "flowDisassemblyService,\\s*listingRangeService,\\s*"
                         + "listingMutationService,\\s*"
@@ -86,6 +89,8 @@ public class GuiTransportSchemaParityTest extends TestCase {
                 "MemoryBlockService memoryBlockService ="));
         assertTrue("UDS must construct DataRegionService", source.contains(
                 "DataRegionService dataRegionService ="));
+        assertTrue("UDS must construct SymbolProfileService", source.contains(
+                "SymbolProfileService symbolProfileService ="));
         assertTrue("UDS must construct ExportService", source.contains(
                 "ExportService exportService = new ExportService"));
         assertTrue("UDS must construct FlowDisassemblyService", source.contains(
@@ -101,6 +106,7 @@ public class GuiTransportSchemaParityTest extends TestCase {
         assertTrue("UDS scanner must advertise emulation, export, debugger, and project tools",
                 source.matches("(?s).*new AnnotationScanner\\(programProvider,.*"
                         + "programScriptService,\\s*memoryBlockService,\\s*dataRegionService,\\s*"
+                        + "symbolProfileService,\\s*"
                         + "emulationService,\\s*exportService,\\s*"
                         + "flowDisassemblyService,\\s*listingRangeService,\\s*"
                         + "listingMutationService,\\s*"
@@ -120,6 +126,8 @@ public class GuiTransportSchemaParityTest extends TestCase {
                 handlerSource.contains("getMemoryBlockService()"));
         assertTrue("Headless handler must expose DataRegionService",
                 handlerSource.contains("getDataRegionService()"));
+        assertTrue("Headless handler must expose SymbolProfileService",
+                handlerSource.contains("getSymbolProfileService()"));
         assertTrue("Headless handler must expose ExportService to the scanner",
                 handlerSource.contains(
                         "getExportService() { return exportService; }"));
@@ -148,6 +156,7 @@ public class GuiTransportSchemaParityTest extends TestCase {
                         + "endpointHandler\\.getProgramProvider\\(\\),.*"
                         + "endpointHandler\\.getMemoryBlockService\\(\\),\\s*"
                         + "endpointHandler\\.getDataRegionService\\(\\),\\s*"
+                        + "endpointHandler\\.getSymbolProfileService\\(\\),\\s*"
                         + "endpointHandler\\.getEmulationService\\(\\),\\s*"
                         + "endpointHandler\\.getExportService\\(\\),\\s*"
                         + "endpointHandler\\.getFlowDisassemblyService\\(\\),\\s*"
