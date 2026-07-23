@@ -55,18 +55,23 @@ public final class SecurityConfig {
     private final String projectFolderScope; // null = no enforcement (default)
 
     private SecurityConfig() {
-        String rawToken = System.getenv("GHIDRA_MCP_AUTH_TOKEN");
+        this(System.getenv("GHIDRA_MCP_AUTH_TOKEN"),
+            System.getenv("GHIDRA_MCP_ALLOW_SCRIPTS"),
+            System.getenv("GHIDRA_MCP_FILE_ROOT"),
+            System.getenv("GHIDRA_MCP_PROJECT_FOLDER"));
+    }
+
+    private SecurityConfig(String rawToken, String rawScripts, String rawRoot,
+            String rawScope) {
         this.tokenBytes = (rawToken != null && !rawToken.isEmpty())
                 ? rawToken.getBytes(StandardCharsets.UTF_8)
                 : null;
 
-        String rawScripts = System.getenv("GHIDRA_MCP_ALLOW_SCRIPTS");
         this.scriptsAllowed = rawScripts != null
                 && (rawScripts.equalsIgnoreCase("1")
                     || rawScripts.equalsIgnoreCase("true")
                     || rawScripts.equalsIgnoreCase("yes"));
 
-        String rawRoot = System.getenv("GHIDRA_MCP_FILE_ROOT");
         if (rawRoot != null && !rawRoot.isEmpty()) {
             this.fileRoot = rawRoot;
             Path p;
@@ -87,7 +92,6 @@ public final class SecurityConfig {
         // general users — only opt-in via env var changes behavior).
         // Trailing slash normalized so collision-safe `path == prefix or
         // startsWith(prefix + "/")` matching works.
-        String rawScope = System.getenv("GHIDRA_MCP_PROJECT_FOLDER");
         if (rawScope != null) {
             String trimmed = rawScope.trim();
             // Strip trailing slash unless the value is just "/"
@@ -98,6 +102,17 @@ public final class SecurityConfig {
         } else {
             this.projectFolderScope = null;
         }
+    }
+
+    /**
+     * Build an isolated configuration with a real file-root policy for tests.
+     * Package-private so production callers continue to use the environment snapshot.
+     */
+    static SecurityConfig forFileRootTesting(Path fileRoot) {
+        if (fileRoot == null) {
+            throw new IllegalArgumentException("fileRoot is required");
+        }
+        return new SecurityConfig(null, null, fileRoot.toString(), null);
     }
 
     public static SecurityConfig getInstance() {

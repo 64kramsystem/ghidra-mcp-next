@@ -156,11 +156,16 @@ public final class ExportService {
             if (startAddress.compareTo(endAddress) > 0) {
                 return Response.err("start must not be after end");
             }
+            AddressSet boundedSelection = new AddressSet(startAddress, endAddress);
+            if (!program.getMemory().contains(boundedSelection)) {
+                return Response.err(
+                    "bounded export range must be entirely contained in program memory");
+            }
             if (!runner.supportsAddressRestrictedExport()) {
                 return Response.err(runner.name()
                     + " does not support address-restricted export");
             }
-            selection = new AddressSet(startAddress, endAddress);
+            selection = boundedSelection;
         }
         else {
             selection = program.getMemory();
@@ -194,11 +199,6 @@ public final class ExportService {
                     runner.name() + " returned false", runner.diagnostic()));
             }
 
-            // Re-check after the potentially long export so an unauthorized
-            // concurrent creator is not silently replaced at publication time.
-            if (!overwrite && Files.exists(destination)) {
-                throw new FileAlreadyExistsException(destination.toString());
-            }
             publish(temporary, destination, overwrite);
             return Response.ok(exportResult(
                 program, destination, start, end, selection, runner.name()));
@@ -236,24 +236,35 @@ public final class ExportService {
         return destination.resolveSibling("." + name + ".tmp-" + UUID.randomUUID());
     }
 
-    private static void publish(Path temporary, Path destination, boolean overwrite)
+    static void publish(Path temporary, Path destination, boolean overwrite)
             throws IOException {
+        if (!overwrite) {
+            try {
+                // createLink is an atomic fail-if-present publication primitive:
+                // the complete sibling temp becomes visible at destination only
+                // when destination does not already exist.
+                Files.createLink(destination, temporary);
+            }
+            catch (UnsupportedOperationException e) {
+                throw new IOException(
+                    "safe no-overwrite publication is not supported by this filesystem", e);
+            }
+            try {
+                Files.deleteIfExists(temporary);
+            }
+            catch (IOException ignored) {
+                // Destination already names the complete file. The outer finally
+                // makes one more best-effort attempt to unlink the temp name.
+            }
+            return;
+        }
+
         try {
-            if (overwrite) {
-                Files.move(temporary, destination, StandardCopyOption.ATOMIC_MOVE,
-                    StandardCopyOption.REPLACE_EXISTING);
-            }
-            else {
-                Files.move(temporary, destination, StandardCopyOption.ATOMIC_MOVE);
-            }
+            Files.move(temporary, destination, StandardCopyOption.ATOMIC_MOVE,
+                StandardCopyOption.REPLACE_EXISTING);
         }
         catch (AtomicMoveNotSupportedException e) {
-            if (overwrite) {
-                Files.move(temporary, destination, StandardCopyOption.REPLACE_EXISTING);
-            }
-            else {
-                Files.move(temporary, destination);
-            }
+            Files.move(temporary, destination, StandardCopyOption.REPLACE_EXISTING);
         }
     }
 
