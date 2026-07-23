@@ -29,6 +29,11 @@ import ghidra.util.task.TaskMonitor;
 final class MemoryBlockCore {
 
     static final long MAX_SOURCE_BYTES = 67_108_864L;
+    /**
+     * Maximum number of coalesced difference records returned by one write.
+     * This bounds both planner state and the resulting JSON response.
+     */
+    static final int MAX_DIFFERING_RANGES = 4096;
 
     @FunctionalInterface
     interface FileReader {
@@ -632,14 +637,17 @@ final class MemoryBlockCore {
             throw new IllegalArgumentException(
                 "could not read the complete initialized destination");
         }
-        List<DifferingRange> differences = differingRanges(
-            start.getAddressSpace().getName(),
-            start.getOffset(),
-            existing,
-            requested);
-        if ("error".equals(policy) && !differences.isEmpty()) {
-            throw new IllegalArgumentException(
-                "requested bytes differ from initialized program memory");
+        List<DifferingRange> differences;
+        if ("error".equals(policy)) {
+            rejectFirstDifference(existing, requested);
+            differences = List.of();
+        }
+        else {
+            differences = differingRanges(
+                start.getAddressSpace().getName(),
+                start.getOffset(),
+                existing,
+                requested);
         }
         return new WritePlan(
             block,
@@ -673,7 +681,11 @@ final class MemoryBlockCore {
             throw new IllegalArgumentException(
                 "before and requested byte sequences must have equal length");
         }
-        List<DifferingRange> result = new ArrayList<>();
+        int rangeCount = countDifferingRanges(before, requested);
+        if (rangeCount == 0) {
+            return List.of();
+        }
+        List<DifferingRange> result = new ArrayList<>(rangeCount);
         int index = 0;
         while (index < before.length) {
             if (before[index] == requested[index]) {
@@ -693,6 +705,46 @@ final class MemoryBlockCore {
             index++;
         }
         return List.copyOf(result);
+    }
+
+    private static void rejectFirstDifference(
+            byte[] before, byte[] requested) {
+        if (before.length != requested.length) {
+            throw new IllegalArgumentException(
+                "before and requested byte sequences must have equal length");
+        }
+        for (int index = 0; index < before.length; index++) {
+            if (before[index] != requested[index]) {
+                throw new IllegalArgumentException(
+                    "requested bytes differ from initialized program memory");
+            }
+        }
+    }
+
+    /**
+     * Counts coalesced ranges without allocating records or formatting
+     * addresses. The limit is rejected during this pass, before a response
+     * list can be allocated and before a write transaction can mutate memory.
+     */
+    private static int countDifferingRanges(
+            byte[] before, byte[] requested) {
+        int rangeCount = 0;
+        boolean inDifference = false;
+        for (int index = 0; index < before.length; index++) {
+            boolean differs = before[index] != requested[index];
+            if (differs && !inDifference) {
+                rangeCount++;
+                if (rangeCount > MAX_DIFFERING_RANGES) {
+                    throw new IllegalArgumentException(
+                        "write has more than "
+                            + MAX_DIFFERING_RANGES
+                            + " differing ranges; split the write into "
+                            + "smaller requests");
+                }
+            }
+            inDifference = differs;
+        }
+        return rangeCount;
     }
 
     static String sha256(byte[] bytes) {
