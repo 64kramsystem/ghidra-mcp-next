@@ -67,7 +67,11 @@ public class ListingService {
         return Response.text(ServiceUtils.paginateList(sorted, offset, limit));
     }
 
-    @McpTool(path = "/list_segments", description = "List memory blocks/segments", category = "listing")
+    @McpTool(
+        path = "/list_segments",
+        description =
+            "List complete memory-block descriptors including overlays, initialization, source, permissions, and comments",
+        category = "listing")
     public Response listSegments(
             @Param(value = "offset", defaultValue = "0") int offset,
             @Param(value = "limit", defaultValue = "100") int limit,
@@ -76,11 +80,19 @@ public class ListingService {
         if (pe.hasError()) return pe.error();
         Program program = pe.program();
 
-        List<String> lines = new ArrayList<>();
-        for (MemoryBlock block : program.getMemory().getBlocks()) {
-            lines.add(String.format("%s: %s - %s", block.getName(), block.getStart(), block.getEnd()));
+        List<MemoryBlockCore.BlockDescriptor> descriptors =
+            MemoryBlockCore.descriptors(program);
+        int safeOffset = Math.max(0, offset);
+        int safeLimit = Math.max(0, limit);
+        int end = (int) Math.min(
+            descriptors.size(),
+            (long) safeOffset + safeLimit);
+        if (safeOffset >= descriptors.size()) {
+            return Response.ok(List.of());
         }
-        return Response.text(ServiceUtils.paginateList(lines, offset, limit));
+        return Response.ok(
+            MemoryBlockService.descriptorJson(
+                descriptors.subList(safeOffset, end)));
     }
 
     @McpTool(path = "/list_imports", description = "List external/imported symbols", category = "listing")

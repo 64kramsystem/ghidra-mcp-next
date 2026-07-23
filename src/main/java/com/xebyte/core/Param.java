@@ -60,6 +60,20 @@ public @interface Param {
     boolean strictBoolean() default false;
 
     /**
+     * Require an integral JSON number and reject fractional, overflowing, or
+     * string-coerced values. Wrapper types may be omitted when
+     * {@link #optional()} is true.
+     */
+    boolean strictInteger() default false;
+
+    /**
+     * Advertise a parameter as optional even when it has no scalar default.
+     * This is useful for nullable wrapper parameters where omission means
+     * "leave unchanged".
+     */
+    boolean optional() default false;
+
+    /**
      * Semantic type hint for this parameter, propagated to /mcp/schema.
      * Use "address" for parameters that carry memory addresses.
      * The bridge uses this to apply address sanitization before dispatch.

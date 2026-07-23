@@ -69,6 +69,8 @@ public class ServerManager {
             AnalysisService analysisService = new AnalysisService(programProvider, ts, functionService);
             MalwareSecurityService malwareSecurityService = new MalwareSecurityService(programProvider, ts);
             ProgramScriptService programScriptService = new ProgramScriptService(programProvider, ts);
+            MemoryBlockService memoryBlockService =
+                new MemoryBlockService(programProvider, ts);
             EmulationService emulationService = new EmulationService(programProvider, ts);
             ExportService exportService = new ExportService(programProvider);
             FlowDisassemblyService flowDisassemblyService =
@@ -84,7 +86,7 @@ public class ServerManager {
                 listingService, functionService, commentService, symbolLabelService,
                 xrefCallGraphService, dataTypeService, analysisService,
                 binaryComparisonService, malwareSecurityService, programScriptService,
-                emulationService, exportService, flowDisassemblyService,
+                memoryBlockService, emulationService, exportService, flowDisassemblyService,
                 listingRangeService, listingMutationService,
                 debuggerService, guiProjectService);
 

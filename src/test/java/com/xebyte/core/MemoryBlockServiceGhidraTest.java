@@ -1,0 +1,536 @@
+package com.xebyte.core;
+
+import static org.junit.Assert.assertArrayEquals;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assume.assumeTrue;
+
+import java.io.File;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.concurrent.Callable;
+
+import org.junit.After;
+import org.junit.Before;
+import org.junit.BeforeClass;
+import org.junit.Test;
+
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import com.xebyte.headless.DirectThreadingStrategy;
+import com.xebyte.headless.HeadlessProgramProvider;
+
+import ghidra.GhidraApplicationLayout;
+import ghidra.framework.Application;
+import ghidra.framework.ApplicationConfiguration;
+import ghidra.program.database.ProgramBuilder;
+import ghidra.program.database.ProgramDB;
+import ghidra.program.model.address.Address;
+
+/**
+ * Real-Ghidra coverage for initialized overlays, transformations, byte writes,
+ * rollback, and the C64-oriented generic fixture required by Feature 9.
+ */
+public class MemoryBlockServiceGhidraTest {
+
+    private ProgramBuilder builder;
+    private ProgramDB program;
+    private MemoryBlockService memory;
+    private ListingService listing;
+
+    @BeforeClass
+    public static void initializeGhidraOrSkip() throws Exception {
+        String installDir = System.getProperty("ghidra.test.install.dir");
+        assumeTrue("ghidra.test.install.dir is required",
+            installDir != null && !installDir.isBlank());
+        if (!Application.isInitialized()) {
+            ApplicationConfiguration configuration =
+                new ApplicationConfiguration();
+            configuration.setInitializeLogging(false);
+            Application.initializeApplication(
+                new GhidraApplicationLayout(new File(installDir)),
+                configuration);
+        }
+    }
+
+    @Before
+    public void setUp() throws Exception {
+        builder = new ProgramBuilder(
+            "memory-blocks-6502", "6502:LE:16:default", "default", this);
+        program = builder.getProgram();
+        HeadlessProgramProvider provider = new HeadlessProgramProvider();
+        provider.setCurrentProgram(program);
+        memory = new MemoryBlockService(
+            provider, new DirectThreadingStrategy());
+        listing = new ListingService(provider);
+    }
+
+    @After
+    public void tearDown() {
+        if (builder != null) {
+            builder.dispose();
+        }
+    }
+
+    @Test
+    public void creationSourcesFillPermissionsCommentAndOrdinaryOverlap()
+            throws Exception {
+        JsonObject preview = create(
+            "bss", "0x1000", 0x20L, null, null, null,
+            false, null, true, false, false, false, null, true);
+        assertFalse(preview.get("committed").getAsBoolean());
+        assertNull(program.getMemory().getBlock("bss"));
+
+        JsonObject bss = create(
+            "bss", "0x1000", 0x20L, null, null, null,
+            false, null, true, false, false, true, "scratch", false);
+        assertFalse(bss.getAsJsonObject("after")
+            .get("initialized").getAsBoolean());
+        assertEquals("r--", bss.getAsJsonObject("after")
+            .get("permissions").getAsString());
+        assertEquals("scratch", program.getMemory().getBlock("bss").getComment());
+        assertTrue(program.getMemory().getBlock("bss").isVolatile());
+        assertCompleteDescriptor(bss.getAsJsonObject("after"));
+
+        JsonObject filled = create(
+            "filled", "0x1100", 4L, null, null, null,
+            false, 0xea, true, true, true, false, "code", false);
+        assertTrue(filled.getAsJsonObject("after")
+            .get("initialized").getAsBoolean());
+        assertArrayEquals(hex("eaeaeaea"), bytes("0x1100", 4));
+
+        create(
+            "payload", "0x1200", null, "001122ff", null, null,
+            false, null, true, false, false, false, null, false);
+        assertArrayEquals(hex("001122ff"), bytes("0x1200", 4));
+
+        Path root = Files.createTempDirectory("memory-file-root");
+        Path source = root.resolve("kernal.bin");
+        Files.write(source, hex("aabbccddee"));
+        memory = serviceForRoot(root, new DirectThreadingStrategy());
+        create(
+            "file", "0x1300", null, null, source.toString(), 1L,
+            false, null, true, false, false, false, null, false,
+            3L);
+        assertArrayEquals(hex("bbccdd"), bytes("0x1300", 3));
+
+        Response overlap = memory.createMemoryBlock(
+            "overlap", "0x1010", 4L, null, null, 0L, null,
+            false, null, true, false, false, false, null, false, "");
+        assertError(overlap, "overlap");
+        assertNull(program.getMemory().getBlock("overlap"));
+    }
+
+    @Test
+    public void twoInitializedOverlaysAtSameOffsetKeepDistinctSpacesAndBytes() {
+        JsonObject firstPreview = create(
+            "rom_a", "0x8000", null, "aa55", null, null,
+            true, null, true, false, true, false, "A", true);
+        JsonObject first = create(
+            "rom_a", "0x8000", null, "aa55", null, null,
+            true, null, true, false, true, false, "A", false);
+        JsonObject second = create(
+            "rom_b", "0x8000", null, "1122", null, null,
+            true, null, true, false, true, false, "B", false);
+
+        JsonObject a = first.getAsJsonObject("after");
+        JsonObject b = second.getAsJsonObject("after");
+        assertEquals(firstPreview.get("after"), first.get("after"));
+        assertNotEquals(a.get("address_space").getAsString(),
+            b.get("address_space").getAsString());
+        assertArrayEquals(hex("aa55"), bytes(
+            a.get("address_space").getAsString() + ":8000", 2));
+        assertArrayEquals(hex("1122"), bytes(
+            b.get("address_space").getAsString() + ":8000", 2));
+
+        JsonObject uninitialized = create(
+            "uninit_overlay", "0x9000", 0x10L, null, null, null,
+            true, null, true, true, false, true, "window", false);
+        assertFalse(uninitialized.getAsJsonObject("after")
+            .get("initialized").getAsBoolean());
+
+        assertError(memory.createMemoryBlock(
+            program.getAddressFactory().getDefaultAddressSpace().getName(),
+            "0xa000", null, "01", null, null, null,
+            true, null, true, false, false, false, null, false, ""),
+            "address space");
+        assertError(memory.createMemoryBlock(
+            "overlay_on_overlay",
+            a.get("address_space").getAsString() + ":9000",
+            null, "01", null, null, null,
+            true, null, true, false, false, false, null, false, ""),
+            "physical");
+
+        ok(memory.writeMemoryBytes(
+            a.get("address_space").getAsString() + ":8000",
+            "fe55", "overwrite_bytes", false, ""));
+        assertArrayEquals(hex("fe55"), bytes(
+            a.get("address_space").getAsString() + ":8000", 2));
+        assertArrayEquals(hex("1122"), bytes(
+            b.get("address_space").getAsString() + ":8000", 2));
+    }
+
+    @Test
+    public void genericFixtureRepresentsRamBasicKernalAndIoWithoutBankLogic() {
+        create("ram", "0x0000", 0x10000L, null, null, null,
+            false, 0, true, true, true, false, "ordinary RAM", false);
+        create("basic_rom", "0xa000", null, "01020304", null, null,
+            true, null, true, false, true, false, "BASIC image", false);
+        create("io", "0xd000", null, "11121314", null, null,
+            true, null, true, true, false, true, "I/O image", false);
+        create("kernal_rom", "0xe000", null, "21222324", null, null,
+            true, null, true, false, true, false, "KERNAL image", false);
+
+        JsonArray blocks = JsonParser.parseString(
+            listing.listSegments(0, 100, "").toJson()).getAsJsonArray();
+        assertEquals(4, blocks.size());
+        assertEquals(3, blocks.asList().stream()
+            .filter(element -> element.getAsJsonObject()
+                .get("overlay").getAsBoolean()).count());
+        for (var element : blocks) {
+            JsonObject block = element.getAsJsonObject();
+            assertTrue(block.has("address_space"));
+            assertTrue(block.has("initialized"));
+            assertTrue(block.has("source"));
+            assertTrue(block.has("permissions"));
+            assertTrue(block.has("comment"));
+        }
+    }
+
+    @Test
+    public void updateSplitAndMovePreserveBytesMetadataAndHaveFullDescriptors() {
+        create("ram", "0x2000", 0x100L, null, null, null,
+            false, 0xea, true, true, false, true, "before", false);
+
+        JsonObject update = ok(memory.updateMemoryBlock(
+            "ram", "workspace", true, false, true, false,
+            "after", false, ""));
+        assertEquals("ram", update.getAsJsonObject("before")
+            .get("name").getAsString());
+        assertEquals("workspace", update.getAsJsonObject("after")
+            .get("name").getAsString());
+        assertEquals("r-x", update.getAsJsonObject("after")
+            .get("permissions").getAsString());
+        assertEquals("after", update.getAsJsonObject("after")
+            .get("comment").getAsString());
+        assertCompleteDescriptor(update.getAsJsonObject("before"));
+        assertCompleteDescriptor(update.getAsJsonObject("after"));
+
+        JsonObject cleared = ok(memory.updateMemoryBlock(
+            "workspace", null, null, null, null, null,
+            "", false, ""));
+        assertEquals("", cleared.getAsJsonObject("after")
+            .get("comment").getAsString());
+
+        byte[] original = bytes("0x2000", 0x100);
+        JsonObject split = ok(memory.splitMemoryBlock(
+            "workspace", "0x2080", false, ""));
+        JsonObject prefix = split.getAsJsonObject("prefix");
+        JsonObject suffix = split.getAsJsonObject("suffix");
+        assertEquals("workspace", prefix.get("name").getAsString());
+        assertEquals("workspace_split_2080", suffix.get("name").getAsString());
+        assertEquals(prefix.get("permissions"), suffix.get("permissions"));
+        assertEquals(prefix.get("comment"), suffix.get("comment"));
+        assertEquals(prefix.get("volatile"), suffix.get("volatile"));
+        assertEquals(prefix.get("source"), suffix.get("source"));
+        assertCompleteDescriptor(split.getAsJsonObject("before"));
+        assertCompleteDescriptor(prefix);
+        assertCompleteDescriptor(suffix);
+        byte[] joined = new byte[0x100];
+        System.arraycopy(bytes("0x2000", 0x80), 0, joined, 0, 0x80);
+        System.arraycopy(bytes("0x2080", 0x80), 0, joined, 0x80, 0x80);
+        assertArrayEquals(original, joined);
+
+        JsonObject moved = ok(memory.moveMemoryBlock(
+            "workspace_split_2080", "0x3000", false, ""));
+        assertEquals("2080", moved.getAsJsonObject("before")
+            .get("start").getAsString());
+        assertEquals("3000", moved.getAsJsonObject("after")
+            .get("start").getAsString());
+        assertArrayEquals(
+            java.util.Arrays.copyOfRange(original, 0x80, 0x100),
+            bytes("0x3000", 0x80));
+        assertEquals(
+            moved.getAsJsonObject("before").get("permissions"),
+            moved.getAsJsonObject("after").get("permissions"));
+        assertEquals(
+            moved.getAsJsonObject("before").get("source"),
+            moved.getAsJsonObject("after").get("source"));
+        assertCompleteDescriptor(moved.getAsJsonObject("before"));
+        assertCompleteDescriptor(moved.getAsJsonObject("after"));
+    }
+
+    @Test
+    public void transformsRejectCollisionsInvalidSplitsOverlapsAndOverlayMoves() {
+        create("a", "0x1000", 0x100L, null, null, null,
+            false, 0, true, true, false, false, null, false);
+        create("a_split_1080", "0x3000", 0x10L, null, null, null,
+            false, null, true, false, false, false, null, false);
+        create("overlay", "0x4000", null, "0102", null, null,
+            true, null, true, false, false, false, null, false);
+        create("collision", "0x5000", 0x10L, null, null, null,
+            false, null, true, false, false, false, null, false);
+
+        assertError(memory.updateMemoryBlock(
+            "a", "collision", null, null, null, null,
+            null, false, ""), "collid");
+        assertError(memory.splitMemoryBlock("a", "0x1080", false, ""),
+            "collision");
+        assertError(memory.splitMemoryBlock("a", "0x1000", false, ""),
+            "inside");
+        assertError(memory.moveMemoryBlock("a", "0x3000", false, ""),
+            "overlap");
+        assertError(memory.moveMemoryBlock("overlay", "0x5000", false, ""),
+            "overlay");
+        assertEquals("1000", program.getMemory().getBlock("a")
+            .getStart().toString(false));
+
+        long beforeNoOp = program.getModificationNumber();
+        JsonObject noOp = ok(memory.updateMemoryBlock(
+            "a", null, null, null, null, null, null, false, ""));
+        assertFalse(noOp.get("changed").getAsBoolean());
+        assertEquals(noOp.get("before"), noOp.get("after"));
+        assertEquals(beforeNoOp, program.getModificationNumber());
+
+        JsonObject moveNoOp = ok(memory.moveMemoryBlock(
+            "a", "0x1000", false, ""));
+        assertFalse(moveNoOp.get("changed").getAsBoolean());
+        assertEquals(moveNoOp.get("before"), moveNoOp.get("after"));
+        assertEquals(beforeNoOp, program.getModificationNumber());
+    }
+
+    @Test
+    public void byteWritesPreviewDigestConflictsMappingsAndCommit() {
+        create("ram", "0x4000", null, "000102030405", null, null,
+            false, null, true, true, false, false, null, false);
+        create("bss", "0x5000", 0x10L, null, null, null,
+            false, null, true, true, false, false, null, false);
+
+        JsonObject preview = ok(memory.writeMemoryBytes(
+            "0x4000", "090108070406", "overwrite_bytes", true, ""));
+        JsonObject commit = ok(memory.writeMemoryBytes(
+            "0x4000", "090108070406", "overwrite_bytes", false, ""));
+        assertEquals(preview.get("sha256"), commit.get("sha256"));
+        assertEquals(preview.get("differing_ranges"),
+            commit.get("differing_ranges"));
+        assertEquals(preview.get("before"), commit.get("before"));
+        assertEquals(preview.get("after"), commit.get("after"));
+        assertCompleteDescriptor(preview.getAsJsonObject("before"));
+        assertCompleteDescriptor(preview.getAsJsonObject("after"));
+        assertFalse(preview.get("committed").getAsBoolean());
+        assertTrue(commit.get("committed").getAsBoolean());
+        assertArrayEquals(hex("090108070406"), bytes("0x4000", 6));
+
+        long beforeIdentical = program.getModificationNumber();
+        JsonObject identical = ok(memory.writeMemoryBytes(
+            "0x4000", "090108070406", "error", false, ""));
+        assertEquals(0, identical.getAsJsonArray("differing_ranges").size());
+        assertFalse(identical.get("changed").getAsBoolean());
+        assertEquals(beforeIdentical, program.getModificationNumber());
+        assertError(memory.writeMemoryBytes(
+            "0x4000", "ff0108070406", "error", false, ""), "differ");
+        assertError(memory.writeMemoryBytes(
+            "0x5000", "01", "overwrite_bytes", false, ""),
+            "initialized");
+        assertError(memory.writeMemoryBytes(
+            "0x6000", "01", "overwrite_bytes", false, ""), "existing");
+        assertError(memory.writeMemoryBytes(
+            "0x4005", "0102", "overwrite_bytes", false, ""), "extend");
+        assertError(memory.writeMemoryBytes(
+            "0x4000", "01", "merge", false, ""), "conflict_policy");
+    }
+
+    @Test
+    public void dryRunsAndInjectedFailuresRollbackEveryMutation() {
+        create("ram", "0x6000", null, "00010203", null, null,
+            false, null, true, true, false, false, "stable", false);
+
+        ok(memory.updateMemoryBlock(
+            "ram", "preview", false, false, false, true,
+            "changed", true, ""));
+        ok(memory.splitMemoryBlock("ram", "0x6002", true, ""));
+        ok(memory.moveMemoryBlock("ram", "0x6100", true, ""));
+        ok(memory.writeMemoryBytes(
+            "0x6000", "ffffffff", "overwrite_bytes", true, ""));
+        assertEquals("ram", program.getMemory().getBlock("ram").getName());
+        assertEquals("6000", program.getMemory().getBlock("ram")
+            .getStart().toString(false));
+        assertEquals(1, program.getMemory().getBlocks().length);
+        assertArrayEquals(hex("00010203"), bytes("0x6000", 4));
+
+        HeadlessProgramProvider provider = new HeadlessProgramProvider();
+        provider.setCurrentProgram(program);
+        MemoryBlockService aborting = new MemoryBlockService(
+            provider, new AbortAfterActionStrategy());
+
+        assertError(aborting.createMemoryBlock(
+            "failed_create", "0x7000", null, "0102", null,
+            0L, null, false, null, true, false, false, false,
+            "never", false, ""), "forced rollback");
+        assertNull(program.getMemory().getBlock("failed_create"));
+
+        assertError(aborting.createMemoryBlock(
+            "failed_overlay", "0x8000", null, "0102", null,
+            0L, null, true, null, true, false, false, false,
+            "never", false, ""), "forced rollback");
+        assertNull(program.getMemory().getBlock("failed_overlay"));
+        assertNull(program.getAddressFactory().getAddressSpace("failed_overlay"));
+
+        assertError(aborting.updateMemoryBlock(
+            "ram", "renamed", false, false, false, true,
+            "changed", false, ""), "forced rollback");
+        assertNull(program.getMemory().getBlock("renamed"));
+        assertEquals("stable", program.getMemory().getBlock("ram").getComment());
+
+        assertError(aborting.splitMemoryBlock(
+            "ram", "0x6002", false, ""), "forced rollback");
+        assertEquals(1, program.getMemory().getBlocks().length);
+        assertNull(program.getMemory().getBlock("ram_split_6002"));
+
+        assertError(aborting.moveMemoryBlock(
+            "ram", "0x6100", false, ""), "forced rollback");
+        assertEquals("6000", program.getMemory().getBlock("ram")
+            .getStart().toString(false));
+
+        assertError(aborting.writeMemoryBytes(
+            "0x6000", "aabbccdd", "overwrite_bytes", false, ""),
+            "forced rollback");
+        assertArrayEquals(hex("00010203"), bytes("0x6000", 4));
+    }
+
+    @Test
+    public void previewAndCommitExposeMatchingCompleteCreationDescriptors() {
+        JsonObject preview = create(
+            "previewed", "0x7000", null, "010203", null, null,
+            false, null, true, false, true, true, "meta", true);
+        JsonObject commit = create(
+            "previewed", "0x7000", null, "010203", null, null,
+            false, null, true, false, true, true, "meta", false);
+
+        assertTrue(preview.has("before"));
+        assertTrue(preview.get("before").isJsonNull());
+        assertEquals(preview.get("after"), commit.get("after"));
+        assertCompleteDescriptor(preview.getAsJsonObject("after"));
+        assertCompleteDescriptor(commit.getAsJsonObject("after"));
+    }
+
+    @Test
+    public void overflowAndCancellationAreReportedWithoutLeakedBlocks() {
+        assertError(memory.createMemoryBlock(
+            "overflow", "0xffff", 2L, null, null, null, null,
+            false, null, true, false, false, false, null, false, ""),
+            "overflow");
+        assertNull(program.getMemory().getBlock("overflow"));
+
+        ghidra.util.task.TaskMonitorAdapter cancelled =
+            new ghidra.util.task.TaskMonitorAdapter();
+        cancelled.setCancelEnabled(true);
+        cancelled.cancel();
+        HeadlessProgramProvider provider = new HeadlessProgramProvider();
+        provider.setCurrentProgram(program);
+        MemoryBlockService cancelledService = new MemoryBlockService(
+            provider,
+            new DirectThreadingStrategy(),
+            SecurityConfig.getInstance(),
+            MemoryBlockService::readFileRange,
+            new MemoryBlockCore(),
+            cancelled);
+
+        Response response = cancelledService.createMemoryBlock(
+            "cancelled", "0x7000", null, "0102", null, null, null,
+            false, null, true, false, false, false, null, false, "");
+
+        assertError(response, "cancel");
+        assertNull(program.getMemory().getBlock("cancelled"));
+    }
+
+    private MemoryBlockService serviceForRoot(
+            Path root, DirectThreadingStrategy strategy) {
+        HeadlessProgramProvider provider = new HeadlessProgramProvider();
+        provider.setCurrentProgram(program);
+        return new MemoryBlockService(
+            provider, strategy, SecurityConfig.forFileRootTesting(root),
+            MemoryBlockService::readFileRange);
+    }
+
+    private JsonObject create(
+            String name, String start, Long length, String bytes,
+            String filePath, Long fileOffset, boolean overlay, Integer fill,
+            boolean read, boolean write, boolean execute, boolean volatileFlag,
+            String comment, boolean dryRun) {
+        return create(name, start, length, bytes, filePath, fileOffset,
+            overlay, fill, read, write, execute, volatileFlag, comment, dryRun,
+            null);
+    }
+
+    private JsonObject create(
+            String name, String start, Long length, String bytes,
+            String filePath, Long fileOffset, boolean overlay, Integer fill,
+            boolean read, boolean write, boolean execute, boolean volatileFlag,
+            String comment, boolean dryRun, Long sourceLength) {
+        return ok(memory.createMemoryBlock(
+            name, start, length, bytes, filePath,
+            fileOffset, sourceLength,
+            overlay, fill, read, write, execute, volatileFlag, comment,
+            dryRun, ""));
+    }
+
+    private byte[] bytes(String address, int length) {
+        byte[] result = new byte[length];
+        Address start = ServiceUtils.parseAddress(program, address);
+        try {
+            assertEquals(length, program.getMemory().getBytes(start, result));
+            return result;
+        }
+        catch (Exception error) {
+            throw new AssertionError(error);
+        }
+    }
+
+    private static byte[] hex(String value) {
+        byte[] result = new byte[value.length() / 2];
+        for (int i = 0; i < result.length; i++) {
+            result[i] = (byte) Integer.parseInt(
+                value.substring(i * 2, i * 2 + 2), 16);
+        }
+        return result;
+    }
+
+    private static JsonObject ok(Response response) {
+        assertTrue(response.toJson(), response instanceof Response.Ok);
+        return JsonParser.parseString(response.toJson()).getAsJsonObject();
+    }
+
+    private static void assertError(Response response, String fragment) {
+        assertTrue(response.toJson(), response instanceof Response.Err);
+        assertTrue(response.toJson(),
+            response.toJson().toLowerCase().contains(fragment.toLowerCase()));
+    }
+
+    private static void assertCompleteDescriptor(JsonObject descriptor) {
+        assertEquals(
+            java.util.Set.of(
+                "name", "start", "end", "length", "address_space",
+                "overlay", "initialized", "source", "read", "write",
+                "execute", "permissions", "volatile", "comment"),
+            descriptor.keySet());
+    }
+
+    private static final class AbortAfterActionStrategy
+            extends DirectThreadingStrategy {
+        @Override
+        public <T> T executeWrite(
+                ghidra.program.model.listing.Program program,
+                String txName,
+                Callable<T> action) throws Exception {
+            return super.executeWrite(program, txName, () -> {
+                action.call();
+                throw new Exception("forced rollback");
+            });
+        }
+    }
+}

@@ -106,7 +106,7 @@ class VersionInfo {
     // scanner-driven endpoints (e.g., headless usage that imports this class
     // without running the GUI activation path). The live value is set via
     // setEndpointCount() once the scanner has enumerated everything.
-    private static volatile int ENDPOINT_COUNT = 238;
+    private static volatile int ENDPOINT_COUNT = 242;
 
     static {
         // v5.4.2: loading "/version.properties" from the classpath root was
@@ -175,7 +175,7 @@ class VersionInfo {
     category = PluginCategoryNames.COMMON,
     shortDescription = "GhidraMCP - HTTP server plugin",
     description = "GhidraMCP - Starts an embedded HTTP server to expose program data via REST API and MCP bridge. " +
-                  "Provides 238 endpoints for reverse engineering automation. " +
+                  "Provides 242 endpoints for reverse engineering automation. " +
                   "Port configurable via Tool Options. " +
                   "Features: function analysis, decompilation, symbol management, cross-references, label operations, " +
                   "high-performance batch data analysis, field-level structure analysis, advanced call graph analysis, " +
@@ -267,6 +267,7 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
     private final com.xebyte.core.AnalysisService analysisService;
     private final com.xebyte.core.MalwareSecurityService malwareSecurityService;
     private final com.xebyte.core.ProgramScriptService programScriptService;
+    private final com.xebyte.core.MemoryBlockService memoryBlockService;
     private final com.xebyte.core.EmulationService emulationService;
     private final com.xebyte.core.ExportService exportService;
     private final com.xebyte.core.FlowDisassemblyService flowDisassemblyService;
@@ -291,6 +292,8 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
         this.analysisService = new com.xebyte.core.AnalysisService(programProvider, threadingStrategy, this.functionService);
         this.malwareSecurityService = new com.xebyte.core.MalwareSecurityService(programProvider, threadingStrategy);
         this.programScriptService = new com.xebyte.core.ProgramScriptService(programProvider, threadingStrategy);
+        this.memoryBlockService =
+            new com.xebyte.core.MemoryBlockService(programProvider, threadingStrategy);
         this.emulationService = new com.xebyte.core.EmulationService(programProvider, threadingStrategy);
         this.exportService = new com.xebyte.core.ExportService(programProvider);
         this.flowDisassemblyService =
@@ -561,7 +564,7 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
             listingService, functionService, commentService, symbolLabelService,
             xrefCallGraphService, dataTypeService, analysisService,
             binaryComparisonService, malwareSecurityService, programScriptService,
-            emulationService, exportService, flowDisassemblyService,
+            memoryBlockService, emulationService, exportService, flowDisassemblyService,
             listingRangeService, listingMutationService,
             debuggerService, guiProjectService);
 
@@ -2378,15 +2381,6 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
     // Backward compatibility overload
     private String readMemory(String addressStr, int length) {
         return programScriptService.readMemory(addressStr, length, null).toJson();
-    }
-
-    /**
-     * Create an uninitialized memory block (e.g., for MMIO/peripheral regions).
-     */
-    private String createMemoryBlock(String name, String addressStr, long size,
-                                     boolean read, boolean write, boolean execute,
-                                     boolean isVolatile, String comment) {
-        return programScriptService.createMemoryBlock(name, addressStr, size, read, write, execute, isVolatile, comment).toJson();
     }
 
     /**

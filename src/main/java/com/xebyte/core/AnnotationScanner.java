@@ -315,6 +315,10 @@ public class AnnotationScanner {
             return JsonHelper.getInt(raw, defaultVal);
 
         } else if (type == Integer.class) {
+            if (binding.param.strictInteger()) {
+                return resolveStrictBodyInteger(
+                    binding, raw, Integer.MIN_VALUE, Integer.MAX_VALUE);
+            }
             if (raw == null) {
                 if (hasDef) {
                     try { return Integer.valueOf(def); }
@@ -325,11 +329,50 @@ public class AnnotationScanner {
             return JsonHelper.getInt(raw, 0);
 
         } else if (type == long.class) {
+            if (binding.param.strictInteger()) {
+                Long value = resolveStrictBodyLong(binding, raw);
+                if (value == null) {
+                    String integerDefault =
+                        binding.param.defaultValue();
+                    if (!NO_DEFAULT.equals(integerDefault)) {
+                        return Long.parseLong(integerDefault);
+                    }
+                    throw new IllegalArgumentException(
+                        "Missing required integer parameter: "
+                            + binding.param.value());
+                }
+                return value;
+            }
             long defaultVal = hasDef ? parseLongSafe(def, 0L) : 0L;
             if (raw == null) return defaultVal;
             if (raw instanceof Number n) return n.longValue();
             try { return Long.parseLong(String.valueOf(raw)); }
             catch (NumberFormatException e) { return defaultVal; }
+
+        } else if (type == Long.class) {
+            if (binding.param.strictInteger()) {
+                return resolveStrictBodyLong(binding, raw);
+            }
+            if (raw == null) {
+                if (hasDef) {
+                    try {
+                        return Long.valueOf(def);
+                    }
+                    catch (NumberFormatException e) {
+                        return null;
+                    }
+                }
+                return null;
+            }
+            if (raw instanceof Number number) {
+                return number.longValue();
+            }
+            try {
+                return Long.valueOf(String.valueOf(raw));
+            }
+            catch (NumberFormatException e) {
+                return null;
+            }
 
         } else if (type == boolean.class) {
             if (binding.param.strictBoolean()) {
@@ -375,6 +418,10 @@ public class AnnotationScanner {
             String defaultValue) {
         String name = binding.param.value();
         if (raw == null) {
+            if (binding.javaType == Boolean.class
+                    && binding.param.optional()) {
+                return null;
+            }
             if (!hasDefault) {
                 throw new IllegalArgumentException(
                     "Missing required boolean parameter: " + name);
@@ -390,6 +437,62 @@ public class AnnotationScanner {
         }
         throw new IllegalArgumentException(
             "Parameter '" + name + "' must be a JSON boolean");
+    }
+
+    private static Integer resolveStrictBodyInteger(
+            ParamBinding binding,
+            Object raw,
+            int minimum,
+            int maximum) {
+        Long value = resolveStrictBodyLong(binding, raw);
+        if (value == null) {
+            return null;
+        }
+        if (value < minimum || value > maximum) {
+            throw new IllegalArgumentException(
+                "Parameter '" + binding.param.value()
+                    + "' is outside the 32-bit integer range");
+        }
+        return value.intValue();
+    }
+
+    private static Long resolveStrictBodyLong(
+            ParamBinding binding,
+            Object raw) {
+        String name = binding.param.value();
+        if (raw == null) {
+            if (binding.javaType != long.class
+                    && binding.param.optional()) {
+                return null;
+            }
+            String def = binding.param.defaultValue();
+            if (!NO_DEFAULT.equals(def)) {
+                try {
+                    return Long.valueOf(def);
+                }
+                catch (NumberFormatException error) {
+                    throw new IllegalStateException(
+                        "Invalid integer default for parameter '" + name + "'",
+                        error);
+                }
+            }
+            throw new IllegalArgumentException(
+                "Missing required integer parameter: " + name);
+        }
+        if (!(raw instanceof Number)) {
+            throw new IllegalArgumentException(
+                "Parameter '" + name + "' must be a JSON integer");
+        }
+        try {
+            return new java.math.BigDecimal(String.valueOf(raw))
+                .longValueExact();
+        }
+        catch (NumberFormatException | ArithmeticException error) {
+            throw new IllegalArgumentException(
+                "Parameter '" + name
+                    + "' must be an exact 64-bit JSON integer",
+                error);
+        }
     }
 
     // ==================================================================
@@ -441,7 +544,8 @@ public class AnnotationScanner {
                 binding.param.value(),
                 jsonType(binding.javaType, binding.param.fieldsJson()),
                 binding.param.source().name().toLowerCase(),
-                !NO_DEFAULT.equals(binding.param.defaultValue()),
+                binding.param.optional()
+                    || !NO_DEFAULT.equals(binding.param.defaultValue()),
                 NO_DEFAULT.equals(binding.param.defaultValue()) ? null : binding.param.defaultValue(),
                 binding.param.description(),
                 binding.param.paramType()    // NEW

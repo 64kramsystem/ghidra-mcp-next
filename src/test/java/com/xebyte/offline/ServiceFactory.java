@@ -11,6 +11,7 @@ import com.xebyte.core.ListingService;
 import com.xebyte.core.ListingRangeService;
 import com.xebyte.core.ListingMutationService;
 import com.xebyte.core.MalwareSecurityService;
+import com.xebyte.core.MemoryBlockService;
 import com.xebyte.core.ProgramProvider;
 import com.xebyte.core.EmulationService;
 import com.xebyte.core.ExportService;
@@ -50,6 +51,8 @@ public final class ServiceFactory {
         AnalysisService analysisService = new AnalysisService(provider, ts, functionService);
         MalwareSecurityService malwareSecurityService = new MalwareSecurityService(provider, ts);
         ProgramScriptService programScriptService = new ProgramScriptService(provider, ts);
+        MemoryBlockService memoryBlockService =
+            new MemoryBlockService(provider, ts);
         EmulationService emulationService = new EmulationService(provider, ts);
         ExportService exportService = new ExportService(provider);
         FlowDisassemblyService flowDisassemblyService =
@@ -77,6 +80,7 @@ public final class ServiceFactory {
             binaryComparisonService,
             malwareSecurityService,
             programScriptService,
+            memoryBlockService,
             emulationService,
             exportService,
             flowDisassemblyService,

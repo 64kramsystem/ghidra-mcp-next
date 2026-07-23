@@ -3,6 +3,7 @@ package com.xebyte.core;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonElement;
+import com.google.gson.ToNumberPolicy;
 import com.google.gson.reflect.TypeToken;
 
 import java.io.InputStream;
@@ -22,6 +23,10 @@ public final class JsonHelper {
 
     private static final Gson GSON = new GsonBuilder()
             .disableHtmlEscaping()
+            .create();
+    private static final Gson BODY_GSON = new GsonBuilder()
+            .disableHtmlEscaping()
+            .setObjectToNumberStrategy(ToNumberPolicy.BIG_DECIMAL)
             .create();
     private static final Type STRING_OBJECT_MAP_TYPE =
             new TypeToken<LinkedHashMap<String, Object>>() { }.getType();
@@ -59,7 +64,8 @@ public final class JsonHelper {
     /** Parse JSON from an InputStream (for HTTP request bodies). */
     public static Map<String, Object> parseBody(InputStream input) {
         try (InputStreamReader reader = new InputStreamReader(input, StandardCharsets.UTF_8)) {
-            Map<String, Object> result = GSON.fromJson(reader, STRING_OBJECT_MAP_TYPE);
+            Map<String, Object> result =
+                BODY_GSON.fromJson(reader, STRING_OBJECT_MAP_TYPE);
             return result != null ? result : new LinkedHashMap<>();
         } catch (Exception e) {
             return new LinkedHashMap<>();

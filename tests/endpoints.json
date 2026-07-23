@@ -1,7 +1,7 @@
 {
   "version": "5.15.0",
   "description": "GhidraMCP REST API Endpoint Specification",
-  "total_endpoints": 238,
+  "total_endpoints": 242,
   "categories": {
     "listing": "List program data",
     "getter": "Get specific data",
@@ -13,6 +13,7 @@
     "xref": "Cross-references",
     "datatype": "Data type operations",
     "analysis": "Analysis tools",
+    "memory": "Create, transform, inspect, and write program memory blocks",
     "program": "Program management",
     "project": "Project lifecycle management",
     "export": "Native program export",
@@ -582,19 +583,27 @@
     {
       "path": "/create_memory_block",
       "method": "POST",
-      "category": "analysis",
+      "category": "memory",
+      "supports_dry_run": false,
       "params": [
         "name",
-        "address",
-        "size",
+        "start",
+        "length",
+        "bytes",
+        "file_path",
+        "file_offset",
+        "source_length",
+        "overlay",
+        "fill",
         "read",
         "write",
         "execute",
         "volatile",
         "comment",
+        "dry_run",
         "program"
       ],
-      "description": "Create memory block"
+      "description": "Create an initialized or uninitialized ordinary or overlay memory block"
     },
     {
       "path": "/create_pointer_type",
@@ -1855,7 +1864,7 @@
         "limit",
         "program"
       ],
-      "description": "List memory segments"
+      "description": "List complete memory-block descriptors including overlays, initialization, source, permissions, and comments"
     },
     {
       "path": "/list_strings",
@@ -1958,6 +1967,19 @@
         "destPath"
       ],
       "description": "Move a folder to another location"
+    },
+    {
+      "path": "/move_memory_block",
+      "method": "POST",
+      "category": "memory",
+      "supports_dry_run": false,
+      "params": [
+        "name",
+        "new_start",
+        "dry_run",
+        "program"
+      ],
+      "description": "Move a non-overlay memory block after complete overlap validation"
     },
     {
       "path": "/open_program",
@@ -2514,6 +2536,19 @@
       "description": "Set types and names for multiple variables atomically. Types are applied first, then renames, in a single transaction. Caller-supplied names are passed to Ghidra unchanged. On programs with multiple address spaces, prefix addresses with the space name."
     },
     {
+      "path": "/split_memory_block",
+      "method": "POST",
+      "category": "memory",
+      "supports_dry_run": false,
+      "params": [
+        "name",
+        "split_address",
+        "dry_run",
+        "program"
+      ],
+      "description": "Split a memory block while preserving bytes and metadata"
+    },
+    {
       "path": "/suggest_field_names",
       "method": "POST",
       "category": "analysis",
@@ -2578,6 +2613,24 @@
       "description": "Preview or atomically clear complete instructions and/or data units"
     },
     {
+      "path": "/update_memory_block",
+      "method": "POST",
+      "category": "memory",
+      "supports_dry_run": false,
+      "params": [
+        "name",
+        "new_name",
+        "read",
+        "write",
+        "execute",
+        "volatile",
+        "comment",
+        "dry_run",
+        "program"
+      ],
+      "description": "Atomically rename or update memory-block metadata"
+    },
+    {
       "path": "/validate_data_type",
       "method": "GET",
       "category": "datatype",
@@ -2609,6 +2662,20 @@
         "program"
       ],
       "description": "Validate function prototype"
+    },
+    {
+      "path": "/write_memory_bytes",
+      "method": "POST",
+      "category": "memory",
+      "supports_dry_run": false,
+      "params": [
+        "start",
+        "bytes",
+        "conflict_policy",
+        "dry_run",
+        "program"
+      ],
+      "description": "Atomically write bytes inside one existing initialized memory block"
     }
   ]
 }

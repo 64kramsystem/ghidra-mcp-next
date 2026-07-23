@@ -434,7 +434,7 @@ public class EndpointRegistry {
             params(qInt("offset", 0), qInt("limit", 100), pProg()),
             (q, b) -> listingService.getAllClassNames(num(q, "offset", 0), num(q, "limit", 100), str(q, "program")));
 
-        get("/list_segments", "List memory blocks/segments",
+        get("/list_segments", "List complete memory-block descriptors",
             params(qInt("offset", 0), qInt("limit", 100), pProg()),
             (q, b) -> listingService.listSegments(num(q, "offset", 0), num(q, "limit", 100), str(q, "program")));
 
@@ -1237,15 +1237,6 @@ public class EndpointRegistry {
         get("/read_memory", "Read raw memory bytes",
             params(qStr("address", "Start address"), qInt("length", 16, "Number of bytes"), pProg()),
             (q, b) -> programScriptService.readMemory(str(q, "address"), num(q, "length", 16), str(q, "program")));
-
-        post("/create_memory_block", "Create a new memory block",
-            params(bStr("name"), bStr("address"), bLong("size", 0), bBool("read"), bBool("write"),
-                bBool("execute"), bBool("volatile"), bStrOpt("comment"), pProg()),
-            (q, b) -> programScriptService.createMemoryBlock(bodyStr(b, "name"), bodyStr(b, "address"),
-                bodyLong(b, "size", 0),
-                bodyBool(b, "read", true), bodyBool(b, "write", true),
-                bodyBool(b, "execute", false), bodyBool(b, "volatile", false),
-                bodyStr(b, "comment"), str(q, "program")));
 
         post("/set_bookmark", "Create or update a bookmark",
             params(bStr("address"), bStrOpt("category"), bStrOpt("comment"), pProg()),

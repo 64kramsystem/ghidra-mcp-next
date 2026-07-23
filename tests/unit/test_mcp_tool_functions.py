@@ -227,6 +227,53 @@ class TestPostToolDispatch(unittest.TestCase):
             query_params=None,
         )
 
+    @patch("bridge_mcp_ghidra.dispatch.dispatch_post")
+    def test_memory_bytes_json_parameter_preserves_native_byte_array(
+        self, mock_post
+    ):
+        from bridge_mcp_ghidra import _build_tool_function
+
+        mock_post.return_value = '{"committed": false}'
+        schema = {
+            "properties": {
+                "name": {"type": "string", "source": "body"},
+                "start": {"type": "string", "source": "body"},
+                "bytes": {"type": "json", "source": "body"},
+                "dry_run": {
+                    "type": "boolean",
+                    "source": "body",
+                    "default": "true",
+                },
+                "program": {
+                    "type": "string",
+                    "source": "query",
+                    "default": "",
+                },
+            },
+            "required": ["name", "start"],
+        }
+        fn = _build_tool_function("/create_memory_block", "POST", schema)
+
+        self.assertEqual(fn.__annotations__["bytes"], object | None)
+        fn(
+            name="bank",
+            start="0x8000",
+            bytes=[0, 255, 16],
+            dry_run=True,
+            program="snapshot",
+        )
+
+        mock_post.assert_called_once_with(
+            "/create_memory_block",
+            data={
+                "name": "bank",
+                "start": "0x8000",
+                "bytes": [0, 255, 16],
+                "dry_run": True,
+            },
+            query_params={"program": "snapshot"},
+        )
+
 
 class TestSchemaEdgeCases(unittest.TestCase):
     """Test edge cases in schema parsing."""

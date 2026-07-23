@@ -43,6 +43,8 @@ public class GuiTransportSchemaParityTest extends TestCase {
                 "src/main/java/com/xebyte/GhidraMCPPlugin.java"));
         assertTrue("TCP must construct ExportService", source.contains(
                 "this.exportService = new com.xebyte.core.ExportService(programProvider)"));
+        assertTrue("TCP must construct MemoryBlockService", source.contains(
+                "new com.xebyte.core.MemoryBlockService(programProvider, threadingStrategy)"));
         assertTrue("TCP must construct FlowDisassemblyService", source.contains(
                 "new com.xebyte.core.FlowDisassemblyService(programProvider, threadingStrategy)"));
         assertTrue("TCP must construct ListingRangeService with GUI threading",
@@ -53,7 +55,8 @@ public class GuiTransportSchemaParityTest extends TestCase {
                     + "programProvider,\\s*threadingStrategy\\).*"));
         assertTrue("TCP scanner must include GuiProjectService so schema and routes agree",
                 source.matches("(?s).*new AnnotationScanner\\(programProvider,.*"
-                        + "programScriptService,\\s*emulationService,\\s*exportService,\\s*"
+                        + "programScriptService,\\s*memoryBlockService,\\s*"
+                        + "emulationService,\\s*exportService,\\s*"
                         + "flowDisassemblyService,\\s*listingRangeService,\\s*"
                         + "listingMutationService,\\s*"
                         + "debuggerService,\\s*"
@@ -65,6 +68,8 @@ public class GuiTransportSchemaParityTest extends TestCase {
                 "src/main/java/com/xebyte/core/ServerManager.java"));
         assertTrue("UDS must construct EmulationService", source.contains(
                 "EmulationService emulationService = new EmulationService"));
+        assertTrue("UDS must construct MemoryBlockService", source.contains(
+                "MemoryBlockService memoryBlockService ="));
         assertTrue("UDS must construct ExportService", source.contains(
                 "ExportService exportService = new ExportService"));
         assertTrue("UDS must construct FlowDisassemblyService", source.contains(
@@ -79,7 +84,8 @@ public class GuiTransportSchemaParityTest extends TestCase {
                 "GuiProjectService guiProjectService = new GuiProjectService"));
         assertTrue("UDS scanner must advertise emulation, export, debugger, and project tools",
                 source.matches("(?s).*new AnnotationScanner\\(programProvider,.*"
-                        + "programScriptService,\\s*emulationService,\\s*exportService,\\s*"
+                        + "programScriptService,\\s*memoryBlockService,\\s*"
+                        + "emulationService,\\s*exportService,\\s*"
                         + "flowDisassemblyService,\\s*listingRangeService,\\s*"
                         + "listingMutationService,\\s*"
                         + "debuggerService,\\s*"
@@ -91,6 +97,11 @@ public class GuiTransportSchemaParityTest extends TestCase {
                 "src/main/java/com/xebyte/headless/HeadlessEndpointHandler.java"));
         assertTrue("Headless handler must construct ExportService", handlerSource.contains(
                 "this.exportService = new com.xebyte.core.ExportService(programProvider)"));
+        assertTrue("Headless handler must construct MemoryBlockService",
+                handlerSource.contains(
+                    "new com.xebyte.core.MemoryBlockService(programProvider, threadingStrategy)"));
+        assertTrue("Headless handler must expose MemoryBlockService",
+                handlerSource.contains("getMemoryBlockService()"));
         assertTrue("Headless handler must expose ExportService to the scanner",
                 handlerSource.contains(
                         "getExportService() { return exportService; }"));
@@ -117,6 +128,7 @@ public class GuiTransportSchemaParityTest extends TestCase {
         assertTrue("Headless scanner must advertise export tools",
                 serverSource.matches("(?s).*new AnnotationScanner\\("
                         + "endpointHandler\\.getProgramProvider\\(\\),.*"
+                        + "endpointHandler\\.getMemoryBlockService\\(\\),\\s*"
                         + "endpointHandler\\.getEmulationService\\(\\),\\s*"
                         + "endpointHandler\\.getExportService\\(\\),\\s*"
                         + "endpointHandler\\.getFlowDisassemblyService\\(\\),\\s*"
