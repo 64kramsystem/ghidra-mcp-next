@@ -108,6 +108,7 @@ class TestAnnotatedEndpoints(unittest.TestCase):
             "BinaryComparisonService",
             "MalwareSecurityService",
             "ProgramScriptService",
+            "ExportService",
         ]
         for svc in expected_services:
             path = CORE_SRC / f"{svc}.java"
@@ -136,6 +137,23 @@ class TestEndpointsJson(unittest.TestCase):
         for ep in data.get("endpoints", []):
             self.assertIn("path", ep, f"Missing 'path' in endpoint: {ep}")
             self.assertIn("method", ep, f"Missing 'method' in endpoint: {ep}")
+
+    @unittest.skipUnless(ENDPOINTS_JSON.exists(), "endpoints.json not found")
+    def test_export_ascii_listing_contract(self):
+        data = json.loads(ENDPOINTS_JSON.read_text())
+        matches = [
+            ep
+            for ep in data.get("endpoints", [])
+            if ep["path"] == "/export_ascii_listing"
+        ]
+        self.assertEqual(len(matches), 1)
+        endpoint = matches[0]
+        self.assertEqual(endpoint["method"], "POST")
+        self.assertEqual(endpoint["category"], "export")
+        self.assertEqual(
+            endpoint["params"],
+            ["output_path", "start", "end", "overwrite", "program"],
+        )
 
     @unittest.skipUnless(ENDPOINTS_JSON.exists(), "endpoints.json not found")
     def test_catalog_tool_names_are_capi_safe_after_bridge_parsing(self):
@@ -250,6 +268,7 @@ class TestAnnotationScannerExists(unittest.TestCase):
             "BinaryComparisonService",
             "MalwareSecurityService",
             "ProgramScriptService",
+            "ExportService",
         ]
         for name in expected:
             path = CORE_SRC / f"{name}.java"

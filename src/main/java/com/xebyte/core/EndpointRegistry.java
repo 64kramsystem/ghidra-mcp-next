@@ -39,6 +39,7 @@ public class EndpointRegistry {
     private final BinaryComparisonService binaryComparisonService;
     private final MalwareSecurityService malwareSecurityService;
     private final ProgramScriptService programScriptService;
+    private final ExportService exportService;
 
     public EndpointRegistry(ListingService listingService,
                             FunctionService functionService,
@@ -49,7 +50,8 @@ public class EndpointRegistry {
                             AnalysisService analysisService,
                             BinaryComparisonService binaryComparisonService,
                             MalwareSecurityService malwareSecurityService,
-                            ProgramScriptService programScriptService) {
+                            ProgramScriptService programScriptService,
+                            ExportService exportService) {
         this.listingService = listingService;
         this.functionService = functionService;
         this.commentService = commentService;
@@ -60,6 +62,7 @@ public class EndpointRegistry {
         this.binaryComparisonService = binaryComparisonService;
         this.malwareSecurityService = malwareSecurityService;
         this.programScriptService = programScriptService;
+        this.exportService = exportService;
         registerEndpoints();
     }
 
@@ -358,6 +361,17 @@ public class EndpointRegistry {
         registerComparisonEndpoints();
         registerMalwareSecurityEndpoints();
         registerProgramScriptEndpoints();
+        registerExportEndpoints();
+    }
+
+    private void registerExportEndpoints() {
+        post("/export_ascii_listing",
+            "Export Ghidra AsciiExporter listing text without running a script",
+            params(bStr("output_path"), bStrOpt("start"), bStrOpt("end"),
+                bBool("overwrite", false), pProg()),
+            (q, b) -> exportService.exportAsciiListing(
+                bodyStr(b, "output_path"), bodyStr(b, "start"), bodyStr(b, "end"),
+                bodyBool(b, "overwrite", false), str(q, "program")));
     }
 
     // ======================================================================

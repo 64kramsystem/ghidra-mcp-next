@@ -70,6 +70,7 @@ public class ServerManager {
             MalwareSecurityService malwareSecurityService = new MalwareSecurityService(programProvider, ts);
             ProgramScriptService programScriptService = new ProgramScriptService(programProvider, ts);
             EmulationService emulationService = new EmulationService(programProvider, ts);
+            ExportService exportService = new ExportService(programProvider);
             DebuggerService debuggerService = new DebuggerService(programProvider, ts, tool);
             GuiProjectService guiProjectService = new GuiProjectService(this::getActiveTool);
 
@@ -77,7 +78,7 @@ public class ServerManager {
                 listingService, functionService, commentService, symbolLabelService,
                 xrefCallGraphService, dataTypeService, analysisService,
                 binaryComparisonService, malwareSecurityService, programScriptService,
-                emulationService, debuggerService, guiProjectService);
+                emulationService, exportService, debuggerService, guiProjectService);
 
             startServer(scanner);
         }
