@@ -19,9 +19,43 @@ import org.junit.Test;
 import com.xebyte.core.AnnotationScanner;
 import com.xebyte.core.JsonHelper;
 import com.xebyte.core.Response;
+import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
 public class MemoryBlockServiceSchemaTest {
+
+    @Test
+    public void rawSchemaEmitsMemoryDefaultsAsTheirDeclaredJsonTypes() {
+        AnnotationScanner scanner = new AnnotationScanner(
+            ServiceFactory.stubProvider(), ServiceFactory.buildAllServices());
+        JsonObject schema = JsonParser.parseString(scanner.generateSchema())
+            .getAsJsonObject();
+        JsonObject create = schema.getAsJsonArray("tools").asList().stream()
+            .map(element -> element.getAsJsonObject())
+            .filter(tool -> tool.get("path").getAsString()
+                .equals("/create_memory_block"))
+            .findFirst().orElseThrow();
+        Map<String, JsonObject> parameters = create.getAsJsonArray("params")
+            .asList().stream()
+            .map(element -> element.getAsJsonObject())
+            .collect(Collectors.toMap(
+                parameter -> parameter.get("name").getAsString(),
+                Function.identity()));
+
+        assertTrue(parameters.get("file_offset").get("default")
+            .getAsJsonPrimitive().isNumber());
+        assertEquals(0,
+            parameters.get("file_offset").get("default").getAsInt());
+        for (String name : List.of(
+                "overlay", "read", "write", "execute", "volatile",
+                "dry_run")) {
+            assertTrue(name, parameters.get(name).get("default")
+                .getAsJsonPrimitive().isBoolean());
+        }
+        assertFalse(parameters.get("overlay").get("default").getAsBoolean());
+        assertTrue(parameters.get("read").get("default").getAsBoolean());
+        assertTrue(parameters.get("dry_run").get("default").getAsBoolean());
+    }
 
     @Test
     public void canonicalMemoryRoutesHaveExactBodyAndQueryContracts() {

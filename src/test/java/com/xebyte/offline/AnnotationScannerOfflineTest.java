@@ -180,6 +180,61 @@ public class AnnotationScannerOfflineTest extends TestCase {
         assertTrue("Schema param descriptors missing required fields: " + broken, broken.isEmpty());
     }
 
+    public void testSchemaScalarDefaultsMatchTheirDeclaredJsonTypes() {
+        JsonArray tools = new Gson()
+            .fromJson(scanner.generateSchema(), JsonObject.class)
+            .getAsJsonArray("tools");
+        List<String> broken = new ArrayList<>();
+
+        for (JsonElement toolElement : tools) {
+            JsonObject tool = toolElement.getAsJsonObject();
+            for (JsonElement parameterElement : tool.getAsJsonArray("params")) {
+                JsonObject parameter = parameterElement.getAsJsonObject();
+                if (!parameter.has("default")) {
+                    continue;
+                }
+                JsonElement defaultValue = parameter.get("default");
+                String type = parameter.get("type").getAsString();
+                boolean matches = switch (type) {
+                    case "boolean" ->
+                        defaultValue.isJsonPrimitive()
+                            && defaultValue.getAsJsonPrimitive().isBoolean();
+                    case "integer", "number" ->
+                        defaultValue.isJsonPrimitive()
+                            && defaultValue.getAsJsonPrimitive().isNumber();
+                    default -> true;
+                };
+                if (!matches) {
+                    broken.add(tool.get("path").getAsString() + "::"
+                        + parameter.get("name").getAsString());
+                }
+            }
+        }
+
+        assertTrue("Schema defaults have the wrong JSON type: " + broken,
+            broken.isEmpty());
+
+        JsonObject search = tools.asList().stream()
+            .map(JsonElement::getAsJsonObject)
+            .filter(tool -> "/search_functions_enhanced".equals(
+                tool.get("path").getAsString()))
+            .findFirst().orElseThrow();
+        JsonObject minXrefs = search.getAsJsonArray("params").asList().stream()
+            .map(JsonElement::getAsJsonObject)
+            .filter(parameter -> "min_xrefs".equals(
+                parameter.get("name").getAsString()))
+            .findFirst().orElseThrow();
+        JsonObject sortBy = search.getAsJsonArray("params").asList().stream()
+            .map(JsonElement::getAsJsonObject)
+            .filter(parameter -> "sort_by".equals(
+                parameter.get("name").getAsString()))
+            .findFirst().orElseThrow();
+        assertFalse("nullable integer sentinel must not be a schema default",
+            minXrefs.has("default"));
+        assertTrue(sortBy.get("default").getAsJsonPrimitive().isString());
+        assertEquals("address", sortBy.get("default").getAsString());
+    }
+
     /**
      * Boxed Integer/Boolean params with {@code defaultValue} must return the
      * parsed default — not {@code null} — when no value is supplied, for both
