@@ -6,8 +6,10 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.EnumMap;
+import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.Iterator;
 import java.util.List;
@@ -357,10 +359,7 @@ final class MemoryBlockLifecycleCore {
                 "new range overflows its address space");
         }
         Range removed = new Range(tailStart, block.getEnd());
-        if (removed.contains(program.getImageBase())) {
-            throw new IllegalArgumentException(
-                "cannot shrink a tail containing the program image base");
-        }
+        rejectImageBaseInRemovedRange(program, removed);
         if (block.getStart().getAddressSpace().isOverlaySpace()
                 && ((OverlayAddressSpace) block.getStart().getAddressSpace())
                     .getOverlayedSpace().getType() == AddressSpace.TYPE_OTHER) {
@@ -436,8 +435,19 @@ final class MemoryBlockLifecycleCore {
                     .getAddressSpace(),
                 addedStart, newEnd);
         }
+        List<MemoryBlockCore.SourceInfoDescriptor> predictedSources =
+            new ArrayList<>(before.sourceInfos());
+        predictedSources.add(new MemoryBlockCore.SourceInfoDescriptor(
+            addedStart.toString(false),
+            newEnd.toString(false),
+            growth,
+            "init[0x" + Long.toHexString(growth) + "]",
+            null,
+            -1,
+            null,
+            null));
         MemoryBlockCore.BlockDescriptor predicted = descriptorWithRange(
-            before, block.getStart(), newEnd, before.sourceInfos());
+            before, block.getStart(), newEnd, List.copyOf(predictedSources));
         return new ResizePlan(
             program,
             program.getModificationNumber(),
@@ -572,13 +582,15 @@ final class MemoryBlockLifecycleCore {
         }
         return new Collateral(
             range, symbols, instructions, data, comments, bookmarks,
-            inbound, Map.copyOf(commentCounts));
+            inbound,
+            Collections.unmodifiableMap(new EnumMap<>(commentCounts)));
     }
 
     private static List<SymbolRecord> collectSymbols(
             Program program, AddressSet set, TaskMonitor monitor)
             throws Exception {
         List<SymbolRecord> result = new ArrayList<>();
+        var symbolIds = new HashSet<Long>();
         var iterator = program.getSymbolTable().getSymbolIterator(
             set.getMinAddress(), true);
         int count = 0;
@@ -594,6 +606,7 @@ final class MemoryBlockLifecycleCore {
             if (!set.contains(address)) {
                 continue;
             }
+            symbolIds.add(symbol.getID());
             count++;
             if (count <= MAX_COLLATERAL) {
                 result.add(new SymbolRecord(
@@ -604,6 +617,29 @@ final class MemoryBlockLifecycleCore {
                     symbol.getSource().name(),
                     symbol.isPrimary(),
                     symbol.isDynamic(),
+                    symbol.getID()));
+            }
+        }
+        var destinations = program.getReferenceManager()
+            .getReferenceDestinationIterator(set, true);
+        while (destinations.hasNext()) {
+            monitor.checkCancelled();
+            Symbol symbol = program.getSymbolTable()
+                .getPrimarySymbol(destinations.next());
+            if (symbol == null || !symbol.isDynamic()
+                    || !symbolIds.add(symbol.getID())) {
+                continue;
+            }
+            count++;
+            if (count <= MAX_COLLATERAL) {
+                result.add(new SymbolRecord(
+                    symbol.getAddress(),
+                    symbol.getParentNamespace().getName(true),
+                    symbol.getName(),
+                    symbol.getSymbolType().toString(),
+                    symbol.getSource().name(),
+                    symbol.isPrimary(),
+                    true,
                     symbol.getID()));
             }
         }
@@ -759,20 +795,29 @@ final class MemoryBlockLifecycleCore {
             }
         }
         rejectCap("inbound_references", count);
-        result.sort(Comparator
+        result.sort(referenceOrder());
+        return List.copyOf(result);
+    }
+
+    static Comparator<ReferenceRecord> referenceOrder() {
+        return Comparator
             .comparing(ReferenceRecord::source)
             .thenComparing(ReferenceRecord::target)
             .thenComparingInt(ReferenceRecord::operandIndex)
             .thenComparing(ReferenceRecord::referenceType)
             .thenComparing(ReferenceRecord::sourceType)
             .thenComparing(
-                record -> Objects.toString(record.offsetBase(), ""))
+                ReferenceRecord::offsetBase,
+                Comparator.nullsFirst(Comparator.naturalOrder()))
             .thenComparing(
-                record -> Objects.toString(record.signedOffset(), ""))
+                ReferenceRecord::signedOffset,
+                Comparator.nullsFirst(Comparator.naturalOrder()))
             .thenComparing(
-                record -> Objects.toString(record.shiftedBaseValue(), ""))
-            .thenComparing(record -> Objects.toString(record.shift(), "")));
-        return List.copyOf(result);
+                ReferenceRecord::shiftedBaseValue,
+                Comparator.nullsFirst(Comparator.naturalOrder()))
+            .thenComparing(
+                ReferenceRecord::shift,
+                Comparator.nullsFirst(Comparator.naturalOrder()));
     }
 
     private static ReferenceRecord referenceRecord(
@@ -1206,7 +1251,7 @@ final class MemoryBlockLifecycleCore {
             sourceInfos);
     }
 
-    private static MemoryBlock requireExactBlock(
+    static MemoryBlock requireExactBlock(
             Program program, String name) {
         if (name == null || name.isBlank()) {
             throw new IllegalArgumentException("name is required");
@@ -1224,6 +1269,14 @@ final class MemoryBlockLifecycleCore {
                 "memory block name is ambiguous: " + name);
         }
         return matches.get(0);
+    }
+
+    static void rejectImageBaseInRemovedRange(
+            Program program, Range removed) {
+        if (removed.contains(program.getImageBase())) {
+            throw new IllegalArgumentException(
+                "cannot shrink a tail containing the program image base");
+        }
     }
 
     private static Address parseAddress(
@@ -1327,7 +1380,7 @@ final class MemoryBlockLifecycleCore {
         }
     }
 
-    private static void rejectCap(String category, int count) {
+    static void rejectCap(String category, int count) {
         if (count > MAX_COLLATERAL) {
             throw new IllegalArgumentException(
                 category + " collateral count " + count
