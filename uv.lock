@@ -561,7 +561,7 @@ test = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "mcp", specifier = ">=1.28.1,<2.0.0" }]
+requires-dist = [{ name = "mcp", specifier = "==1.28.1" }]
 
 [package.metadata.requires-dev]
 dev = [
