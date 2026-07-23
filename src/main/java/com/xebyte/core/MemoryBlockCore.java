@@ -963,8 +963,13 @@ final class MemoryBlockCore {
 
     private static MappedRangeDescriptor mappedRange(AddressRange range) {
         return new MappedRangeDescriptor(
-            range.getMinAddress().toString(false),
-            range.getMaxAddress().toString(false));
+            qualified(range.getMinAddress()),
+            qualified(range.getMaxAddress()));
+    }
+
+    private static String qualified(Address address) {
+        return address.getAddressSpace().getName()
+            + "::" + address.toString(false);
     }
 
     private static MemoryBlock requireBlock(

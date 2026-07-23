@@ -544,6 +544,10 @@ public class MemoryBlockServiceGhidraTest {
             .get("symbols").getAsInt());
         assertEquals(1, preview.getAsJsonObject("counts")
             .get("bookmarks").getAsInt());
+        assertEquals(
+            java.util.List.of("eol", "pre", "post", "plate", "repeatable"),
+            preview.getAsJsonObject("counts").getAsJsonObject("comments")
+                .keySet().stream().toList());
         JsonObject inbound = preview.getAsJsonArray("inbound_references")
             .get(0).getAsJsonObject();
         assertTrue(inbound.get("association_cleared").getAsBoolean());
@@ -571,6 +575,12 @@ public class MemoryBlockServiceGhidraTest {
         finally {
             program.endTransaction(transaction, true);
         }
+        JsonObject dynamicPreview = ok(memory.deleteMemoryBlock(
+            "clear_target", "clear", true, ""));
+        JsonObject dynamic = dynamicPreview.getAsJsonArray("symbols")
+            .get(0).getAsJsonObject();
+        assertTrue(dynamic.get("dynamic").getAsBoolean());
+        assertTrue(dynamic.get("name").getAsString().startsWith("DAT_"));
         ok(memory.deleteMemoryBlock(
             "clear_target", "clear", false, ""));
         assertNull(program.getReferenceManager().getReference(
@@ -593,6 +603,12 @@ public class MemoryBlockServiceGhidraTest {
             "resizable", null, 6L, "error", null, "aabb",
             null, 0L, null, true, ""));
         assertEquals("grow", growPreview.get("operation").getAsString());
+        JsonObject predictedSource = growPreview.getAsJsonObject("after")
+            .getAsJsonArray("source_infos").get(1).getAsJsonObject();
+        assertEquals("4004",
+            predictedSource.get("min_address").getAsString());
+        assertEquals("4005",
+            predictedSource.get("max_address").getAsString());
         assertArrayEquals(hex("00010203"), bytes("0x4000", 4));
         JsonObject grown = ok(memory.resizeMemoryBlock(
             "resizable", null, 6L, "error", null, "aabb",
@@ -603,6 +619,15 @@ public class MemoryBlockServiceGhidraTest {
         assertEquals("stable", descriptor.get("comment").getAsString());
         assertTrue(descriptor.get("volatile").getAsBoolean());
         assertTrue(descriptor.get("artificial").getAsBoolean());
+        assertEquals(
+            growPreview.getAsJsonObject("after").get("start"),
+            descriptor.get("start"));
+        assertEquals(
+            growPreview.getAsJsonObject("after").get("end"),
+            descriptor.get("end"));
+        assertEquals(
+            growPreview.getAsJsonObject("after").get("length"),
+            descriptor.get("length"));
 
         JsonObject shrinkPreview = ok(memory.resizeMemoryBlock(
             "resizable", null, 3L, "error", null, null,
@@ -703,11 +728,222 @@ public class MemoryBlockServiceGhidraTest {
         finally {
             program.endTransaction(transaction, true);
         }
+        MemoryBlockCore.BlockDescriptor mappedDescriptor =
+            MemoryBlockCore.descriptor(
+                java.util.Arrays.stream(program.getMemory().getBlocks())
+                    .filter(block -> block.getName().equals("mapped"))
+                    .findFirst().orElseThrow());
+        assertTrue(mappedDescriptor.sourceInfos().get(0)
+            .mappedRange().start().startsWith("RAM::"));
+        assertTrue(mappedDescriptor.sourceInfos().get(0)
+            .mappedRange().end().startsWith("RAM::"));
         assertError(memory.deleteMemoryBlock(
             "mapped", "error", true, ""), "mapped");
         assertError(memory.resizeMemoryBlock(
             "mapped", null, 2L, "error", null, null,
             null, 0L, null, true, ""), "mapped");
+    }
+
+    @Test
+    public void lifecycleRejectsMissingBlocksOverlapAndInvalidGrowSources()
+            throws Exception {
+        assertError(memory.deleteMemoryBlock(
+            "missing", "error", true, ""), "not found");
+        assertError(memory.deleteMemoryBlock(
+            "missing", "error", false, ""), "not found");
+        assertError(memory.resizeMemoryBlock(
+            "missing", null, 2L, "error", 0, null,
+            null, 0L, null, true, ""), "not found");
+
+        create("growth", "0x9000", null, "0102", null, null,
+            false, null, true, true, false, false, null, false);
+        create("blocker", "0x9004", null, "ffff", null, null,
+            false, null, true, true, false, false, null, false);
+        assertError(memory.resizeMemoryBlock(
+            "growth", null, 5L, "error", 0, null,
+            null, 0L, null, true, ""), "overlap");
+        assertError(memory.resizeMemoryBlock(
+            "growth", null, 4L, "error", 0, "aabb",
+            null, 0L, null, true, ""), "exactly one");
+        assertError(memory.resizeMemoryBlock(
+            "growth", null, 4L, "error", null, "aa",
+            null, 0L, null, true, ""), "length");
+        assertError(memory.resizeMemoryBlock(
+            "growth", null, 1L, "error", 0, null,
+            null, 0L, null, true, ""), "grow-source");
+        create("uninitialized", "0x9100", 2L, null, null, null,
+            false, null, true, true, false, false, null, false);
+        assertError(memory.resizeMemoryBlock(
+            "uninitialized", null, 4L, "error", 0, null,
+            null, 0L, null, true, ""), "initialized DEFAULT");
+
+        create("wrap", "0xffff", null, "01", null, null,
+            false, null, true, false, false, false, null, false);
+        assertError(memory.resizeMemoryBlock(
+            "wrap", null, 2L, "error", 0, null,
+            null, 0L, null, true, ""), "overflow");
+
+        assertEquals(2, program.getMemory().getBlock("growth").getSize());
+        assertArrayEquals(hex("0102"), bytes("0x9000", 2));
+    }
+
+    @Test
+    public void lifecycleFileGrowAndCancellationPreserveAtomicity()
+            throws Exception {
+        create("file_growth", "0x9200", null, "0102", null, null,
+            false, null, true, true, false, false, "stable", false);
+        Path root = Files.createTempDirectory("memory-resize-file-root");
+        Path source = root.resolve("tail.bin");
+        Files.write(source, hex("aabbcc"));
+        memory = serviceForRoot(root, new DirectThreadingStrategy());
+
+        JsonObject preview = ok(memory.resizeMemoryBlock(
+            "file_growth", null, 5L, "error", null, null,
+            source.toString(), 0L, 3L, true, ""));
+        JsonObject committed = ok(memory.resizeMemoryBlock(
+            "file_growth", null, 5L, "error", null, null,
+            source.toString(), 0L, 3L, false, ""));
+        assertEquals(preview.get("added_ranges"), committed.get("added_ranges"));
+        assertEquals("file", committed.getAsJsonArray("added_ranges")
+            .get(0).getAsJsonObject().get("source_kind").getAsString());
+        assertArrayEquals(hex("0102aabbcc"), bytes("0x9200", 5));
+        assertEquals(
+            "stable",
+            program.getMemory().getBlock("file_growth").getComment());
+
+        create("cancel_delete", "0x9300", null, "0102", null, null,
+            false, null, true, false, false, false, null, false);
+        create("cancel_resize", "0x9400", null, "0102", null, null,
+            false, null, true, true, false, false, null, false);
+        ghidra.util.task.TaskMonitorAdapter cancelled =
+            new ghidra.util.task.TaskMonitorAdapter();
+        cancelled.setCancelEnabled(true);
+        cancelled.cancel();
+        HeadlessProgramProvider provider = new HeadlessProgramProvider();
+        provider.setCurrentProgram(program);
+        MemoryBlockService cancelledService = new MemoryBlockService(
+            provider,
+            new DirectThreadingStrategy(),
+            SecurityConfig.forFileRootTesting(root),
+            MemoryBlockService::readFileRange,
+            new MemoryBlockCore(),
+            cancelled);
+
+        assertError(cancelledService.deleteMemoryBlock(
+            "cancel_delete", "error", false, ""), "cancel");
+        assertError(cancelledService.resizeMemoryBlock(
+            "cancel_resize", null, 4L, "error", 0xea, null,
+            null, 0L, null, false, ""), "cancel");
+        assertTrue(program.getMemory().getBlock("cancel_delete") != null);
+        assertEquals(
+            2, program.getMemory().getBlock("cancel_resize").getSize());
+        assertArrayEquals(hex("0102"), bytes("0x9400", 2));
+    }
+
+    @Test
+    public void overlayResizeRejectsFragmentedBacking() throws Exception {
+        create("backing_a", "0xa000", 4L, null, null, null,
+            false, 0, true, true, false, false, null, false);
+        create("backing_b", "0xa006", 2L, null, null, null,
+            false, 0, true, true, false, false, null, false);
+        JsonObject overlay = create(
+            "fragmented_bank", "0xa000", null, "0102", null, null,
+            true, null, true, true, false, false, null, false);
+        String space = overlay.getAsJsonObject("after")
+            .get("address_space").getAsString();
+
+        assertError(memory.resizeMemoryBlock(
+            "fragmented_bank", null, 8L, "error", 0, null,
+            null, 0L, null, true, ""), "one complete backing");
+        assertEquals(
+            2, program.getMemory().getBlock("fragmented_bank").getSize());
+        assertArrayEquals(
+            hex("0102"), bytes(space + "::0xa000", 2));
+    }
+
+    @Test
+    public void retainedOverlaySupportsEveryInboundReferencePolicy()
+            throws Exception {
+        create("policy_backing", "0xa000", 0x30L, null, null, null,
+            false, 0, true, true, false, false, null, false);
+        create("policy_source", "0xb000", null, "0102", null, null,
+            false, null, true, false, false, false, null, false);
+        JsonObject overlay = create(
+            "policy_keep", "0xa000", null, "1122", null, null,
+            true, null, true, true, false, false, null, false);
+        String spaceName = overlay.getAsJsonObject("after")
+            .get("address_space").getAsString();
+        var space =
+            (ghidra.program.model.address.OverlayAddressSpace)
+                program.getAddressFactory().getAddressSpace(spaceName);
+        Address keepTarget = space.getAddressInThisSpaceOnly(0xa000);
+        Address clearTarget = space.getAddressInThisSpaceOnly(0xa010);
+        Address source = ServiceUtils.parseAddress(program, "0xb000");
+        int transaction = program.startTransaction(
+            "overlay reference policies");
+        try {
+            program.getMemory().createInitializedBlock(
+                "policy_clear", clearTarget, 2, (byte) 0,
+                ghidra.util.task.TaskMonitor.DUMMY, false);
+            program.getMemory().createInitializedBlock(
+                "policy_final",
+                space.getAddressInThisSpaceOnly(0xa020),
+                2,
+                (byte) 0,
+                ghidra.util.task.TaskMonitor.DUMMY,
+                false);
+            var keepSymbol = program.getSymbolTable().createLabel(
+                keepTarget, "KEEP_TARGET", SourceType.USER_DEFINED);
+            var clearSymbol = program.getSymbolTable().createLabel(
+                clearTarget, "CLEAR_TARGET", SourceType.USER_DEFINED);
+            var keepReference =
+                program.getReferenceManager().addMemoryReference(
+                    source, keepTarget, RefType.DATA,
+                    SourceType.USER_DEFINED, 0);
+            var clearReference =
+                program.getReferenceManager().addMemoryReference(
+                    source, clearTarget, RefType.DATA,
+                    SourceType.USER_DEFINED, 1);
+            program.getReferenceManager().setAssociation(
+                keepSymbol, keepReference);
+            program.getReferenceManager().setAssociation(
+                clearSymbol, clearReference);
+        }
+        finally {
+            program.endTransaction(transaction, true);
+        }
+
+        assertError(memory.deleteMemoryBlock(
+            "policy_keep", "error", true, ""), "inbound");
+        JsonObject keepPreview = ok(memory.deleteMemoryBlock(
+            "policy_keep", "keep", true, ""));
+        assertTrue(keepPreview.getAsJsonArray("inbound_references")
+            .get(0).getAsJsonObject()
+            .get("association_cleared").getAsBoolean());
+        JsonObject kept = ok(memory.deleteMemoryBlock(
+            "policy_keep", "keep", false, ""));
+        assertEquals(
+            "retained",
+            kept.get("overlay_space_observed").getAsString());
+        assertEquals(
+            -1,
+            program.getReferenceManager()
+                .getReference(source, keepTarget, 0)
+                .getSymbolID());
+
+        JsonObject cleared = ok(memory.deleteMemoryBlock(
+            "policy_clear", "clear", false, ""));
+        assertEquals(
+            "retained",
+            cleared.get("overlay_space_observed").getAsString());
+        assertNull(program.getReferenceManager().getReference(
+            source, clearTarget, 1));
+
+        assertError(memory.deleteMemoryBlock(
+            "policy_final", "keep", true, ""), "final block");
+        ok(memory.deleteMemoryBlock(
+            "policy_final", "error", false, ""));
+        assertNull(program.getAddressFactory().getAddressSpace(spaceName));
     }
 
     @Test
