@@ -371,7 +371,11 @@ final class PatchBytesCore {
         if (addressText == null || addressText.isBlank()) {
             throw new IllegalArgumentException("address is required");
         }
-        if (blockName == null || blockName.isBlank()) {
+        if (blockName != null && blockName.isBlank()) {
+            throw new IllegalArgumentException(
+                "block must not be blank");
+        }
+        if (blockName == null) {
             Address address = parseAddress(
                 program, addressText, "address");
             MemoryBlock block =

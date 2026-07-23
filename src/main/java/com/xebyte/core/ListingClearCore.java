@@ -52,9 +52,40 @@ import ghidra.util.task.TaskMonitor;
  * <p>The caller owns the transaction used by {@link #apply(Program, Plan)} so
  * larger mutations can compose clearing with disassembly or data creation.
  */
-final class ListingClearCore {
+class ListingClearCore {
 
     static final int MAX_PLAN_ENTRIES = 65_536;
+    private static final String CLEARED_CODE_UNITS =
+        "cleared_code_units";
+    private static final String REMOVED_FUNCTIONS =
+        "removed_functions";
+    private static final String PRESERVED_LABELS =
+        "preserved_labels";
+    private static final String PRESERVED_COMMENTS =
+        "preserved_comments";
+    private static final String PRESERVED_BOOKMARKS =
+        "preserved_bookmarks";
+    private static final String PRESERVED_OUTGOING_REFERENCES =
+        "preserved_outgoing_references";
+    private static final String REMOVED_LABELS =
+        "removed_labels";
+    private static final String REMOVED_COMMENTS =
+        "removed_comments";
+    private static final String REMOVED_BOOKMARKS =
+        "removed_bookmarks";
+    private static final String REMOVED_OUTGOING_REFERENCES =
+        "removed_outgoing_references";
+    static final List<String> PLAN_CATEGORIES = List.of(
+        CLEARED_CODE_UNITS,
+        REMOVED_FUNCTIONS,
+        PRESERVED_LABELS,
+        PRESERVED_COMMENTS,
+        PRESERVED_BOOKMARKS,
+        PRESERVED_OUTGOING_REFERENCES,
+        REMOVED_LABELS,
+        REMOVED_COMMENTS,
+        REMOVED_BOOKMARKS,
+        REMOVED_OUTGOING_REFERENCES);
 
     static final class PlanLimitException extends IllegalArgumentException {
         private static final long serialVersionUID = 1L;
@@ -325,7 +356,7 @@ final class ListingClearCore {
             taskMonitor.checkCancelled();
             if (isSelected(unit, selection)) {
                 addPlanned(
-                    units, snapshot(unit), "cleared_code_units",
+                    units, snapshot(unit), CLEARED_CODE_UNITS,
                     bounded);
             }
         }
@@ -358,7 +389,7 @@ final class ListingClearCore {
                 FunctionSnapshot snapshot =
                     new FunctionSnapshot(function.getEntryPoint(), function.getName());
                 addPlanned(
-                    functions, snapshot, "removed_functions",
+                    functions, snapshot, REMOVED_FUNCTIONS,
                     bounded);
                 intersectingFunctions.add(function);
                 if (!selection.removeIntersectingFunctions()) {
@@ -438,7 +469,7 @@ final class ListingClearCore {
                     && selectedStarts.size()
                         >= MAX_PLAN_ENTRIES) {
                 throw new PlanLimitException(
-                    "cleared_code_units",
+                    CLEARED_CODE_UNITS,
                     MAX_PLAN_ENTRIES + 1);
             }
             selectedStarts.add(unit.getMinAddress());
@@ -911,12 +942,12 @@ final class ListingClearCore {
                         && isPreservedSource(symbol.getSource())) {
                     addPlanned(
                         preservedLabels, snapshot,
-                        "preserved_labels", bounded);
+                        PRESERVED_LABELS, bounded);
                 }
                 else {
                     addPlanned(
                         removedLabels, snapshot,
-                        "removed_labels", bounded);
+                        REMOVED_LABELS, bounded);
                 }
             }
         }
@@ -937,8 +968,8 @@ final class ListingClearCore {
                                 : removedComments,
                             new CommentSnapshot(address, type, text),
                             preservation.comments()
-                                ? "preserved_comments"
-                                : "removed_comments",
+                                ? PRESERVED_COMMENTS
+                                : REMOVED_COMMENTS,
                             bounded);
                     }
                 }
@@ -967,8 +998,8 @@ final class ListingClearCore {
                             bookmark.getCategory(),
                             bookmark.getComment()),
                         preservation.bookmarks()
-                            ? "preserved_bookmarks"
-                            : "removed_bookmarks",
+                            ? PRESERVED_BOOKMARKS
+                            : REMOVED_BOOKMARKS,
                         bounded);
                 }
             }
@@ -992,13 +1023,13 @@ final class ListingClearCore {
                             && isPreservedSource(reference.getSource())) {
                         addPlanned(
                             preservedReferences, snapshot,
-                            "preserved_outgoing_references",
+                            PRESERVED_OUTGOING_REFERENCES,
                             bounded);
                     }
                     else {
                         addPlanned(
                             removedReferences, snapshot,
-                            "removed_outgoing_references",
+                            REMOVED_OUTGOING_REFERENCES,
                             bounded);
                     }
                 }

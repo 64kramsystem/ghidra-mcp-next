@@ -31,10 +31,12 @@ import ghidra.framework.ApplicationConfiguration;
 import ghidra.program.database.ProgramBuilder;
 import ghidra.program.database.ProgramDB;
 import ghidra.program.model.address.Address;
+import ghidra.program.model.data.ByteDataType;
 import ghidra.program.model.data.WordDataType;
 import ghidra.program.model.listing.CommentType;
 import ghidra.program.model.symbol.RefType;
 import ghidra.program.model.symbol.SourceType;
+import ghidra.util.task.TaskMonitor;
 
 /**
  * Real-Ghidra coverage for initialized overlays, transformations, byte writes,
@@ -1401,15 +1403,25 @@ public class MemoryBlockServiceGhidraTest {
             "0x7001", "ff", null, true, "01",
             false, true, ""));
         assertFalse(preview.get("committed").getAsBoolean());
+        assertTrue(preview.get("dry_run").getAsBoolean());
         assertEquals("01", preview.get("previous").getAsString());
+        assertEquals("ff", preview.get("written").getAsString());
         assertEquals(1,
             preview.getAsJsonArray("cleared_code_units").size());
+        assertEquals("7000",
+            preview.getAsJsonArray("cleared_code_units").get(0)
+                .getAsJsonObject().get("start").getAsString());
+        assertEquals(1,
+            preview.getAsJsonArray("removed_functions").size());
         assertArrayEquals(hex("a90160"), bytes("0x7000", 3));
+        assertTrue(program.getListing().getInstructionAt(
+            builder.addr("0x7000")) != null);
 
         JsonObject committed = ok(memory.patchBytes(
             "0x7001", "ff", null, true, "01",
             false, false, ""));
         assertTrue(committed.get("committed").getAsBoolean());
+        assertFalse(committed.get("dry_run").getAsBoolean());
         assertArrayEquals(hex("a9ff60"), bytes("0x7000", 3));
         assertNull(program.getListing().getInstructionContaining(
             builder.addr("0x7001")));
@@ -1429,10 +1441,22 @@ public class MemoryBlockServiceGhidraTest {
             SourceType.IMPORTED,
             program.getReferenceManager().getReferencesFrom(
                 builder.addr("0x7001"))[0].getSource());
+
+        JsonObject repeated = ok(memory.patchBytes(
+            "0x7001", "ff", null, true, "ff",
+            false, false, ""));
+        assertEquals(0,
+            repeated.getAsJsonArray("cleared_code_units").size());
+        assertArrayEquals(hex("a9ff60"), bytes("0x7000", 3));
     }
 
     @Test
-    public void patchExactOverlayResolutionReadonlyAndRollbackAreAtomic() {
+    public void patchExactOverlayResolutionReadonlyAndRollbackAreAtomic()
+            throws Exception {
+        builder.createMemory("ordinary_patch", "0x8000", 4);
+        builder.setBytes("0x8000", "10111213");
+        builder.withTransaction(() ->
+            program.getMemory().getBlock("ordinary_patch").setWrite(true));
         JsonObject overlay = create(
             "patch_overlay", "0x8000", null, "01020304",
             null, null, true, null,
@@ -1441,14 +1465,33 @@ public class MemoryBlockServiceGhidraTest {
             .get("address_space").getAsString();
 
         assertError(memory.patchBytes(
+            "8001", "aa", "", true, null,
+            false, false, ""), "block must not be blank");
+        assertError(memory.patchBytes(
+            "8001", "aa", " \t", true, null,
+            false, false, ""), "block must not be blank");
+        assertArrayEquals(hex("10111213"), bytes("0x8000", 4));
+        assertArrayEquals(
+            hex("01020304"), bytes(space + ":8000", 4));
+
+        assertError(memory.patchBytes(
             "0x8001", "aa", "patch_overlay", true, null,
             false, false, ""), "read-only");
         JsonObject preview = ok(memory.patchBytes(
             "8001", "aa", "patch_overlay", true, "02",
             true, true, ""));
         assertEquals(space, preview.get("address_space").getAsString());
+        assertEquals(space + "::8001",
+            preview.get("address").getAsString());
         assertTrue(preview.get("temporary_write_enabled").getAsBoolean());
         assertFalse(program.getMemory().getBlock("patch_overlay").isWrite());
+        JsonObject qualified = ok(memory.patchBytes(
+            space + ":8001", "aa", "patch_overlay",
+            true, "02", true, true, ""));
+        assertEquals(
+            space + "::8001",
+            qualified.get("address").getAsString());
+
         assertError(memory.patchBytes(
             "ram:8001", "aa", "patch_overlay", true, null,
             true, true, ""), "conflict");
@@ -1472,6 +1515,92 @@ public class MemoryBlockServiceGhidraTest {
             hex("01020304"),
             bytes(space + ":8000", 4));
         assertFalse(program.getMemory().getBlock("patch_overlay").isWrite());
+
+        JsonObject committed = ok(memory.patchBytes(
+            "8001", "aa", "patch_overlay", true, "02",
+            true, false, ""));
+        assertTrue(committed.get("committed").getAsBoolean());
+        assertArrayEquals(
+            hex("01aa0304"),
+            bytes(space + ":8000", 4));
+        assertFalse(program.getMemory().getBlock("patch_overlay").isWrite());
+    }
+
+    @Test
+    public void lateClearAndVerifierFailuresRollbackCompletePatchState()
+            throws Exception {
+        builder.createMemory("rollback_patch", "0x7200", 0x20);
+        builder.setBytes(
+            "0x7200",
+            "a9 01 60 ea ea ea ea ea ea ea ea ea ea ea ea ea "
+                + "ea ea ea ea ea ea ea ea ea ea ea ea ea ea ea ea");
+        builder.disassemble("0x7200", 3);
+        builder.createFunction("0x7200");
+        builder.withTransaction(() -> {
+            try {
+                program.getSymbolTable().createLabel(
+                    builder.addr("0x7201"),
+                    "rollback_operand",
+                    SourceType.USER_DEFINED);
+                program.getListing().setComment(
+                    builder.addr("0x7201"),
+                    CommentType.PLATE,
+                    "rollback plate");
+                program.getBookmarkManager().setBookmark(
+                    builder.addr("0x7201"),
+                    "NOTE", "rollback", "rollback bookmark");
+                program.getReferenceManager().addMemoryReference(
+                    builder.addr("0x7201"),
+                    builder.addr("0x7210"),
+                    RefType.DATA,
+                    SourceType.IMPORTED,
+                    0);
+            }
+            catch (Exception error) {
+                throw new AssertionError(error);
+            }
+        });
+        assertPatchRollbackFixture();
+
+        ListingClearCore failAfterClear =
+            new ListingClearCore() {
+                @Override
+                void apply(
+                        ghidra.program.model.listing.Program selected,
+                        Plan plan,
+                        TaskMonitor monitor) throws Exception {
+                    super.apply(selected, plan, monitor);
+                    throw new IllegalStateException(
+                        "late clear failure");
+                }
+            };
+        assertError(
+            patchService(new PatchBytesCore(failAfterClear))
+                .patchBytes(
+                    "0x7201", "ff", "rollback_patch",
+                    true, "01", true, false, ""),
+            "late clear failure");
+        assertPatchRollbackFixture();
+
+        ListingClearCore failAfterVerifier =
+            new ListingClearCore() {
+                @Override
+                void verify(
+                        ghidra.program.model.listing.Program selected,
+                        Plan plan,
+                        TaskMonitor monitor) throws Exception {
+                    super.verify(selected, plan, monitor);
+                    throw new IllegalStateException(
+                        "late verifier failure");
+                }
+            };
+        assertError(
+            patchService(new PatchBytesCore(failAfterVerifier))
+                .patchBytes(
+                    "0x7201", "ff", "rollback_patch",
+                    true, "01", true, false, ""),
+            "late verifier failure");
+        assertPatchRollbackFixture();
     }
 
     @Test
@@ -1497,6 +1626,31 @@ public class MemoryBlockServiceGhidraTest {
         assertError(memory.patchBytes(
             "0xb000", "22", null, true, null,
             true, true, ""), "mapped");
+
+        var boundary = builder.createMemory(
+            "boundary", "0xc000", 2);
+        builder.setBytes("0xc000", "0102");
+        builder.setWrite(boundary, true);
+        assertError(memory.patchBytes(
+            "0xc001", "aabb", "boundary", true, null,
+            false, false, ""), "leaves memory block");
+        assertArrayEquals(hex("0102"), bytes("0xc000", 2));
+        ok(memory.patchBytes(
+            "0xc001", "ff", "boundary", true, "02",
+            false, false, ""));
+        assertArrayEquals(hex("01ff"), bytes("0xc000", 2));
+
+        var dataBlock = builder.createMemory(
+            "defined_data", "0xc100", 2);
+        builder.setBytes("0xc100", "1122");
+        builder.setWrite(dataBlock, true);
+        builder.applyDataType("0xc100", ByteDataType.dataType);
+        ok(memory.patchBytes(
+            "0xc100", "aa", "defined_data", false, "11",
+            false, false, ""));
+        assertArrayEquals(hex("aa22"), bytes("0xc100", 2));
+        assertTrue(program.getListing().getDefinedDataAt(
+            builder.addr("0xc100")) != null);
     }
 
     private MemoryBlockService serviceFailingAt(
@@ -1517,7 +1671,51 @@ public class MemoryBlockServiceGhidraTest {
             MemoryBlockService::readFileRange,
             new MemoryBlockCore(),
             lifecycle,
-            ghidra.util.task.TaskMonitor.DUMMY);
+            TaskMonitor.DUMMY);
+    }
+
+    private MemoryBlockService patchService(
+            PatchBytesCore patchCore) {
+        HeadlessProgramProvider provider = new HeadlessProgramProvider();
+        provider.setCurrentProgram(program);
+        return new MemoryBlockService(
+            provider,
+            new DirectThreadingStrategy(),
+            SecurityConfig.getInstance(),
+            MemoryBlockService::readFileRange,
+            new MemoryBlockCore(),
+            patchCore,
+            TaskMonitor.DUMMY);
+    }
+
+    private void assertPatchRollbackFixture() {
+        Address operand = builder.addr("0x7201");
+        assertArrayEquals(hex("a90160"), bytes("0x7200", 3));
+        assertTrue(program.getListing().getInstructionAt(
+            builder.addr("0x7200")) != null);
+        assertTrue(program.getFunctionManager().getFunctionAt(
+            builder.addr("0x7200")) != null);
+        assertTrue(java.util.Arrays.stream(
+                program.getSymbolTable().getSymbols(operand))
+            .anyMatch(symbol ->
+                "rollback_operand".equals(symbol.getName())));
+        assertEquals(
+            "rollback plate",
+            program.getListing().getComment(
+                CommentType.PLATE, operand));
+        assertTrue(java.util.Arrays.stream(
+                program.getBookmarkManager().getBookmarks(operand))
+            .anyMatch(bookmark ->
+                "rollback bookmark".equals(
+                    bookmark.getComment())));
+        assertTrue(java.util.Arrays.stream(
+                program.getReferenceManager().getReferencesFrom(operand))
+            .anyMatch(reference ->
+                reference.getSource() == SourceType.IMPORTED
+                    && reference.getToAddress().equals(
+                        builder.addr("0x7210"))));
+        assertFalse(
+            program.getMemory().getBlock("rollback_patch").isWrite());
     }
 
     private MemoryBlockService serviceForRoot(

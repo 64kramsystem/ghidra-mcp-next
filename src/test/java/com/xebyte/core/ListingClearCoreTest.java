@@ -16,6 +16,8 @@ import java.util.Collections;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import org.junit.Test;
 import org.mockito.InOrder;
@@ -54,25 +56,49 @@ public class ListingClearCoreTest {
 
     @Test
     public void everyPlanCategorySharesTheExactEntryBound() {
-        List<Integer> entries =
-            new ArrayList<>(ListingClearCore.MAX_PLAN_ENTRIES);
-        for (int index = 0;
-                index < ListingClearCore.MAX_PLAN_ENTRIES;
-                index++) {
-            ListingClearCore.addBounded(
-                entries, index, "preserved_comments");
-        }
-        assertEquals(ListingClearCore.MAX_PLAN_ENTRIES, entries.size());
-
-        ListingClearCore.PlanLimitException error = assertThrows(
-            ListingClearCore.PlanLimitException.class,
-            () -> ListingClearCore.addBounded(
-                entries, -1, "preserved_comments"));
-        assertEquals("preserved_comments", error.category());
+        assertEquals(10, ListingClearCore.PLAN_CATEGORIES.size());
         assertEquals(
-            ListingClearCore.MAX_PLAN_ENTRIES + 1,
-            error.countAtLeast());
-        assertEquals(ListingClearCore.MAX_PLAN_ENTRIES, entries.size());
+            Set.of(
+                "cleared_code_units",
+                "removed_functions",
+                "preserved_labels",
+                "preserved_comments",
+                "preserved_bookmarks",
+                "preserved_outgoing_references",
+                "removed_labels",
+                "removed_comments",
+                "removed_bookmarks",
+                "removed_outgoing_references"),
+            Set.copyOf(ListingClearCore.PLAN_CATEGORIES));
+        for (String category : ListingClearCore.PLAN_CATEGORIES) {
+            List<Object> entries =
+                new ArrayList<>(ListingClearCore.MAX_PLAN_ENTRIES);
+            Object entry = new Object();
+            for (int index = 0;
+                    index < ListingClearCore.MAX_PLAN_ENTRIES;
+                    index++) {
+                ListingClearCore.addBounded(
+                    entries, entry, category);
+            }
+            assertEquals(
+                category,
+                ListingClearCore.MAX_PLAN_ENTRIES,
+                entries.size());
+
+            ListingClearCore.PlanLimitException error = assertThrows(
+                category,
+                ListingClearCore.PlanLimitException.class,
+                () -> ListingClearCore.addBounded(
+                    entries, entry, category));
+            assertEquals(category, error.category());
+            assertEquals(
+                ListingClearCore.MAX_PLAN_ENTRIES + 1,
+                error.countAtLeast());
+            assertEquals(
+                category,
+                ListingClearCore.MAX_PLAN_ENTRIES,
+                entries.size());
+        }
     }
 
     @Test
@@ -97,6 +123,166 @@ public class ListingClearCoreTest {
                 monitor));
         verify(fixture.listing(), never()).getDefinedData(
             any(AddressSetView.class), eq(true));
+    }
+
+    @Test
+    public void verifierAcceptsExactIdentitiesAndChecksCancellation()
+            throws Exception {
+        Address address = RAM.getAddress(0x1010);
+        Address target = RAM.getAddress(0x1020);
+        Fixture fixture = fixture(List.of());
+        Namespace namespace = mock(Namespace.class);
+        Symbol label = symbol(
+            "kept", address, SourceType.USER_DEFINED);
+        when(label.getParentNamespace()).thenReturn(namespace);
+        when(label.isPrimary()).thenReturn(true);
+        when(label.isPinned()).thenReturn(true);
+        when(fixture.symbols().getSymbols(address))
+            .thenReturn(new Symbol[] { label });
+        when(fixture.listing().getComment(
+            CommentType.PLATE, address)).thenReturn("plate");
+        Bookmark bookmark = mock(Bookmark.class);
+        when(bookmark.getTypeString()).thenReturn("NOTE");
+        when(bookmark.getCategory()).thenReturn("review");
+        when(bookmark.getComment()).thenReturn("keep");
+        when(fixture.bookmarks().getBookmarks(address))
+            .thenReturn(new Bookmark[] { bookmark });
+        Reference reference = reference(
+            address, target, SourceType.IMPORTED, RefType.DATA);
+        when(fixture.references().getReferencesFrom(address))
+            .thenReturn(new Reference[] { reference });
+
+        ListingClearCore.AnnotationSnapshot preserved =
+            new ListingClearCore.AnnotationSnapshot(
+                List.of(new ListingClearCore.LabelSnapshot(
+                    address, "kept", namespace,
+                    SourceType.USER_DEFINED, SymbolType.LABEL,
+                    true, true)),
+                List.of(new ListingClearCore.CommentSnapshot(
+                    address, CommentType.PLATE, "plate")),
+                List.of(new ListingClearCore.BookmarkSnapshot(
+                    address, "NOTE", "review", "keep")),
+                List.of(new ListingClearCore.ReferenceSnapshot(
+                    address, target, RefType.DATA,
+                    SourceType.IMPORTED, 0, false,
+                    ListingClearCore.ReferenceKind.MEMORY,
+                    null, 0, 0, null)));
+        new ListingClearCore().verify(
+            fixture.program(),
+            plan(List.of(), List.of(), preserved, emptyAnnotations()));
+
+        TaskMonitorAdapter cancelled = new TaskMonitorAdapter();
+        cancelled.setCancelEnabled(true);
+        cancelled.cancel();
+        assertThrows(
+            CancelledException.class,
+            () -> new ListingClearCore().verify(
+                fixture.program(),
+                ListingClearCore.emptyPlan(),
+                cancelled));
+    }
+
+    @Test
+    public void verifierRejectsRemainingUnitsFunctionsAndRemovedIdentity()
+            throws Exception {
+        Address address = RAM.getAddress(0x1030);
+        Data data = unit(Data.class, address, address);
+        Fixture unitFixture = fixture(List.of(data));
+        IllegalStateException unitFailure = assertThrows(
+            IllegalStateException.class,
+            () -> new ListingClearCore().verify(
+                unitFixture.program(),
+                plan(
+                    List.of(new ListingClearCore.CodeUnitSnapshot(
+                        address, address,
+                        ListingClearCore.UnitKind.DATA)),
+                    List.of(),
+                    emptyAnnotations(),
+                    emptyAnnotations())));
+        assertTrue(unitFailure.getMessage().contains(
+            "defined code unit"));
+
+        Fixture functionFixture = fixture(List.of());
+        Function remaining = function("still_here", address);
+        when(functionFixture.functions().getFunctionAt(address))
+            .thenReturn(remaining);
+        IllegalStateException functionFailure = assertThrows(
+            IllegalStateException.class,
+            () -> new ListingClearCore().verify(
+                functionFixture.program(),
+                plan(
+                    List.of(),
+                    List.of(new ListingClearCore.FunctionSnapshot(
+                        address, "still_here")),
+                    emptyAnnotations(),
+                    emptyAnnotations())));
+        assertTrue(functionFailure.getMessage().contains(
+            "found function still_here"));
+
+        Fixture commentFixture = fixture(List.of());
+        when(commentFixture.listing().getComment(
+            CommentType.EOL, address)).thenReturn("should be gone");
+        ListingClearCore.AnnotationSnapshot removed =
+            new ListingClearCore.AnnotationSnapshot(
+                List.of(),
+                List.of(new ListingClearCore.CommentSnapshot(
+                    address, CommentType.EOL, "should be gone")),
+                List.of(),
+                List.of());
+        IllegalStateException removedFailure = assertThrows(
+            IllegalStateException.class,
+            () -> new ListingClearCore().verify(
+                commentFixture.program(),
+                plan(
+                    List.of(), List.of(),
+                    emptyAnnotations(), removed)));
+        assertTrue(removedFailure.getMessage().contains(
+            "did not remove EOL comment"));
+    }
+
+    @Test
+    public void verifierRejectsEachMissingPreservedIdentity()
+            throws Exception {
+        Address address = RAM.getAddress(0x1040);
+        Address target = RAM.getAddress(0x1050);
+        Namespace namespace = mock(Namespace.class);
+        List<ListingClearCore.AnnotationSnapshot> cases = List.of(
+            new ListingClearCore.AnnotationSnapshot(
+                List.of(new ListingClearCore.LabelSnapshot(
+                    address, "missing", namespace,
+                    SourceType.USER_DEFINED, SymbolType.LABEL,
+                    false, false)),
+                List.of(), List.of(), List.of()),
+            new ListingClearCore.AnnotationSnapshot(
+                List.of(),
+                List.of(new ListingClearCore.CommentSnapshot(
+                    address, CommentType.EOL, "missing")),
+                List.of(), List.of()),
+            new ListingClearCore.AnnotationSnapshot(
+                List.of(), List.of(),
+                List.of(new ListingClearCore.BookmarkSnapshot(
+                    address, "NOTE", "review", "missing")),
+                List.of()),
+            new ListingClearCore.AnnotationSnapshot(
+                List.of(), List.of(), List.of(),
+                List.of(new ListingClearCore.ReferenceSnapshot(
+                    address, target, RefType.DATA,
+                    SourceType.USER_DEFINED, 0, false,
+                    ListingClearCore.ReferenceKind.MEMORY,
+                    null, 0, 0, null))));
+        for (ListingClearCore.AnnotationSnapshot missing : cases) {
+            Fixture fixture = fixture(List.of());
+            IllegalStateException failure = assertThrows(
+                IllegalStateException.class,
+                () -> new ListingClearCore().verify(
+                    fixture.program(),
+                    plan(
+                        List.of(), List.of(), missing,
+                        emptyAnnotations())));
+            assertTrue(
+                failure.getMessage(),
+                failure.getMessage().contains("did not preserve"));
+        }
     }
 
     private static final GenericAddressSpace RAM =
@@ -744,6 +930,31 @@ public class ListingClearCoreTest {
             assertThrows(Exception.class, () -> core.apply(fixture.program(), plan));
         assertEquals("restore failed", error.getMessage());
         verify(fixture.listing()).clearCodeUnits(start, start, false);
+    }
+
+    private static ListingClearCore.Plan plan(
+            List<ListingClearCore.CodeUnitSnapshot> units,
+            List<ListingClearCore.FunctionSnapshot> functions,
+            ListingClearCore.AnnotationSnapshot preserved,
+            ListingClearCore.AnnotationSnapshot removed) {
+        AddressSet expanded = new AddressSet();
+        for (ListingClearCore.CodeUnitSnapshot unit : units) {
+            expanded.add(unit.start(), unit.end());
+        }
+        return new ListingClearCore.Plan(
+            expanded,
+            units,
+            functions,
+            preserved,
+            removed,
+            Map.of(),
+            new ListingClearCore.RemovalCounts(0, 0, functions.size()),
+            List.of());
+    }
+
+    private static ListingClearCore.AnnotationSnapshot emptyAnnotations() {
+        return new ListingClearCore.AnnotationSnapshot(
+            List.of(), List.of(), List.of(), List.of());
     }
 
     @SuppressWarnings("unchecked")
