@@ -4,13 +4,17 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -56,6 +60,8 @@ public class ExportServiceTest {
         var memoryRange = new ghidra.program.model.address.AddressSet(
             ram.getAddress(0x1000), ram.getAddress(0x103f));
         when(memory.iterator()).thenAnswer(invocation -> memoryRange.iterator());
+        when(memory.contains(any(AddressSetView.class))).thenAnswer(invocation ->
+            memoryRange.contains(invocation.getArgument(0, AddressSetView.class)));
 
         provider = mock(ProgramProvider.class);
         when(provider.resolveProgram("fixture")).thenReturn(program);
@@ -236,6 +242,96 @@ public class ExportServiceTest {
         assertErrorContains(response, "destination already exists");
         assertEquals("raced\n", Files.readString(destination));
         assertNoTemporaryFiles(outputDir);
+    }
+
+    @Test
+    public void noOverwritePublicationPrimitiveIntrinsicallyPreservesExistingTarget()
+            throws Exception {
+        Path outputDir = temporaryFolder.newFolder("primitive-existing").toPath();
+        Path temporary = Files.writeString(
+            outputDir.resolve(".listing.asm.tmp-fixed"), "new\n");
+        Path destination = Files.writeString(outputDir.resolve("listing.asm"), "old\n");
+
+        try {
+            ExportService.publish(temporary, destination, false);
+            throw new AssertionError("publication unexpectedly replaced an existing target");
+        }
+        catch (FileAlreadyExistsException expected) {
+            assertEquals(destination.toString(), expected.getFile());
+        }
+
+        assertEquals("old\n", Files.readString(destination));
+        assertEquals("new\n", Files.readString(temporary));
+    }
+
+    @Test
+    public void noOverwritePublicationLinksCompleteTempThenRemovesTemp() throws Exception {
+        Path outputDir = temporaryFolder.newFolder("primitive-success").toPath();
+        Path temporary = Files.writeString(
+            outputDir.resolve(".listing.asm.tmp-fixed"), "complete\n");
+        Path destination = outputDir.resolve("listing.asm");
+
+        ExportService.publish(temporary, destination, false);
+
+        assertEquals("complete\n", Files.readString(destination));
+        assertFalse(Files.exists(temporary));
+    }
+
+    @Test
+    public void rejectsFullyAndPartiallyUnmappedBoundsBeforeSecurityOrExporter()
+            throws Exception {
+        Path outputDir = temporaryFolder.newFolder("unmapped").toPath();
+        Path destination = outputDir.resolve("listing.asm");
+
+        RecordingExportRunner fullyUnmapped =
+            new RecordingExportRunner("unused\n", true, Outcome.SUCCESS);
+        Response fullResponse = service(fullyUnmapped).exportAsciiListing(
+            destination.toString(), "2000", "2003", false, "fixture");
+        assertErrorContains(fullResponse, "entirely contained in program memory");
+        assertFalse(fullyUnmapped.wasCalled());
+
+        RecordingExportRunner partiallyUnmapped =
+            new RecordingExportRunner("unused\n", true, Outcome.SUCCESS);
+        Response partialResponse = service(partiallyUnmapped).exportAsciiListing(
+            destination.toString(), "103e", "1041", false, "fixture");
+        assertErrorContains(partialResponse, "entirely contained in program memory");
+        assertFalse(partiallyUnmapped.wasCalled());
+
+        verify(security, never()).resolveWithinFileRoot(anyString());
+    }
+
+    @Test
+    public void realSecurityConfigAcceptsCanonicalInsideRootAndRejectsExistingOutsidePath()
+            throws Exception {
+        Path fileRoot = temporaryFolder.newFolder("real-file-root").toPath();
+        Path inside = Files.createDirectory(fileRoot.resolve("inside"));
+        Path outside = temporaryFolder.newFolder("real-file-root-outside").toPath();
+        Path outsideDestination = Files.writeString(
+            outside.resolve("listing.asm"), "outside-old\n");
+        SecurityConfig realSecurity = SecurityConfig.forFileRootTesting(fileRoot);
+
+        RecordingExportRunner outsideRunner =
+            new RecordingExportRunner("unused\n", true, Outcome.SUCCESS);
+        ExportService outsideService =
+            new ExportService(provider, realSecurity, outsideRunner);
+        Response outsideResponse = outsideService.exportAsciiListing(
+            outsideDestination.toString(), null, null, false, "fixture");
+        assertErrorContains(outsideResponse, "outside GHIDRA_MCP_FILE_ROOT");
+        assertEquals("outside-old\n", Files.readString(outsideDestination));
+        assertFalse(outsideRunner.wasCalled());
+
+        RecordingExportRunner insideRunner =
+            new RecordingExportRunner("inside\n", true, Outcome.SUCCESS);
+        ExportService insideService =
+            new ExportService(provider, realSecurity, insideRunner);
+        Path nonCanonicalInside = inside.resolve("..").resolve("inside/listing.asm");
+        Response insideResponse = insideService.exportAsciiListing(
+            nonCanonicalInside.toString(), null, null, false, "fixture");
+        assertTrue(insideResponse.toJson(), insideResponse instanceof Response.Ok);
+        Path canonicalDestination = inside.resolve("listing.asm").toRealPath();
+        assertEquals("inside\n", Files.readString(canonicalDestination));
+        assertEquals(canonicalDestination.toString(),
+            result(insideResponse).get("output_path"));
     }
 
     @Test
