@@ -17,7 +17,12 @@ for _static_tool_name in STATIC_TOOL_NAMES:
     validate_tool_name(_static_tool_name)
 
 
-def _build_tool_function(endpoint: str, http_method: str, params_schema: dict):
+def _build_tool_function(
+    endpoint: str,
+    http_method: str,
+    params_schema: dict,
+    supports_synthetic_dry_run: bool = True,
+):
     """Build a callable that dispatches to the Ghidra HTTP endpoint."""
     properties = params_schema.get("properties", {})
     required = set(params_schema.get("required", []))
@@ -36,7 +41,9 @@ def _build_tool_function(endpoint: str, http_method: str, params_schema: dict):
     ]
     is_post = http_method.upper() == "POST"
     has_schema_dry_run = "dry_run" in properties
-    use_synthetic_dry_run = is_post and not has_schema_dry_run
+    use_synthetic_dry_run = (
+        supports_synthetic_dry_run and is_post and not has_schema_dry_run
+    )
 
     def is_truthy(value) -> bool:
         if isinstance(value, str):
@@ -155,7 +162,12 @@ def _register_tool_def(tool_def: dict) -> bool:
     http_method = tool_def.get("http_method", "GET")
     input_schema = tool_def.get("input_schema", {"type": "object", "properties": {}})
 
-    handler = _build_tool_function(endpoint, http_method, input_schema)
+    handler = _build_tool_function(
+        endpoint,
+        http_method,
+        input_schema,
+        tool_def.get("supports_synthetic_dry_run", True),
+    )
     handler.__name__ = name
     handler.__doc__ = description
 

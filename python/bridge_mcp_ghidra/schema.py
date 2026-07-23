@@ -85,6 +85,7 @@ def _parse_schema(raw: dict) -> list[dict]:
                 "description": tool.get("description", ""),
                 "category": tool.get("category", "unknown"),
                 "category_description": tool.get("category_description", ""),
+                "supports_synthetic_dry_run": tool.get("supports_dry_run", True),
                 "input_schema": {
                     "type": "object",
                     "properties": properties,

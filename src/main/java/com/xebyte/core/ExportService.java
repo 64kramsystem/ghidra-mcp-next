@@ -6,7 +6,6 @@ import com.google.gson.JsonObject;
 
 import java.io.File;
 import java.io.IOException;
-import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -43,6 +42,18 @@ public final class ExportService {
         default String diagnostic() {
             return "";
         }
+    }
+
+    @FunctionalInterface
+    interface AtomicReplace {
+        void move(Path source, Path target) throws IOException;
+    }
+
+    @FunctionalInterface
+    interface ResultFactory {
+        Response.Ok build(Program program, Path destination, String requestedStart,
+                String requestedEnd, AddressSetView selection, long bytesWritten,
+                String exporterName) throws IOException;
     }
 
     static final class AsciiExportRunner implements ExportRunner {
@@ -82,6 +93,7 @@ public final class ExportService {
     private final ProgramProvider programProvider;
     private final SecurityConfig security;
     private final ExportRunner runner;
+    private final ResultFactory resultFactory;
 
     public ExportService(ProgramProvider programProvider) {
         this(programProvider, SecurityConfig.getInstance());
@@ -93,14 +105,20 @@ public final class ExportService {
 
     ExportService(ProgramProvider programProvider, SecurityConfig security,
             ExportRunner runner) {
+        this(programProvider, security, runner, ExportService::buildExportResult);
+    }
+
+    ExportService(ProgramProvider programProvider, SecurityConfig security,
+            ExportRunner runner, ResultFactory resultFactory) {
         this.programProvider = programProvider;
         this.security = security;
         this.runner = runner;
+        this.resultFactory = resultFactory;
     }
 
     @McpTool(path = "/export_ascii_listing", method = "POST",
         description = "Export Ghidra AsciiExporter listing text without running a script",
-        category = "export")
+        category = "export", supportsDryRun = false)
     public Response exportAsciiListing(
             @Param(value = "output_path", source = ParamSource.BODY,
                 description = "Destination filesystem path") String outputPath,
@@ -190,6 +208,7 @@ public final class ExportService {
         }
 
         Path temporary = siblingTemporaryPath(destination);
+        boolean published = false;
         try {
             Files.createFile(temporary);
             boolean exported = runner.export(temporary.toFile(), program, selection,
@@ -199,9 +218,12 @@ public final class ExportService {
                     runner.name() + " returned false", runner.diagnostic()));
             }
 
+            long bytesWritten = Files.size(temporary);
+            Response.Ok result = resultFactory.build(program, destination, start, end,
+                selection, bytesWritten, runner.name());
             publish(temporary, destination, overwrite);
-            return Response.ok(exportResult(
-                program, destination, start, end, selection, runner.name()));
+            published = true;
+            return result;
         }
         catch (FileAlreadyExistsException e) {
             return Response.err("destination already exists; set overwrite=true to replace it: "
@@ -212,12 +234,13 @@ public final class ExportService {
             return Response.err(exportFailureMessage(message, runner.diagnostic()));
         }
         finally {
-            try {
-                Files.deleteIfExists(temporary);
-            }
-            catch (IOException ignored) {
-                // Best-effort cleanup; the destination is never reported as successful
-                // unless publication itself completed.
+            if (!published) {
+                try {
+                    Files.deleteIfExists(temporary);
+                }
+                catch (IOException ignored) {
+                    // Best-effort cleanup after a failed export or publication.
+                }
             }
         }
     }
@@ -238,6 +261,13 @@ public final class ExportService {
 
     static void publish(Path temporary, Path destination, boolean overwrite)
             throws IOException {
+        publish(temporary, destination, overwrite, (source, target) ->
+            Files.move(source, target, StandardCopyOption.ATOMIC_MOVE,
+                StandardCopyOption.REPLACE_EXISTING));
+    }
+
+    static void publish(Path temporary, Path destination, boolean overwrite,
+            AtomicReplace atomicReplace) throws IOException {
         if (!overwrite) {
             try {
                 // createLink is an atomic fail-if-present publication primitive:
@@ -259,18 +289,12 @@ public final class ExportService {
             return;
         }
 
-        try {
-            Files.move(temporary, destination, StandardCopyOption.ATOMIC_MOVE,
-                StandardCopyOption.REPLACE_EXISTING);
-        }
-        catch (AtomicMoveNotSupportedException e) {
-            Files.move(temporary, destination, StandardCopyOption.REPLACE_EXISTING);
-        }
+        atomicReplace.move(temporary, destination);
     }
 
-    private static JsonObject exportResult(Program program, Path destination,
+    private static Response.Ok buildExportResult(Program program, Path destination,
             String requestedStart, String requestedEnd, AddressSetView selection,
-            String exporterName) throws IOException {
+            long bytesWritten, String exporterName) {
         JsonObject result = new JsonObject();
         result.addProperty("program", program.getName());
         result.addProperty("output_path", destination.toString());
@@ -287,9 +311,9 @@ public final class ExportService {
             result.add("end", JsonNull.INSTANCE);
         }
         result.add("ranges", ranges(selection));
-        result.addProperty("bytes_written", Files.size(destination));
+        result.addProperty("bytes_written", bytesWritten);
         result.addProperty("exporter", exporterName);
-        return result;
+        return new Response.Ok(result);
     }
 
     private static JsonArray ranges(AddressSetView selection) {

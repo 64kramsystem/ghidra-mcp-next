@@ -82,6 +82,9 @@ public class RegenerateEndpointsJson extends TestCase {
             category = tool.category() != null ? tool.category() : "";
         }
         next.addProperty("category", category);
+        if (!tool.supportsDryRun()) {
+            next.addProperty("supports_dry_run", false);
+        }
 
         LinkedHashSet<String> names = new LinkedHashSet<>();
         for (AnnotationScanner.ParamDescriptor p : tool.params()) {

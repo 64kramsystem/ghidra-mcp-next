@@ -14,6 +14,7 @@ import static org.mockito.Mockito.when;
 import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -116,8 +117,10 @@ public class ExportServiceTest {
 
         assertTrue(response.toJson(), response instanceof Response.Ok);
         assertSame(memory, runner.requestedSet());
-        assertTrue(response.toJson(), response.toJson().contains("\"start\":null"));
-        assertTrue(response.toJson(), response.toJson().contains("\"end\":null"));
+        com.google.gson.JsonObject data =
+            (com.google.gson.JsonObject) ((Response.Ok) response).data();
+        assertTrue(data.get("start").isJsonNull());
+        assertTrue(data.get("end").isJsonNull());
     }
 
     @Test
@@ -278,6 +281,53 @@ public class ExportServiceTest {
     }
 
     @Test
+    public void overwritePublicationFailsSafelyWhenAtomicReplaceIsUnsupported()
+            throws Exception {
+        Path outputDir = temporaryFolder.newFolder("atomic-unsupported").toPath();
+        Path temporary = Files.writeString(
+            outputDir.resolve(".listing.asm.tmp-fixed"), "new\n");
+        Path destination = Files.writeString(outputDir.resolve("listing.asm"), "old\n");
+        ExportService.AtomicReplace unsupported = (source, target) -> {
+            throw new AtomicMoveNotSupportedException(
+                source.toString(), target.toString(), "test filesystem");
+        };
+
+        try {
+            ExportService.publish(temporary, destination, true, unsupported);
+            throw new AssertionError("non-atomic replacement unexpectedly succeeded");
+        }
+        catch (AtomicMoveNotSupportedException expected) {
+            assertTrue(expected.getMessage().contains("test filesystem"));
+        }
+
+        assertEquals("old\n", Files.readString(destination));
+        assertEquals("new\n", Files.readString(temporary));
+    }
+
+    @Test
+    public void metadataFailurePrecedesPublicationAndPreservesExistingDestination()
+            throws Exception {
+        Path outputDir = temporaryFolder.newFolder("metadata-failure").toPath();
+        Path destination = Files.writeString(outputDir.resolve("listing.asm"), "old\n");
+        RecordingExportRunner runner =
+            new RecordingExportRunner("complete-new\n", true, Outcome.SUCCESS);
+        ExportService.ResultFactory failingMetadata = (
+                ignoredProgram, ignoredDestination, ignoredStart, ignoredEnd,
+                ignoredSelection, ignoredBytes, ignoredExporter) -> {
+                    throw new IOException("simulated metadata failure");
+                };
+        ExportService service =
+            new ExportService(provider, security, runner, failingMetadata);
+
+        Response response = service.exportAsciiListing(
+            destination.toString(), null, null, true, "fixture");
+
+        assertErrorContains(response, "simulated metadata failure");
+        assertEquals("old\n", Files.readString(destination));
+        assertNoTemporaryFiles(outputDir);
+    }
+
+    @Test
     public void rejectsFullyAndPartiallyUnmappedBoundsBeforeSecurityOrExporter()
             throws Exception {
         Path outputDir = temporaryFolder.newFolder("unmapped").toPath();
@@ -386,12 +436,36 @@ public class ExportServiceTest {
 
         assertEquals("POST", tool.method());
         assertEquals("export", tool.category());
+        assertFalse(tool.supportsDryRun());
         assertEquals(List.of("output_path", "start", "end", "overwrite", "program"),
             tool.params().stream().map(AnnotationScanner.ParamDescriptor::name).toList());
         assertEquals(List.of("body", "body", "body", "body", "query"),
             tool.params().stream().map(AnnotationScanner.ParamDescriptor::source).toList());
         assertFalse(tool.params().get(0).optional());
         assertEquals("false", tool.params().get(3).defaultValue());
+        assertTrue(tool.toJson(), tool.toJson().contains("\"supports_dry_run\": false"));
+    }
+
+    @Test
+    public void scannerRejectsExplicitUnsupportedDryRunBeforeFilesystemExport()
+            throws Exception {
+        Path outputDir = temporaryFolder.newFolder("unsupported-dry-run").toPath();
+        Path destination = outputDir.resolve("listing.asm");
+        RecordingExportRunner runner =
+            new RecordingExportRunner("must-not-write\n", true, Outcome.SUCCESS);
+        AnnotationScanner scanner = new AnnotationScanner(provider, service(runner));
+        EndpointDef endpoint = scanner.getEndpoints().stream()
+            .filter(candidate -> candidate.path().equals("/export_ascii_listing"))
+            .findFirst()
+            .orElseThrow();
+
+        Response response = endpoint.handler().handle(
+            Map.of("program", "fixture", "dry_run", "true"),
+            Map.of("output_path", destination.toString()));
+
+        assertErrorContains(response, "does not support dry_run");
+        assertFalse(runner.wasCalled());
+        assertFalse(Files.exists(destination));
     }
 
     private ExportService service(ExportService.ExportRunner runner) {
