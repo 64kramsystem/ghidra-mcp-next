@@ -21,7 +21,7 @@ Complete version history for the Ghidra MCP Server project.
 
 ### Changed
 
-- Streamlined ghidra-mcp around its local GUI/headless analysis stack, with 233 cataloged endpoints, schema discovery, TCP/UDS transports, and explicit multi-program selection.
+- Streamlined ghidra-mcp around its local GUI/headless analysis stack, with 234 cataloged endpoints, schema discovery, TCP/UDS transports, and explicit multi-program selection.
 - Made Maven the only Java build backend while retaining the uv-packaged
   Python bridge and setup commands.
 - Kept caller-supplied annotations unrestricted and retained generated-symbol
