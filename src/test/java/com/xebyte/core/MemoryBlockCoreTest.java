@@ -4,6 +4,7 @@ import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -14,6 +15,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.List;
+import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.Test;
@@ -305,6 +307,93 @@ public class MemoryBlockCoreTest {
                 response.toJson().contains("Program not found: missing"));
         }
         verify(current, never()).getMemory();
+    }
+
+    @Test
+    public void patchRevalidatesImplicitProgramInsideSerializedWrite()
+            throws Exception {
+        Program first = mock(Program.class);
+        Program second = mock(Program.class);
+        when(first.getName()).thenReturn("first");
+        when(second.getName()).thenReturn("second");
+        HeadlessProgramProvider provider = new HeadlessProgramProvider();
+        provider.setCurrentProgram(first);
+        ThreadingStrategy switching = new ThreadingStrategy() {
+            @Override
+            public <T> T executeRead(Callable<T> action)
+                    throws Exception {
+                return action.call();
+            }
+
+            @Override
+            public <T> T executeWrite(
+                    Program selected, String transactionName,
+                    Callable<T> action) throws Exception {
+                assertTrue(selected == first);
+                provider.setCurrentProgram(second);
+                return action.call();
+            }
+
+            @Override
+            public boolean isHeadless() {
+                return true;
+            }
+        };
+        MemoryBlockService service =
+            new MemoryBlockService(provider, switching);
+
+        Response response = service.patchBytes(
+            "1000", "aa", null, true, null,
+            false, false, "");
+
+        assertTrue(response.toJson(), response instanceof Response.Err);
+        assertTrue(
+            response.toJson(),
+            response.toJson().contains(
+                "selected program changed before patch transaction"));
+        verify(first, never()).getMemory();
+        verify(second, never()).getMemory();
+    }
+
+    @Test
+    public void patchResolvesImplicitProgramInsideSerializedRead()
+            throws Exception {
+        Program first = mock(Program.class);
+        Program second = mock(Program.class);
+        when(first.getName()).thenReturn("first");
+        when(second.getName()).thenReturn("second");
+        HeadlessProgramProvider provider = new HeadlessProgramProvider();
+        provider.setCurrentProgram(first);
+        ThreadingStrategy switching = new ThreadingStrategy() {
+            @Override
+            public <T> T executeRead(Callable<T> action)
+                    throws Exception {
+                provider.setCurrentProgram(second);
+                return action.call();
+            }
+
+            @Override
+            public <T> T executeWrite(
+                    Program selected, String transactionName,
+                    Callable<T> action) {
+                throw new AssertionError("write boundary not expected");
+            }
+
+            @Override
+            public boolean isHeadless() {
+                return true;
+            }
+        };
+        MemoryBlockService service =
+            new MemoryBlockService(provider, switching);
+
+        Response response = service.patchBytes(
+            "not_an_address", "aa", null, true, null,
+            false, true, "");
+
+        assertTrue(response.toJson(), response instanceof Response.Err);
+        verify(first, never()).getAddressFactory();
+        verify(second, atLeastOnce()).getAddressFactory();
     }
 
     @Test

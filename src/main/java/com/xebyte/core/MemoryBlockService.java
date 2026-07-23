@@ -55,6 +55,7 @@ public final class MemoryBlockService {
             security,
             fileReader,
             new MemoryBlockCore(),
+            new PatchBytesCore(),
             TaskMonitor.DUMMY);
     }
 
@@ -72,6 +73,7 @@ public final class MemoryBlockService {
             fileReader,
             core,
             new MemoryBlockLifecycleCore(),
+            new PatchBytesCore(),
             monitor);
     }
 
@@ -83,6 +85,45 @@ public final class MemoryBlockService {
             MemoryBlockCore core,
             MemoryBlockLifecycleCore lifecycle,
             TaskMonitor monitor) {
+        this(
+            programProvider,
+            threading,
+            security,
+            fileReader,
+            core,
+            lifecycle,
+            new PatchBytesCore(),
+            monitor);
+    }
+
+    MemoryBlockService(
+            ProgramProvider programProvider,
+            ThreadingStrategy threading,
+            SecurityConfig security,
+            MemoryBlockCore.FileReader fileReader,
+            MemoryBlockCore core,
+            PatchBytesCore patchCore,
+            TaskMonitor monitor) {
+        this(
+            programProvider,
+            threading,
+            security,
+            fileReader,
+            core,
+            new MemoryBlockLifecycleCore(),
+            patchCore,
+            monitor);
+    }
+
+    MemoryBlockService(
+            ProgramProvider programProvider,
+            ThreadingStrategy threading,
+            SecurityConfig security,
+            MemoryBlockCore.FileReader fileReader,
+            MemoryBlockCore core,
+            MemoryBlockLifecycleCore lifecycle,
+            PatchBytesCore patchCore,
+            TaskMonitor monitor) {
         this.programProvider =
             Objects.requireNonNull(programProvider, "programProvider");
         this.threading = Objects.requireNonNull(threading, "threading");
@@ -90,7 +131,8 @@ public final class MemoryBlockService {
         this.fileReader = Objects.requireNonNull(fileReader, "fileReader");
         this.core = Objects.requireNonNull(core, "core");
         this.lifecycle = Objects.requireNonNull(lifecycle, "lifecycle");
-        this.patchCore = new PatchBytesCore();
+        this.patchCore =
+            Objects.requireNonNull(patchCore, "patchCore");
         this.monitor = Objects.requireNonNull(monitor, "monitor");
     }
 
@@ -773,31 +815,42 @@ public final class MemoryBlockService {
                 description = "Target program name")
                 String programName) {
         try {
-            Program program = requireProgram(programName);
             if (dryRun) {
                 PatchBytesCore.Plan plan =
-                    threading.executeRead(() -> patchCore.plan(
-                        program,
-                        patchRequest(
-                            address, bytes, block,
-                            clearCodeUnits, expectedCurrent,
-                            allowReadonly),
-                        monitor));
+                    threading.executeRead(() -> {
+                        Program selected =
+                            requireProgram(programName);
+                        return patchCore.plan(
+                            selected,
+                            patchRequest(
+                                address, bytes, block,
+                                clearCodeUnits, expectedCurrent,
+                                allowReadonly),
+                            monitor);
+                    });
                 return Response.ok(
                     patchResult(plan, true, false));
             }
+            Program transactionProgram =
+                requireProgram(programName);
             return threading.executeWrite(
-                program,
+                transactionProgram,
                 "Patch program bytes",
                 () -> {
+                    Program selected =
+                        requireProgram(programName);
+                    if (selected != transactionProgram) {
+                        throw new IllegalStateException(
+                            "selected program changed before patch transaction");
+                    }
                     PatchBytesCore.Plan plan = patchCore.plan(
-                        program,
+                        selected,
                         patchRequest(
                             address, bytes, block,
                             clearCodeUnits, expectedCurrent,
                             allowReadonly),
                         monitor);
-                    patchCore.apply(program, plan, monitor);
+                    patchCore.apply(selected, plan, monitor);
                     return Response.ok(
                         patchResult(plan, false, true));
                 });
@@ -1013,7 +1066,7 @@ public final class MemoryBlockService {
             allowReadonly);
     }
 
-    private static JsonObject patchResult(
+    static JsonObject patchResult(
             PatchBytesCore.Plan plan,
             boolean dryRun,
             boolean committed) {
@@ -1068,7 +1121,16 @@ public final class MemoryBlockService {
     private static JsonArray codeUnitsJson(
             List<ListingClearCore.CodeUnitSnapshot> units) {
         JsonArray result = new JsonArray();
-        for (ListingClearCore.CodeUnitSnapshot unit : units) {
+        List<ListingClearCore.CodeUnitSnapshot> ordered =
+            units.stream()
+                .sorted(java.util.Comparator.comparing(
+                    ListingClearCore.CodeUnitSnapshot::start)
+                    .thenComparing(
+                        ListingClearCore.CodeUnitSnapshot::end)
+                    .thenComparing(
+                        unit -> unit.kind().name()))
+                .toList();
+        for (ListingClearCore.CodeUnitSnapshot unit : ordered) {
             JsonObject item = new JsonObject();
             item.addProperty(
                 "kind",
