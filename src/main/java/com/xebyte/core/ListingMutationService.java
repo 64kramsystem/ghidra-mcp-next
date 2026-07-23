@@ -62,6 +62,7 @@ public final class ListingMutationService {
 
     record SourceRules(
             List<String> preserved_label_sources,
+            String primary_label_state,
             List<String> preserved_outgoing_reference_sources,
             String incoming_references) {
     }
@@ -224,8 +225,7 @@ public final class ListingMutationService {
             }
             if (!dryRun && !execution.planned().plan().conflicts().isEmpty()) {
                 return Response.err(
-                    "Cannot clear instructions in functions unless "
-                        + "remove_intersecting_functions=true: "
+                    "Undefine range commit blocked by preflight conflicts: "
                         + String.join("; ",
                             execution.planned().plan().conflicts()));
             }
@@ -342,6 +342,9 @@ public final class ListingMutationService {
                 request.preservation().labels()
                     ? List.of("USER_DEFINED", "IMPORTED")
                     : List.of(),
+                "preserved when representable; a surviving preserved secondary "
+                    + "may be promoted when its removed ANALYSIS/DEFAULT primary "
+                    + "disappears",
                 request.preservation().userReferences()
                     ? List.of("USER_DEFINED", "IMPORTED")
                     : List.of(),

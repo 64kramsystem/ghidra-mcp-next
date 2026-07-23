@@ -1,13 +1,18 @@
 package com.xebyte.core;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.Deque;
+import java.util.IdentityHashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressRange;
@@ -232,6 +237,7 @@ final class ListingClearCore {
         }
 
         List<FunctionSnapshot> functions = new ArrayList<>();
+        List<Function> intersectingFunctions = new ArrayList<>();
         List<String> conflicts = new ArrayList<>();
         AddressSet selectedInstructions = new AddressSet();
         for (CodeUnitSnapshot unit : units) {
@@ -247,6 +253,7 @@ final class ListingClearCore {
                 FunctionSnapshot snapshot =
                     new FunctionSnapshot(function.getEntryPoint(), function.getName());
                 functions.add(snapshot);
+                intersectingFunctions.add(function);
                 if (!selection.removeIntersectingFunctions()) {
                     conflicts.add("instruction intersects function " + function.getName() +
                         " at " + function.getEntryPoint());
@@ -254,10 +261,14 @@ final class ListingClearCore {
             }
         }
         functions.sort(Comparator.comparing(FunctionSnapshot::entry));
-        conflicts.sort(String::compareTo);
         if (!selection.removeIntersectingFunctions()) {
             functions = List.of();
         }
+        else {
+            conflicts.addAll(preflightFunctionRemoval(
+                program, intersectingFunctions, expanded, preservation));
+        }
+        conflicts.sort(String::compareTo);
 
         AnnotationPartition annotationPartition =
             partitionAnnotations(program, expanded, preservation);
@@ -372,6 +383,129 @@ final class ListingClearCore {
             AnnotationSnapshot removed) {
     }
 
+    private static List<String> preflightFunctionRemoval(
+            Program program,
+            List<Function> functions,
+            AddressSetView expanded,
+            Preservation preservation) {
+        SymbolTable symbolTable = program.getSymbolTable();
+        ReferenceManager referenceManager = program.getReferenceManager();
+        Set<String> conflicts = new LinkedHashSet<>();
+
+        for (Function function : functions) {
+            Symbol functionSymbol = function.getSymbol();
+            if (functionSymbol != null) {
+                for (Symbol child :
+                        descendantSymbols(symbolTable, functionSymbol)) {
+                    if (child.isDynamic()
+                            || child.getSymbolType() != SymbolType.LABEL) {
+                        continue;
+                    }
+                    Address address = child.getAddress();
+                    boolean outside = address == null || !expanded.contains(address);
+                    boolean selectedForPreservation =
+                        preservation.labels()
+                            && isPreservedSource(child.getSource());
+                    if (outside || selectedForPreservation) {
+                        conflicts.add(
+                            "removing function " + function.getName() + " at "
+                                + function.getEntryPoint()
+                                + " would destroy function-local label "
+                                + child.getName() + " at " + address
+                                + (outside
+                                    ? " outside the affected range"
+                                    : " selected for exact preservation"));
+                    }
+                }
+            }
+
+            AddressSetView body = function.getBody();
+            if (body == null || body.isEmpty()) {
+                continue;
+            }
+            var sources =
+                referenceManager.getReferenceSourceIterator(body, true);
+            if (sources == null) {
+                continue;
+            }
+            while (sources.hasNext()) {
+                Address from = sources.next();
+                Reference[] references = referenceManager.getReferencesFrom(from);
+                if (references == null) {
+                    continue;
+                }
+                for (Reference reference : references) {
+                    boolean outside = !expanded.contains(from);
+                    boolean preservationRequired = outside
+                        || preservation.userReferences()
+                            && isPreservedSource(reference.getSource());
+                    Symbol associated = symbolTable.getSymbol(reference);
+                    boolean associationWouldBeLost =
+                        isFunctionOwned(associated, function)
+                            && preservationRequired;
+                    if (associationWouldBeLost) {
+                        conflicts.add(
+                            "removing function " + function.getName() + " at "
+                                + function.getEntryPoint()
+                                + " would destroy the function-variable association "
+                                + associated.getName() + " for reference from "
+                                + from + " operand " + reference.getOperandIndex()
+                                + (outside
+                                    ? " outside the affected range"
+                                    : " selected for exact preservation"));
+                    }
+                    if (outside && (reference.isStackReference()
+                            || reference.isRegisterReference())
+                            && !associationWouldBeLost) {
+                        conflicts.add(
+                            "removing function " + function.getName() + " at "
+                                + function.getEntryPoint()
+                                + " would destroy "
+                                + (reference.isStackReference()
+                                    ? "stack" : "register")
+                                + " reference from " + from + " operand "
+                                + reference.getOperandIndex()
+                                + " outside the affected range");
+                    }
+                }
+            }
+        }
+        return List.copyOf(conflicts);
+    }
+
+    private static List<Symbol> descendantSymbols(
+            SymbolTable symbolTable, Symbol root) {
+        List<Symbol> descendants = new ArrayList<>();
+        Deque<Symbol> pending = new ArrayDeque<>();
+        Set<Symbol> visited =
+            Collections.newSetFromMap(new IdentityHashMap<>());
+        pending.add(root);
+        visited.add(root);
+        while (!pending.isEmpty()) {
+            var children = symbolTable.getChildren(pending.removeFirst());
+            if (children == null) {
+                continue;
+            }
+            while (children.hasNext()) {
+                Symbol child = children.next();
+                if (child != null && visited.add(child)) {
+                    descendants.add(child);
+                    pending.addLast(child);
+                }
+            }
+        }
+        return descendants;
+    }
+
+    private static boolean isFunctionOwned(
+            Symbol symbol, Function function) {
+        if (symbol == null) {
+            return false;
+        }
+        return Objects.equals(symbol.getParentNamespace(), function)
+            || symbol.isDescendant(function);
+    }
+
     private static AnnotationPartition partitionAnnotations(
             Program program,
             AddressSetView expanded,
@@ -395,49 +529,64 @@ final class ListingClearCore {
         BookmarkManager bookmarkManager = program.getBookmarkManager();
         ReferenceManager referenceManager = program.getReferenceManager();
 
-        var addresses = expanded.getAddresses(true);
-        while (addresses.hasNext()) {
-            Address address = addresses.next();
-            Symbol[] atAddress = symbolTable.getSymbols(address);
-            if (atAddress != null) {
-                for (Symbol symbol : atAddress) {
-                    // Dynamic symbols are projections of surviving references, not
-                    // owned annotations. They may disappear and reappear as Ghidra
-                    // recomputes them, so neither preservation nor removal counts
-                    // claim them.
-                    if (symbol.isDynamic()
-                            || symbol.getSymbolType() != SymbolType.LABEL) {
-                        continue;
-                    }
-                    LabelSnapshot snapshot = new LabelSnapshot(
-                        address,
-                        symbol.getName(),
-                        symbol.getParentNamespace(),
-                        symbol.getSource(),
-                        symbol.getSymbolType(),
-                        symbol.isPrimary(),
-                        symbol.isPinned());
-                    if (preservation.labels() && !symbol.isDynamic()
-                            && isPreservedSource(symbol.getSource())) {
-                        preservedLabels.add(snapshot);
-                    }
-                    else {
-                        removedLabels.add(snapshot);
+        var symbols = symbolTable.getSymbols(
+            expanded, SymbolType.LABEL, true);
+        if (symbols != null) {
+            while (symbols.hasNext()) {
+                Symbol symbol = symbols.next();
+                // Dynamic symbols are projections of surviving references, not
+                // owned annotations. They may disappear and reappear as Ghidra
+                // recomputes them, so neither preservation nor removal counts
+                // claim them.
+                if (symbol == null || symbol.isDynamic()) {
+                    continue;
+                }
+                LabelSnapshot snapshot = new LabelSnapshot(
+                    symbol.getAddress(),
+                    symbol.getName(),
+                    symbol.getParentNamespace(),
+                    symbol.getSource(),
+                    symbol.getSymbolType(),
+                    symbol.isPrimary(),
+                    symbol.isPinned());
+                if (preservation.labels()
+                        && isPreservedSource(symbol.getSource())) {
+                    preservedLabels.add(snapshot);
+                }
+                else {
+                    removedLabels.add(snapshot);
+                }
+            }
+        }
+
+        var commentAddresses =
+            listing.getCommentAddressIterator(expanded, true);
+        if (commentAddresses != null) {
+            while (commentAddresses.hasNext()) {
+                Address address = commentAddresses.next();
+                for (CommentType type : CommentType.values()) {
+                    String text = listing.getComment(type, address);
+                    if (text != null) {
+                        (preservation.comments()
+                            ? preservedComments
+                            : removedComments).add(
+                                new CommentSnapshot(address, type, text));
                     }
                 }
             }
-            for (CommentType type : CommentType.values()) {
-                String text = listing.getComment(type, address);
-                if (text != null) {
-                    (preservation.comments()
-                        ? preservedComments
-                        : removedComments).add(
-                            new CommentSnapshot(address, type, text));
+        }
+
+        Iterator<Bookmark> bookmarkIterator =
+            bookmarkManager.getBookmarksIterator(
+                expanded.getMinAddress(), true);
+        if (bookmarkIterator != null) {
+            while (bookmarkIterator.hasNext()) {
+                Bookmark bookmark = bookmarkIterator.next();
+                Address address = bookmark.getAddress();
+                if (address.compareTo(expanded.getMaxAddress()) > 0) {
+                    break;
                 }
-            }
-            Bookmark[] bookmarksAtAddress = bookmarkManager.getBookmarks(address);
-            if (bookmarksAtAddress != null) {
-                for (Bookmark bookmark : bookmarksAtAddress) {
+                if (expanded.contains(address)) {
                     (preservation.bookmarks()
                         ? preservedBookmarks
                         : removedBookmarks).add(new BookmarkSnapshot(
@@ -447,8 +596,18 @@ final class ListingClearCore {
                             bookmark.getComment()));
                 }
             }
-            Reference[] fromAddress = referenceManager.getReferencesFrom(address);
-            if (fromAddress != null) {
+        }
+
+        var referenceSources =
+            referenceManager.getReferenceSourceIterator(expanded, true);
+        if (referenceSources != null) {
+            while (referenceSources.hasNext()) {
+                Address address = referenceSources.next();
+                Reference[] fromAddress =
+                    referenceManager.getReferencesFrom(address);
+                if (fromAddress == null) {
+                    continue;
+                }
                 for (Reference reference : fromAddress) {
                     ReferenceSnapshot snapshot = snapshot(reference);
                     if (preservation.userReferences()
@@ -461,7 +620,6 @@ final class ListingClearCore {
                 }
             }
         }
-
         Comparator<LabelSnapshot> labelOrder = Comparator.comparing(LabelSnapshot::address)
             .thenComparing(LabelSnapshot::name)
             .thenComparing(label -> label.source().name());
@@ -576,9 +734,9 @@ final class ListingClearCore {
     private static void removeOutgoingReferences(
             Program program, AddressSetView affected) {
         ReferenceManager manager = program.getReferenceManager();
-        var addresses = affected.getAddresses(true);
-        while (addresses.hasNext()) {
-            manager.removeAllReferencesFrom(addresses.next());
+        for (AddressRange range : affected) {
+            manager.removeAllReferencesFrom(
+                range.getMinAddress(), range.getMaxAddress());
         }
     }
 
@@ -662,8 +820,16 @@ final class ListingClearCore {
         SymbolTable table = program.getSymbolTable();
         for (LabelSnapshot label : labels) {
             Namespace namespace = label.namespace();
-            if (namespace == null || namespace instanceof Function function && function.isDeleted()) {
-                namespace = program.getGlobalNamespace();
+            if (namespace == null) {
+                throw new IllegalStateException(
+                    "cannot restore label " + label.name() + " at "
+                        + label.address() + " without its exact namespace");
+            }
+            if (namespace instanceof Function function && function.isDeleted()) {
+                throw new IllegalStateException(
+                    "cannot restore label " + label.name() + " at "
+                        + label.address() + " because its function namespace "
+                        + function.getName() + " was removed");
             }
             Symbol symbol = table.getSymbol(label.name(), label.address(), namespace);
             if (symbol == null) {

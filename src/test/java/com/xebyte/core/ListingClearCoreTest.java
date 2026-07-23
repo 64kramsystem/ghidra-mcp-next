@@ -13,6 +13,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.util.Collections;
+import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 
@@ -200,6 +201,41 @@ public class ListingClearCoreTest {
     }
 
     @Test
+    public void functionRemovalPreflightsLabelsInNestedFunctionNamespaces() {
+        Address start = RAM.getAddress(0x1150);
+        Address outside = RAM.getAddress(0x1160);
+        Instruction instruction = unit(Instruction.class, start, start);
+        Fixture fixture = fixture(List.of(instruction));
+        Function function = mock(Function.class);
+        Symbol functionSymbol = mock(Symbol.class);
+        Symbol nestedNamespace = mock(Symbol.class);
+        Symbol nestedLabel =
+            symbol("nested_local", outside, SourceType.ANALYSIS);
+        when(nestedNamespace.getSymbolType()).thenReturn(SymbolType.NAMESPACE);
+        when(function.getEntryPoint()).thenReturn(start);
+        when(function.getName()).thenReturn("routine");
+        when(function.getSymbol()).thenReturn(functionSymbol);
+        when(fixture.symbols().getChildren(functionSymbol))
+            .thenReturn(symbolIterator(List.of(nestedNamespace).iterator()));
+        when(fixture.symbols().getChildren(nestedNamespace))
+            .thenReturn(symbolIterator(List.of(nestedLabel).iterator()));
+        when(fixture.symbols().getChildren(nestedLabel))
+            .thenReturn(symbolIterator(Collections.emptyIterator()));
+        when(fixture.functions().getFunctionsOverlapping(
+            any(AddressSetView.class))).thenReturn(List.of(function).iterator());
+
+        ListingClearCore.Plan plan = new ListingClearCore().plan(
+            fixture.program(), new AddressSet(start, start),
+            new ListingClearCore.Selection(true, false, true),
+            new ListingClearCore.Preservation(false, false, false, false));
+
+        assertEquals(1, plan.conflicts().size());
+        assertTrue(plan.conflicts().get(0).contains("nested_local"));
+        assertTrue(plan.conflicts().get(0).contains(
+            "outside the affected range"));
+    }
+
+    @Test
     public void capturesOnlyPreservedSourcesAndAllCommentAndBookmarkTypes() {
         Address start = RAM.getAddress(0x1200);
         Address end = RAM.getAddress(0x1200);
@@ -268,6 +304,7 @@ public class ListingClearCoreTest {
             .thenReturn(new Symbol[] { user, imported, analysis, defaultSymbol, dynamic });
         when(fixture.listing().getComment(CommentType.EOL, start)).thenReturn("comment");
         Bookmark bookmark = mock(Bookmark.class);
+        when(bookmark.getAddress()).thenReturn(start);
         when(bookmark.getTypeString()).thenReturn("NOTE");
         when(bookmark.getCategory()).thenReturn("review");
         when(bookmark.getComment()).thenReturn("bookmark");
@@ -334,6 +371,63 @@ public class ListingClearCoreTest {
     }
 
     @Test
+    public void largeSparseRangeUsesSparseAnnotationIteratorsAndRangeReferenceRemoval()
+            throws Exception {
+        Address start = RAM.getAddress(0x2000);
+        Address end = RAM.getAddress(0x2fff);
+        Data data = unit(Data.class, start, end);
+        Listing listing = mock(Listing.class);
+        when(listing.getInstructionContaining(start)).thenReturn(null);
+        when(listing.getInstructionContaining(end)).thenReturn(null);
+        when(listing.getDefinedDataContaining(start)).thenReturn(data);
+        when(listing.getDefinedDataContaining(end)).thenReturn(data);
+        when(listing.getInstructions(any(AddressSetView.class), eq(true)))
+            .thenReturn(instructionIterator(Collections.emptyIterator()));
+        when(listing.getDefinedData(any(AddressSetView.class), eq(true)))
+            .thenReturn(dataIterator(List.of(data).iterator()));
+        when(listing.getCommentAddressIterator(
+            any(AddressSetView.class), eq(true)))
+            .thenReturn(addressIterator(Collections.emptyIterator()));
+
+        FunctionManager functions = mock(FunctionManager.class);
+        when(functions.getFunctionsOverlapping(any(AddressSetView.class)))
+            .thenReturn(Collections.emptyIterator());
+        SymbolTable symbols = mock(SymbolTable.class);
+        when(symbols.getSymbols(
+            any(AddressSetView.class), eq(SymbolType.LABEL), eq(true)))
+            .thenReturn(symbolIterator(Collections.emptyIterator()));
+        ReferenceManager references = mock(ReferenceManager.class);
+        when(references.getReferenceSourceIterator(
+            any(AddressSetView.class), eq(true)))
+            .thenReturn(addressIterator(Collections.emptyIterator()));
+        BookmarkManager bookmarks = mock(BookmarkManager.class);
+        when(bookmarks.getBookmarksIterator(start, true))
+            .thenReturn(Collections.emptyIterator());
+
+        Program program = mock(Program.class);
+        when(program.getListing()).thenReturn(listing);
+        when(program.getFunctionManager()).thenReturn(functions);
+        when(program.getSymbolTable()).thenReturn(symbols);
+        when(program.getReferenceManager()).thenReturn(references);
+        when(program.getBookmarkManager()).thenReturn(bookmarks);
+
+        ListingClearCore core = new ListingClearCore();
+        ListingClearCore.Plan plan = core.plan(
+            program, new AddressSet(start, end),
+            new ListingClearCore.Selection(false, true, false),
+            ListingClearCore.Preservation.defaults());
+        core.apply(program, plan);
+
+        verify(symbols, never()).getSymbols(any(Address.class));
+        verify(listing, never()).getComment(
+            any(CommentType.class), any(Address.class));
+        verify(bookmarks, never()).getBookmarks(any(Address.class));
+        verify(references, never()).getReferencesFrom(any(Address.class));
+        verify(references, never()).removeAllReferencesFrom(any(Address.class));
+        verify(references).removeAllReferencesFrom(start, end);
+    }
+
+    @Test
     public void applyDeletesOnlyPlannedCommentsBookmarksAndOutgoingReferences()
             throws Exception {
         Address start = RAM.getAddress(0x13a0);
@@ -341,6 +435,7 @@ public class ListingClearCoreTest {
         Fixture fixture = fixture(List.of(unit(Data.class, start, start)));
         when(fixture.listing().getComment(CommentType.EOL, start)).thenReturn("remove");
         Bookmark bookmark = mock(Bookmark.class);
+        when(bookmark.getAddress()).thenReturn(start);
         when(bookmark.getTypeString()).thenReturn("NOTE");
         when(bookmark.getCategory()).thenReturn("review");
         when(bookmark.getComment()).thenReturn("remove");
@@ -360,7 +455,7 @@ public class ListingClearCoreTest {
 
         verify(fixture.listing()).setComment(start, CommentType.EOL, null);
         verify(fixture.bookmarks()).removeBookmark(bookmark);
-        verify(fixture.references()).removeAllReferencesFrom(start);
+        verify(fixture.references()).removeAllReferencesFrom(start, start);
         verify(fixture.references(), never()).removeAllReferencesTo(any(Address.class));
     }
 
@@ -432,6 +527,7 @@ public class ListingClearCoreTest {
 
         when(fixture.listing().getComment(CommentType.EOL, start)).thenReturn("comment");
         Bookmark bookmark = mock(Bookmark.class);
+        when(bookmark.getAddress()).thenReturn(start);
         when(bookmark.getTypeString()).thenReturn("NOTE");
         when(bookmark.getCategory()).thenReturn("review");
         when(bookmark.getComment()).thenReturn("keep");
@@ -471,6 +567,40 @@ public class ListingClearCoreTest {
         verify(fixture.references()).addMemoryReference(
             start, target, RefType.DATA, SourceType.USER_DEFINED, 0);
         verify(fixture.references()).setPrimary(restoredReference, true);
+    }
+
+    @Test
+    public void deletedFunctionNamespaceNeverFallsBackToGlobal()
+            throws Exception {
+        Address start = RAM.getAddress(0x1470);
+        Fixture fixture = fixture(List.of());
+        Function deletedFunction = mock(Function.class);
+        when(deletedFunction.isDeleted()).thenReturn(true);
+        when(deletedFunction.getName()).thenReturn("removed_routine");
+        ListingClearCore.LabelSnapshot local =
+            new ListingClearCore.LabelSnapshot(
+                start, "local_label", deletedFunction,
+                SourceType.USER_DEFINED, SymbolType.LABEL, true, false);
+        ListingClearCore.Plan plan = new ListingClearCore.Plan(
+            new AddressSet(),
+            List.of(),
+            List.of(),
+            new ListingClearCore.AnnotationSnapshot(
+                List.of(local), List.of(), List.of(), List.of()),
+            new ListingClearCore.AnnotationSnapshot(
+                List.of(), List.of(), List.of(), List.of()),
+            java.util.Map.of(),
+            new ListingClearCore.RemovalCounts(0, 0, 0),
+            List.of());
+
+        IllegalStateException error = assertThrows(
+            IllegalStateException.class,
+            () -> new ListingClearCore().apply(fixture.program(), plan));
+
+        assertTrue(error.getMessage().contains("function namespace"));
+        verify(fixture.symbols(), never()).createLabel(
+            start, "local_label", fixture.program().getGlobalNamespace(),
+            SourceType.USER_DEFINED);
     }
 
     @Test
@@ -588,6 +718,69 @@ public class ListingClearCoreTest {
         SymbolTable symbols = mock(SymbolTable.class);
         ReferenceManager references = mock(ReferenceManager.class);
         BookmarkManager bookmarks = mock(BookmarkManager.class);
+        when(symbols.getSymbols(
+            any(AddressSetView.class), eq(SymbolType.LABEL), eq(true)))
+            .thenAnswer(invocation -> {
+                AddressSetView requested = invocation.getArgument(0);
+                List<Symbol> found = new ArrayList<>();
+                for (Address address : unitAddresses(units)) {
+                    if (!requested.contains(address)) {
+                        continue;
+                    }
+                    Symbol[] atAddress = symbols.getSymbols(address);
+                    if (atAddress != null) {
+                        Collections.addAll(found, atAddress);
+                    }
+                }
+                return symbolIterator(found.iterator());
+            });
+        when(listing.getCommentAddressIterator(
+            any(AddressSetView.class), eq(true)))
+            .thenAnswer(invocation -> {
+                AddressSetView requested = invocation.getArgument(0);
+                List<Address> found = new ArrayList<>();
+                for (Address address : unitAddresses(units)) {
+                    if (!requested.contains(address)) {
+                        continue;
+                    }
+                    for (CommentType type : CommentType.values()) {
+                        if (listing.getComment(type, address) != null) {
+                            found.add(address);
+                            break;
+                        }
+                    }
+                }
+                return addressIterator(found.iterator());
+            });
+        when(references.getReferenceSourceIterator(
+            any(AddressSetView.class), eq(true)))
+            .thenAnswer(invocation -> {
+                AddressSetView requested = invocation.getArgument(0);
+                List<Address> found = new ArrayList<>();
+                for (Address address : unitAddresses(units)) {
+                    Reference[] from = references.getReferencesFrom(address);
+                    if (requested.contains(address)
+                            && from != null && from.length > 0) {
+                        found.add(address);
+                    }
+                }
+                return addressIterator(found.iterator());
+            });
+        when(bookmarks.getBookmarksIterator(any(Address.class), eq(true)))
+            .thenAnswer(invocation -> {
+                Address first = invocation.getArgument(0);
+                List<Bookmark> found = new ArrayList<>();
+                for (Address address : unitAddresses(units)) {
+                    if (address.compareTo(first) < 0) {
+                        continue;
+                    }
+                    Bookmark[] atAddress = bookmarks.getBookmarks(address);
+                    if (atAddress != null) {
+                        Collections.addAll(found, atAddress);
+                    }
+                }
+                return found.iterator();
+            });
 
         Program program = mock(Program.class);
         when(program.getListing()).thenReturn(listing);
@@ -597,6 +790,19 @@ public class ListingClearCoreTest {
         when(program.getBookmarkManager()).thenReturn(bookmarks);
         when(program.getGlobalNamespace()).thenReturn(mock(Namespace.class));
         return new Fixture(program, listing, functions, symbols, references, bookmarks);
+    }
+
+    private static List<Address> unitAddresses(
+            List<? extends CodeUnit> units) {
+        List<Address> addresses = new ArrayList<>();
+        for (CodeUnit unit : units) {
+            Address current = unit.getMinAddress();
+            while (current.compareTo(unit.getMaxAddress()) <= 0) {
+                addresses.add(current);
+                current = current.next();
+            }
+        }
+        return addresses;
     }
 
     private record Fixture(
@@ -643,6 +849,46 @@ public class ListingClearCoreTest {
 
             @Override
             public Iterator<Data> iterator() {
+                return this;
+            }
+        };
+    }
+
+    private static AddressIterator addressIterator(
+            Iterator<? extends Address> delegate) {
+        return new AddressIterator() {
+            @Override
+            public boolean hasNext() {
+                return delegate.hasNext();
+            }
+
+            @Override
+            public Address next() {
+                return delegate.next();
+            }
+
+            @Override
+            public Iterator<Address> iterator() {
+                return this;
+            }
+        };
+    }
+
+    private static ghidra.program.model.symbol.SymbolIterator symbolIterator(
+            Iterator<? extends Symbol> delegate) {
+        return new ghidra.program.model.symbol.SymbolIterator() {
+            @Override
+            public boolean hasNext() {
+                return delegate.hasNext();
+            }
+
+            @Override
+            public Symbol next() {
+                return delegate.next();
+            }
+
+            @Override
+            public Iterator<Symbol> iterator() {
                 return this;
             }
         };

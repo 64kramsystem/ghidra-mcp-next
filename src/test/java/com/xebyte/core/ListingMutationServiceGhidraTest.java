@@ -39,9 +39,12 @@ import ghidra.program.model.data.ArrayDataType;
 import ghidra.program.model.data.ByteDataType;
 import ghidra.program.model.listing.Bookmark;
 import ghidra.program.model.listing.CommentType;
+import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.Program;
+import ghidra.program.model.lang.Register;
 import ghidra.program.model.mem.Memory;
 import ghidra.program.model.symbol.RefType;
+import ghidra.program.model.symbol.Reference;
 import ghidra.program.model.symbol.SourceType;
 import ghidra.program.model.symbol.Symbol;
 
@@ -156,7 +159,7 @@ public class ListingMutationServiceGhidraTest {
 
         assertTrue(response.toJson(), response instanceof Response.Err);
         assertTrue(response.toJson(), response.toJson().contains(
-            "remove_intersecting_functions=true"));
+            "blocked by preflight conflicts"));
         assertTrue(response.toJson(), response.toJson().contains("routine"));
         assertEquals(0, applyCalls.get());
         assertEquals(1, threading.writeCalls);
@@ -383,6 +386,15 @@ public class ListingMutationServiceGhidraTest {
                     liveProgram.getSymbolTable().createLabel(
                         builder.addr("0x1001"), "analysis_inside",
                         SourceType.ANALYSIS);
+                    Symbol promoted = liveProgram.getSymbolTable().createLabel(
+                        builder.addr("0x1005"), "promoted_survivor",
+                        SourceType.USER_DEFINED);
+                    Symbol removedPrimary =
+                        liveProgram.getSymbolTable().createLabel(
+                            builder.addr("0x1005"), "removed_primary",
+                            SourceType.ANALYSIS);
+                    removedPrimary.setPrimary();
+                    assertFalse(promoted.isPrimary());
                     for (CommentType type : CommentType.values()) {
                         liveProgram.getListing().setComment(
                             builder.addr("0x1001"), type,
@@ -434,7 +446,7 @@ public class ListingMutationServiceGhidraTest {
             assertTrue(commitJson.get("committed").getAsBoolean());
             assertEquals(3,
                 previewJson.getAsJsonArray("affected_code_units").size());
-            assertEquals(2, previewJson.getAsJsonObject(
+            assertEquals(3, previewJson.getAsJsonObject(
                 "preserved_annotation_counts").get("labels").getAsInt());
             assertEquals(CommentType.values().length, previewJson.getAsJsonObject(
                 "preserved_annotation_counts").get("comments").getAsInt());
@@ -446,6 +458,12 @@ public class ListingMutationServiceGhidraTest {
                 "removed_references_by_source_type").get("ANALYSIS").getAsInt());
             assertEquals(1, previewJson.getAsJsonObject(
                 "removed_references_by_source_type").get("DEFAULT").getAsInt());
+            assertEquals(
+                "preserved when representable; a surviving preserved secondary "
+                    + "may be promoted when its removed ANALYSIS/DEFAULT primary "
+                    + "disappears",
+                previewJson.getAsJsonObject("source_rules")
+                    .get("primary_label_state").getAsString());
 
             assertNull(liveProgram.getListing()
                 .getInstructionContaining(builder.addr("0x1001")));
@@ -455,14 +473,26 @@ public class ListingMutationServiceGhidraTest {
                 .getInstructionAt(builder.addr("0x1002")));
             assertNull(liveProgram.getFunctionManager()
                 .getFunctionAt(builder.addr("0x1000")));
-            assertNotNull(liveProgram.getSymbolTable().getSymbol(
+            Symbol restoredUser = liveProgram.getSymbolTable().getSymbol(
                 "user_inside", builder.addr("0x1001"),
-                liveProgram.getGlobalNamespace()));
-            assertNotNull(liveProgram.getSymbolTable().getSymbol(
+                liveProgram.getGlobalNamespace());
+            Symbol restoredImported = liveProgram.getSymbolTable().getSymbol(
                 "imported_inside", builder.addr("0x1001"),
-                liveProgram.getGlobalNamespace()));
+                liveProgram.getGlobalNamespace());
+            assertNotNull(restoredUser);
+            assertNotNull(restoredImported);
+            assertTrue(restoredUser.isPrimary());
+            assertFalse(restoredImported.isPrimary());
             assertNull(liveProgram.getSymbolTable().getSymbol(
                 "analysis_inside", builder.addr("0x1001"),
+                liveProgram.getGlobalNamespace()));
+            Symbol promotedSurvivor = liveProgram.getSymbolTable().getSymbol(
+                "promoted_survivor", builder.addr("0x1005"),
+                liveProgram.getGlobalNamespace());
+            assertNotNull(promotedSurvivor);
+            assertTrue(promotedSurvivor.isPrimary());
+            assertNull(liveProgram.getSymbolTable().getSymbol(
+                "removed_primary", builder.addr("0x1005"),
                 liveProgram.getGlobalNamespace()));
             for (CommentType type : CommentType.values()) {
                 assertEquals(
@@ -584,6 +614,14 @@ public class ListingMutationServiceGhidraTest {
             builder.createLabel("0x3001", "rollback_label");
             builder.createComment(
                 "0x3001", "rollback comment", CommentType.EOL);
+            builder.withTransaction(() -> {
+                liveProgram.getBookmarkManager().setBookmark(
+                    builder.addr("0x3001"), "NOTE", "rollback",
+                    "rollback bookmark");
+                addReference(
+                    liveProgram, builder, "0x3001", "0x3003", 0,
+                    SourceType.USER_DEFINED);
+            });
             ListingClearCore core = new ListingClearCore();
             HeadlessProgramProvider provider = new HeadlessProgramProvider();
             provider.setCurrentProgram(liveProgram);
@@ -611,6 +649,165 @@ public class ListingMutationServiceGhidraTest {
                 liveProgram.getGlobalNamespace()));
             assertEquals("rollback comment", liveProgram.getListing().getComment(
                 CommentType.EOL, builder.addr("0x3001")));
+            Bookmark[] bookmarks = liveProgram.getBookmarkManager()
+                .getBookmarks(builder.addr("0x3001"));
+            assertEquals(1, bookmarks.length);
+            assertEquals("NOTE", bookmarks[0].getTypeString());
+            assertEquals("rollback", bookmarks[0].getCategory());
+            assertEquals("rollback bookmark", bookmarks[0].getComment());
+            Reference[] references = liveProgram.getReferenceManager()
+                .getReferencesFrom(builder.addr("0x3001"));
+            assertEquals(1, references.length);
+            assertEquals(builder.addr("0x3003"), references[0].getToAddress());
+            assertEquals(SourceType.USER_DEFINED, references[0].getSource());
+        }
+        finally {
+            builder.dispose();
+        }
+    }
+
+    @Test
+    public void liveFunctionRemovalRejectsLocalLabelsAndCollateralReferences()
+            throws Exception {
+        initializeGhidraOrSkip();
+        ProgramBuilder builder =
+            new ProgramBuilder("undefine-function-collateral-6502",
+                "6502:LE:16:default", "default", this);
+        try {
+            ProgramDB liveProgram = builder.getProgram();
+            builder.createMemory(".ram", "0x4000", 0x20);
+            builder.setBytes(
+                "0x4000",
+                "ea ea 60 ea ea ea ea ea ea ea ea ea ea ea ea ea "
+                    + "ea ea ea ea ea ea ea ea ea ea ea ea ea ea ea ea");
+            builder.disassemble("0x4000", 3);
+            builder.createFunction("0x4000");
+            AtomicReference<Symbol> selectedLocal = new AtomicReference<>();
+            AtomicReference<Symbol> outsideLocal = new AtomicReference<>();
+            builder.withTransaction(() -> {
+                try {
+                    Function function = liveProgram.getFunctionManager()
+                        .getFunctionAt(builder.addr("0x4000"));
+                    selectedLocal.set(liveProgram.getSymbolTable().createLabel(
+                        builder.addr("0x4000"), "selected_local", function,
+                        SourceType.USER_DEFINED));
+                    outsideLocal.set(liveProgram.getSymbolTable().createLabel(
+                        builder.addr("0x4001"), "outside_local", function,
+                        SourceType.USER_DEFINED));
+                    function.getStackFrame().createVariable(
+                        "stack_local", -2, ByteDataType.dataType,
+                        SourceType.USER_DEFINED);
+                    liveProgram.getReferenceManager().addStackReference(
+                        builder.addr("0x4001"), 0, -2, RefType.DATA,
+                        SourceType.USER_DEFINED);
+                    Register register = liveProgram.getRegister("A");
+                    assertNotNull(register);
+                    liveProgram.getReferenceManager().addRegisterReference(
+                        builder.addr("0x4002"), 1, register, RefType.DATA,
+                        SourceType.IMPORTED);
+                }
+                catch (Exception exception) {
+                    throw new AssertionError(exception);
+                }
+            });
+
+            ListingMutationService service = liveService(liveProgram);
+            Response bothLabels = service.undefineRange(
+                "0x4000", "0x4000",
+                true, false,
+                true, true, true, false,
+                true, true, "");
+            assertFalse(bothLabels.toJson(), bothLabels instanceof Response.Err);
+            JsonObject bothJson =
+                JsonParser.parseString(bothLabels.toJson()).getAsJsonObject();
+            assertEquals(4, bothJson.getAsJsonArray("conflicts").size());
+
+            Response outsideOnly = service.undefineRange(
+                "0x4000", "0x4000",
+                true, false,
+                false, true, true, false,
+                true, true, "");
+            assertFalse(outsideOnly.toJson(), outsideOnly instanceof Response.Err);
+            assertEquals(3, JsonParser.parseString(outsideOnly.toJson())
+                .getAsJsonObject().getAsJsonArray("conflicts").size());
+
+            builder.withTransaction(() -> outsideLocal.get().delete());
+            Response selectedOnly = service.undefineRange(
+                "0x4000", "0x4000",
+                true, false,
+                true, true, true, false,
+                true, true, "");
+            assertFalse(selectedOnly.toJson(), selectedOnly instanceof Response.Err);
+            assertEquals(3, JsonParser.parseString(selectedOnly.toJson())
+                .getAsJsonObject().getAsJsonArray("conflicts").size());
+
+            builder.withTransaction(() -> selectedLocal.get().delete());
+            Response stackConflict = service.undefineRange(
+                "0x4000", "0x4000",
+                true, false,
+                true, true, true, false,
+                true, true, "");
+            JsonObject stackConflictJson =
+                JsonParser.parseString(stackConflict.toJson()).getAsJsonObject();
+            assertEquals(2,
+                stackConflictJson.getAsJsonArray("conflicts").size());
+            assertTrue(stackConflictJson.getAsJsonArray("conflicts").toString()
+                .contains("function-variable association"));
+            assertTrue(stackConflictJson.getAsJsonArray("conflicts").toString()
+                .contains("register reference"));
+
+            Response rejectedCommit = service.undefineRange(
+                "0x4000", "0x4000",
+                true, false,
+                true, true, true, false,
+                true, false, "");
+            assertTrue(rejectedCommit.toJson(),
+                rejectedCommit instanceof Response.Err);
+            assertNotNull(liveProgram.getFunctionManager()
+                .getFunctionAt(builder.addr("0x4000")));
+            assertNotNull(liveProgram.getListing()
+                .getInstructionAt(builder.addr("0x4000")));
+            assertEquals(1, liveProgram.getReferenceManager()
+                .getReferencesFrom(builder.addr("0x4001")).length);
+            assertEquals(1, liveProgram.getReferenceManager()
+                .getReferencesFrom(builder.addr("0x4002")).length);
+
+            builder.withTransaction(() -> {
+                for (Reference reference : liveProgram.getReferenceManager()
+                        .getReferencesFrom(builder.addr("0x4001"))) {
+                    liveProgram.getReferenceManager().delete(reference);
+                }
+                for (Reference reference : liveProgram.getReferenceManager()
+                        .getReferencesFrom(builder.addr("0x4002"))) {
+                    liveProgram.getReferenceManager().delete(reference);
+                }
+            });
+
+            Response preview = service.undefineRange(
+                "0x4000", "0x4000",
+                true, false,
+                true, true, true, false,
+                true, true, "");
+            Response commit = service.undefineRange(
+                "0x4000", "0x4000",
+                true, false,
+                true, true, true, false,
+                true, false, "");
+            assertFalse(preview.toJson(), preview instanceof Response.Err);
+            assertFalse(commit.toJson(), commit instanceof Response.Err);
+            JsonObject previewJson =
+                JsonParser.parseString(preview.toJson()).getAsJsonObject();
+            assertTrue(previewJson.getAsJsonArray("conflicts").isEmpty());
+            assertNull(liveProgram.getFunctionManager()
+                .getFunctionAt(builder.addr("0x4000")));
+            assertNull(liveProgram.getListing()
+                .getInstructionAt(builder.addr("0x4000")));
+            assertNotNull(liveProgram.getListing()
+                .getInstructionAt(builder.addr("0x4001")));
+            assertEquals(0, liveProgram.getReferenceManager()
+                .getReferencesFrom(builder.addr("0x4001")).length);
+            assertEquals(0, liveProgram.getReferenceManager()
+                .getReferencesFrom(builder.addr("0x4002")).length);
         }
         finally {
             builder.dispose();
