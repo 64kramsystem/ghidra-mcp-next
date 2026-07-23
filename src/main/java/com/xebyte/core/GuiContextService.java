@@ -58,28 +58,28 @@ public final class GuiContextService {
 
         ProgramSelection currentSelection();
 
+        List<Program> openPrograms();
+
         Navigation navigationFor(Program program);
     }
 
     private final GuiAccess gui;
-    private final ProgramProvider programProvider;
     private final ThreadingStrategy threading;
 
     public GuiContextService(
             Supplier<PluginTool> toolSupplier,
-            ProgramProvider programProvider) {
+            ProgramProvider ignoredProgramProvider) {
         this(
             new ToolGuiAccess(toolSupplier),
-            programProvider,
+            ignoredProgramProvider,
             new SwingThreadingStrategy());
     }
 
     GuiContextService(
             GuiAccess gui,
-            ProgramProvider programProvider,
+            ProgramProvider ignoredProgramProvider,
             ThreadingStrategy threading) {
         this.gui = gui;
-        this.programProvider = programProvider;
         this.threading = threading;
     }
 
@@ -225,12 +225,12 @@ public final class GuiContextService {
             if (guiProgram != null) {
                 return guiProgram;
             }
-            return programProvider.getCurrentProgram();
+            return null;
         }
 
         String requested = selector.trim();
         List<Program> nameMatches = new ArrayList<>();
-        for (Program program : programProvider.getAllOpenPrograms()) {
+        for (Program program : gui.openPrograms()) {
             if (requested.equalsIgnoreCase(programIdentity(program))) {
                 return program;
             }
@@ -247,9 +247,6 @@ public final class GuiContextService {
             location != null && location.getProgram() != null
                 ? location.getProgram()
                 : gui.currentProgram();
-        if (program == null) {
-            program = programProvider.getCurrentProgram();
-        }
         Address address =
             location != null && location.getProgram() == program
                 ? location.getAddress()
@@ -368,6 +365,26 @@ public final class GuiContextService {
         public ProgramSelection currentSelection() {
             CodeViewerService viewer = codeViewer();
             return viewer != null ? viewer.getCurrentSelection() : null;
+        }
+
+        @Override
+        public List<Program> openPrograms() {
+            List<Program> result = new ArrayList<>();
+            Set<Program> seen =
+                Collections.newSetFromMap(new IdentityHashMap<>());
+            for (PluginTool tool : availableTools()) {
+                ProgramManager manager =
+                    tool.getService(ProgramManager.class);
+                if (manager == null) {
+                    continue;
+                }
+                for (Program program : manager.getAllOpenPrograms()) {
+                    if (program != null && seen.add(program)) {
+                        result.add(program);
+                    }
+                }
+            }
+            return List.copyOf(result);
         }
 
         @Override
