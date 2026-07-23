@@ -73,6 +73,8 @@ public class ServerManager {
             ExportService exportService = new ExportService(programProvider);
             FlowDisassemblyService flowDisassemblyService =
                 new FlowDisassemblyService(programProvider, ts);
+            ListingRangeService listingRangeService =
+                new ListingRangeService(programProvider);
             DebuggerService debuggerService = new DebuggerService(programProvider, ts, tool);
             GuiProjectService guiProjectService = new GuiProjectService(this::getActiveTool);
 
@@ -81,6 +83,7 @@ public class ServerManager {
                 xrefCallGraphService, dataTypeService, analysisService,
                 binaryComparisonService, malwareSecurityService, programScriptService,
                 emulationService, exportService, flowDisassemblyService,
+                listingRangeService,
                 debuggerService, guiProjectService);
 
             startServer(scanner);

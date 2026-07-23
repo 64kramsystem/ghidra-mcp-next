@@ -60,6 +60,7 @@ public class HeadlessEndpointHandler {
     private final com.xebyte.core.EmulationService emulationService;
     private final com.xebyte.core.ExportService exportService;
     private final com.xebyte.core.FlowDisassemblyService flowDisassemblyService;
+    private final com.xebyte.core.ListingRangeService listingRangeService;
 
     public HeadlessEndpointHandler(ProgramProvider programProvider, ThreadingStrategy threadingStrategy) {
         this.programProvider = programProvider;
@@ -81,6 +82,8 @@ public class HeadlessEndpointHandler {
         this.exportService = new com.xebyte.core.ExportService(programProvider);
         this.flowDisassemblyService =
             new com.xebyte.core.FlowDisassemblyService(programProvider, threadingStrategy);
+        this.listingRangeService =
+            new com.xebyte.core.ListingRangeService(programProvider);
     }
 
     // ==========================================================================
@@ -101,6 +104,9 @@ public class HeadlessEndpointHandler {
     public com.xebyte.core.ExportService getExportService() { return exportService; }
     public com.xebyte.core.FlowDisassemblyService getFlowDisassemblyService() {
         return flowDisassemblyService;
+    }
+    public com.xebyte.core.ListingRangeService getListingRangeService() {
+        return listingRangeService;
     }
     public ProgramProvider getProgramProvider() { return programProvider; }
 

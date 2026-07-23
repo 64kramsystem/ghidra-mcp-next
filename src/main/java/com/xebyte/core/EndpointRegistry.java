@@ -40,6 +40,7 @@ public class EndpointRegistry {
     private final MalwareSecurityService malwareSecurityService;
     private final ProgramScriptService programScriptService;
     private final ExportService exportService;
+    private final ListingRangeService listingRangeService;
 
     public EndpointRegistry(ListingService listingService,
                             FunctionService functionService,
@@ -51,7 +52,8 @@ public class EndpointRegistry {
                             BinaryComparisonService binaryComparisonService,
                             MalwareSecurityService malwareSecurityService,
                             ProgramScriptService programScriptService,
-                            ExportService exportService) {
+                            ExportService exportService,
+                            ListingRangeService listingRangeService) {
         this.listingService = listingService;
         this.functionService = functionService;
         this.commentService = commentService;
@@ -63,6 +65,7 @@ public class EndpointRegistry {
         this.malwareSecurityService = malwareSecurityService;
         this.programScriptService = programScriptService;
         this.exportService = exportService;
+        this.listingRangeService = listingRangeService;
         registerEndpoints();
     }
 
@@ -379,6 +382,20 @@ public class EndpointRegistry {
     // ======================================================================
 
     private void registerListingEndpoints() {
+
+        get("/get_listing_range", "Read a bounded mixed listing range",
+            params(qStr("start", "Inclusive start address"),
+                qStr("end", "Inclusive end address"),
+                qInt("max_units", 1000),
+                qInt("max_bytes", 65536),
+                qInt("max_incoming_refs_per_unit", 1000),
+                qStrOpt("cursor"),
+                pProg()),
+            (q, b) -> listingRangeService.getListingRange(
+                str(q, "start"), str(q, "end"),
+                num(q, "max_units", 1000), num(q, "max_bytes", 65536),
+                num(q, "max_incoming_refs_per_unit", 1000),
+                str(q, "cursor"), str(q, "program")));
 
         get("/list_methods", "List all function names with pagination",
             params(qInt("offset", 0), qInt("limit", 100), pProg()),

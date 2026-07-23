@@ -45,10 +45,13 @@ public class GuiTransportSchemaParityTest extends TestCase {
                 "this.exportService = new com.xebyte.core.ExportService(programProvider)"));
         assertTrue("TCP must construct FlowDisassemblyService", source.contains(
                 "new com.xebyte.core.FlowDisassemblyService(programProvider, threadingStrategy)"));
+        assertTrue("TCP must construct ListingRangeService", source.contains(
+                "new com.xebyte.core.ListingRangeService(programProvider)"));
         assertTrue("TCP scanner must include GuiProjectService so schema and routes agree",
                 source.matches("(?s).*new AnnotationScanner\\(programProvider,.*"
                         + "programScriptService,\\s*emulationService,\\s*exportService,\\s*"
-                        + "flowDisassemblyService,\\s*debuggerService,\\s*"
+                        + "flowDisassemblyService,\\s*listingRangeService,\\s*"
+                        + "debuggerService,\\s*"
                         + "guiProjectService\\).*"));
     }
 
@@ -61,6 +64,8 @@ public class GuiTransportSchemaParityTest extends TestCase {
                 "ExportService exportService = new ExportService"));
         assertTrue("UDS must construct FlowDisassemblyService", source.contains(
                 "FlowDisassemblyService flowDisassemblyService ="));
+        assertTrue("UDS must construct ListingRangeService", source.contains(
+                "ListingRangeService listingRangeService ="));
         assertTrue("UDS must construct DebuggerService", source.contains(
                 "DebuggerService debuggerService = new DebuggerService"));
         assertTrue("UDS must construct GuiProjectService", source.contains(
@@ -68,7 +73,8 @@ public class GuiTransportSchemaParityTest extends TestCase {
         assertTrue("UDS scanner must advertise emulation, export, debugger, and project tools",
                 source.matches("(?s).*new AnnotationScanner\\(programProvider,.*"
                         + "programScriptService,\\s*emulationService,\\s*exportService,\\s*"
-                        + "flowDisassemblyService,\\s*debuggerService,\\s*"
+                        + "flowDisassemblyService,\\s*listingRangeService,\\s*"
+                        + "debuggerService,\\s*"
                         + "guiProjectService\\).*"));
     }
 
@@ -85,6 +91,11 @@ public class GuiTransportSchemaParityTest extends TestCase {
                         "new com.xebyte.core.FlowDisassemblyService(programProvider, threadingStrategy)"));
         assertTrue("Headless handler must expose FlowDisassemblyService to the scanner",
                 handlerSource.contains("getFlowDisassemblyService()"));
+        assertTrue("Headless handler must construct ListingRangeService",
+                handlerSource.contains(
+                        "new com.xebyte.core.ListingRangeService(programProvider)"));
+        assertTrue("Headless handler must expose ListingRangeService to the scanner",
+                handlerSource.contains("getListingRangeService()"));
 
         String serverSource = Files.readString(ROOT.resolve(
                 "src/main/java/com/xebyte/headless/GhidraMCPHeadlessServer.java"));
@@ -94,6 +105,7 @@ public class GuiTransportSchemaParityTest extends TestCase {
                         + "endpointHandler\\.getEmulationService\\(\\),\\s*"
                         + "endpointHandler\\.getExportService\\(\\),\\s*"
                         + "endpointHandler\\.getFlowDisassemblyService\\(\\),\\s*"
+                        + "endpointHandler\\.getListingRangeService\\(\\),\\s*"
                         + "managementService\\).*"));
     }
 

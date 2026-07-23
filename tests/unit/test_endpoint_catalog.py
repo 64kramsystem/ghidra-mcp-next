@@ -111,6 +111,7 @@ class TestAnnotatedEndpoints(unittest.TestCase):
             "ProgramScriptService",
             "ExportService",
             "FlowDisassemblyService",
+            "ListingRangeService",
         ]
         for svc in expected_services:
             path = CORE_SRC / f"{svc}.java"
@@ -180,6 +181,31 @@ class TestEndpointsJson(unittest.TestCase):
             tool["supports_synthetic_dry_run"],
         )
         self.assertNotIn("dry_run", inspect.signature(handler).parameters)
+
+    @unittest.skipUnless(ENDPOINTS_JSON.exists(), "endpoints.json not found")
+    def test_listing_range_contract(self):
+        data = json.loads(ENDPOINTS_JSON.read_text())
+        matches = [
+            ep
+            for ep in data.get("endpoints", [])
+            if ep["path"] == "/get_listing_range"
+        ]
+        self.assertEqual(len(matches), 1)
+        endpoint = matches[0]
+        self.assertEqual(endpoint["method"], "GET")
+        self.assertEqual(endpoint["category"], "listing")
+        self.assertEqual(
+            endpoint["params"],
+            [
+                "start",
+                "end",
+                "max_units",
+                "max_bytes",
+                "max_incoming_refs_per_unit",
+                "cursor",
+                "program",
+            ],
+        )
 
     @unittest.skipUnless(ENDPOINTS_JSON.exists(), "endpoints.json not found")
     def test_catalog_tool_names_are_capi_safe_after_bridge_parsing(self):
