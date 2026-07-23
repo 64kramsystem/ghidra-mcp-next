@@ -122,6 +122,8 @@ def list_instances() -> str:
     socket path or TCP URL. Also shows which instance is currently connected.
     """
     instances = discovery.discover_all_instances()
+    with state._ghidra_lock:
+        active = state._connection
 
     if not instances:
         return json.dumps(
@@ -130,15 +132,21 @@ def list_instances() -> str:
 
     for inst in instances:
         socket = discovery._normalize_socket_path(inst.get("socket"))
-        active_socket = discovery._normalize_socket_path(state._active_socket)
+        active_socket = discovery._normalize_socket_path(
+            active.endpoint if active.transport == "uds" else None
+        )
         url = discovery._normalize_tcp_url(inst.get("url"))
-        active_url = discovery._normalize_tcp_url(state._active_tcp)
+        active_url = discovery._normalize_tcp_url(
+            active.endpoint if active.transport == "tcp" else None
+        )
         inst["connected"] = (
-            state._transport_mode == "uds"
+            active.connected
+            and active.transport == "uds"
             and bool(socket)
             and socket == active_socket
         ) or (
-            state._transport_mode == "tcp"
+            active.connected
+            and active.transport == "tcp"
             and bool(url)
             and url == active_url
         )
@@ -216,7 +224,20 @@ async def create_and_connect_project(
                 f"the bridge did not retry another transport: {e}"
             ) from e
 
-        response = connection.parse_create_project_response(text, status)
+        try:
+            response = connection.parse_create_project_response(text, status)
+        except Exception as exc:
+            connection.record_local_failure(
+                "create-and-connect",
+                {
+                    "project": name,
+                    "transport": mode,
+                    "endpoint": endpoint,
+                },
+                "project creation failure",
+                str(exc),
+            )
+            raise
         project = str(response["project"])
         path = str(response["path"])
         had_dynamic = bool(state._connection.dynamic_names)
@@ -740,12 +761,24 @@ def _auto_connect():
         logger.info(
             "Multiple Ghidra instances found; use connect_instance() to choose."
         )
+        connection.record_local_failure(
+            "auto-connect",
+            {"instances": len(instances)},
+            "transport failure",
+            "Multiple Ghidra instances found; explicit selection is required.",
+        )
         return
     if len(instances) == 1:
         try:
             selected, mode, endpoint = _select_instance(instances)
         except InstanceSelectionError as exc:
             logger.warning("Auto-connect selection failed: %s", exc)
+            connection.record_local_failure(
+                "auto-connect",
+                {"instances": 1},
+                "transport failure",
+                str(exc),
+            )
             return
         result = asyncio.run(
             connection.handshake_candidate(
@@ -770,6 +803,12 @@ def _auto_connect():
     tcp_url = os.getenv("GHIDRA_MCP_URL", DEFAULT_TCP_URL)
     if not validate_server_url(tcp_url):
         logger.warning("Refusing to auto-connect to non-local URL: %s", tcp_url)
+        connection.record_local_failure(
+            "auto-connect",
+            {"transport": "tcp", "endpoint": tcp_url},
+            "transport failure",
+            "Refusing to auto-connect to an invalid TCP URL.",
+        )
         return
     result = asyncio.run(
         connection.handshake_candidate(

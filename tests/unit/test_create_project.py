@@ -244,9 +244,15 @@ def test_list_instances_uses_merged_discovery_and_preserves_connected_state(
         "discover_active_tcp_instance",
         mock.Mock(side_effect=AssertionError("active TCP should already be merged")),
     )
-    monkeypatch.setattr(state, "_transport_mode", "tcp")
-    monkeypatch.setattr(state, "_active_tcp", "http://127.0.0.1:8089")
-    monkeypatch.setattr(state, "_active_socket", None)
+    monkeypatch.setattr(
+        state,
+        "_connection",
+        state.ConnectionBundle(
+            connected=True,
+            transport="tcp",
+            endpoint="http://127.0.0.1:8089",
+        ),
+    )
 
     result = json.loads(static_tools.list_instances())
 
@@ -258,9 +264,15 @@ def test_list_instances_matches_connected_tcp_endpoint_after_normalization(
 ):
     merged = [_instance(url="http://127.0.0.1:8089")]
     monkeypatch.setattr(discovery, "discover_all_instances", lambda: merged)
-    monkeypatch.setattr(state, "_transport_mode", "tcp")
-    monkeypatch.setattr(state, "_active_tcp", "http://localhost:8089/")
-    monkeypatch.setattr(state, "_active_socket", None)
+    monkeypatch.setattr(
+        state,
+        "_connection",
+        state.ConnectionBundle(
+            connected=True,
+            transport="tcp",
+            endpoint="http://localhost:8089/",
+        ),
+    )
 
     result = json.loads(static_tools.list_instances())
 
