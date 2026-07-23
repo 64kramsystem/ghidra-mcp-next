@@ -13,7 +13,14 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import ghidra.program.model.address.AddressSpace;
+import ghidra.program.model.address.GenericAddressSpace;
+
 public class DataRegionCoreTest {
+    private static final GenericAddressSpace RAM =
+        new GenericAddressSpace(
+            "ram", 16, AddressSpace.TYPE_RAM, 0);
+
     @Test
     public void inclusiveMathReportsTrailingBytes() {
         DataRegionCore.RangeMath math =
@@ -76,20 +83,19 @@ public class DataRegionCoreTest {
     public void splitSourcesMayNotOverlap() {
         assertThrows(IllegalArgumentException.class,
             () -> DataRegionCore.validateSplitRanges(
-                0x2000, 0x2004, 8));
+                RAM.getAddress(0x2000),
+                RAM.getAddress(0x2004), 8));
     }
 
     @Test
-    public void splitRangeValidationUsesUnsignedOverflowSafeMath() {
+    public void splitRangeValidationUsesSourceAddressSpaceBounds() {
         DataRegionCore.validateSplitRanges(
-            0xffff_ffff_ffff_ffe0L,
-            0xffff_ffff_ffff_fff0L,
-            8);
+            RAM.getAddress(0xffe0),
+            RAM.getAddress(0xfff0), 8);
         assertThrows(IllegalArgumentException.class,
             () -> DataRegionCore.validateSplitRanges(
-                0xffff_ffff_ffff_fffcL,
-                0x1000,
-                8));
+                RAM.getAddress(0xfffc),
+                RAM.getAddress(0x1000), 8));
     }
 
     @Test

@@ -37,6 +37,8 @@ import ghidra.program.model.data.DataTypeConflictHandler;
 import ghidra.program.model.data.InvalidDataTypeException;
 import ghidra.program.model.data.StructureDataType;
 import ghidra.program.model.data.StringDataType;
+import ghidra.program.model.data.TypedefDataType;
+import ghidra.program.model.data.Undefined1DataType;
 import ghidra.program.model.data.WordDataType;
 import ghidra.program.model.listing.CommentType;
 import ghidra.program.model.symbol.Namespace;
@@ -153,6 +155,56 @@ public class DataRegionServiceGhidraTest {
     }
 
     @Test
+    public void splitSourcesMayUseDifferentAddressSpaces()
+            throws Exception {
+        builder.createOverlayMemory("bank", "0x2e00", 0x10);
+        builder.setBytes("0x2d00", "00");
+        int tx = program.startTransaction("seed overlay high byte");
+        try {
+            program.getMemory().setByte(
+                builder.addr("bank::2e00"), (byte) 0x30);
+        }
+        finally {
+            program.endTransaction(tx, true);
+        }
+        Map<String, Object> split = splitRegion(
+            "0x2d00", "bank:2e00", 1, "split_low_high");
+        split.put("validate_targets", true);
+
+        JsonObject preview = response(
+            service.applyDataRegions(List.of(split), true, ""));
+
+        JsonObject region = preview.getAsJsonArray("regions")
+            .get(0).getAsJsonObject();
+        assertEquals("2d00", region.get("first_start").getAsString());
+        assertEquals(
+            "bank::2e00", region.get("second_start").getAsString());
+        assertEquals("3000", pointerTarget(preview, 0));
+
+        response(service.applyDataRegions(List.of(split), false, ""));
+        assertNotNull(program.getListing().getDefinedDataAt(
+            builder.addr("0x2d00")));
+        assertNotNull(program.getListing().getDefinedDataAt(
+            builder.addr("bank::2e00")));
+    }
+
+    @Test
+    public void splitSourceEnumerationUsesEachAddressSpaceBounds()
+            throws Exception {
+        builder.createOverlayMemory("edge", "0xffff", 1);
+        Map<String, Object> split = splitRegion(
+            "0x2d20", "edge:ffff", 2, "split_low_high");
+
+        Response result = service.applyDataRegions(
+            List.of(split), true, "");
+
+        assertTrue(result.toJson(), result instanceof Response.Err);
+        assertTrue(
+            result.toJson().contains(
+                "second split pointer source range exceeds address space"));
+    }
+
+    @Test
     public void strideLeavesGapsUndefinedAndRequestedDefinitionsCannotOverlap() {
         Map<String, Object> strided = contiguous(
             "0x2800", "0x2811", "Record6");
@@ -239,6 +291,32 @@ public class DataRegionServiceGhidraTest {
         Response bitResult = service.applyDataRegions(
             List.of(bit), true, "");
         assertTrue(bitResult.toJson(), bitResult instanceof Response.Err);
+    }
+
+    @Test
+    public void typedefChainsAroundUndefinedTypesFailInPreview()
+            throws Exception {
+        TypedefDataType inner = new TypedefDataType(
+            "UndefinedAlias", Undefined1DataType.dataType);
+        TypedefDataType outer = new TypedefDataType(
+            "NestedUndefinedAlias", inner);
+        DataType nested;
+        int tx = program.startTransaction("add undefined typedef chain");
+        try {
+            nested = program.getDataTypeManager().addDataType(
+                outer, DataTypeConflictHandler.REPLACE_HANDLER);
+        }
+        finally {
+            program.endTransaction(tx, true);
+        }
+        Map<String, Object> request = contiguous(
+            "0x2b20", "0x2b20", nested.getPathName());
+
+        Response result = service.applyDataRegions(
+            List.of(request), true, "");
+
+        assertTrue(result.toJson(), result instanceof Response.Err);
+        assertTrue(result.toJson().contains("fixed and placeable"));
     }
 
     @Test
@@ -480,6 +558,32 @@ public class DataRegionServiceGhidraTest {
     }
 
     @Test
+    public void requestedNamespaceCannotAlsoBeRequestedAsGlobalLabel() {
+        Map<String, Object> global = contiguous(
+            "0x2460", "0x2460", "byte");
+        global.put("name", "Game");
+        Map<String, Object> namespaced = contiguous(
+            "0x2470", "0x2470", "byte");
+        namespaced.put("name", "records");
+        namespaced.put("namespace", "Game");
+
+        for (List<Map<String, Object>> batch : List.of(
+                List.of(global, namespaced),
+                List.of(namespaced, global))) {
+            Response result = service.applyDataRegions(
+                batch, true, "");
+            assertTrue(result.toJson(), result instanceof Response.Err);
+            assertTrue(
+                result.toJson().contains(
+                    "requested namespace conflicts with requested global label"));
+        }
+        assertNull(program.getSymbolTable().getGlobalSymbol(
+            "Game", builder.addr("0x2460")));
+        assertNull(program.getSymbolTable().getNamespace(
+            "Game", program.getGlobalNamespace()));
+    }
+
+    @Test
     public void clearConflictsPreservesAnnotationsAndReportsWholeUnit()
             throws Exception {
         builder.setBytes("0x2500", "a9 01 60");
@@ -588,6 +692,65 @@ public class DataRegionServiceGhidraTest {
             builder.addr("0x2600")));
         assertNull(program.getListing().getDefinedDataAt(
             builder.addr("0x2610")));
+    }
+
+    @Test
+    public void cancellationDuringConflictClearingRollsBackClearedUnits()
+            throws Exception {
+        builder.applyDataType("0x2700", WordDataType.dataType);
+        builder.applyDataType("0x2702", WordDataType.dataType);
+        Map<String, Object> bytes = contiguous(
+            "0x2700", "0x2703", "byte");
+        bytes.put("clear_conflicts", true);
+        DataRegionCore core = new DataRegionCore();
+        DataRegionCore.Plan plan = core.plan(
+            program, DataRegionService.parseRegions(List.of(bytes)));
+        AtomicInteger checks = new AtomicInteger();
+        TaskMonitorAdapter monitor = cancellingMonitor(checks, 5);
+
+        int tx = program.startTransaction("cancel conflict clearing");
+        try {
+            assertThrows(
+                CancelledException.class,
+                () -> core.apply(program, plan, monitor));
+        }
+        finally {
+            program.endTransaction(tx, false);
+        }
+
+        assertTrue(checks.get() >= 5);
+        assertNotNull(program.getListing().getDefinedDataAt(
+            builder.addr("0x2700")));
+        assertNotNull(program.getListing().getDefinedDataAt(
+            builder.addr("0x2702")));
+    }
+
+    @Test
+    public void cancellationBetweenDataElementsRollsBackEarlierElements()
+            throws Exception {
+        Map<String, Object> bytes = contiguous(
+            "0x2720", "0x2723", "byte");
+        DataRegionCore core = new DataRegionCore();
+        DataRegionCore.Plan plan = core.plan(
+            program, DataRegionService.parseRegions(List.of(bytes)));
+        AtomicInteger checks = new AtomicInteger();
+        TaskMonitorAdapter monitor = cancellingMonitor(checks, 4);
+
+        int tx = program.startTransaction("cancel data elements");
+        try {
+            assertThrows(
+                CancelledException.class,
+                () -> core.apply(program, plan, monitor));
+        }
+        finally {
+            program.endTransaction(tx, false);
+        }
+
+        assertTrue(checks.get() >= 4);
+        for (int i = 0; i < 4; i++) {
+            assertNull(program.getListing().getDefinedDataAt(
+                builder.addr("0x" + Integer.toHexString(0x2720 + i))));
+        }
     }
 
     @Test
@@ -709,6 +872,18 @@ public class DataRegionServiceGhidraTest {
         result.put("end", end);
         result.put("type_name", type);
         return result;
+    }
+
+    private static TaskMonitorAdapter cancellingMonitor(
+            AtomicInteger checks, int cancellationCheck) {
+        return new TaskMonitorAdapter() {
+            @Override
+            public void checkCancelled() throws CancelledException {
+                if (checks.incrementAndGet() == cancellationCheck) {
+                    throw new CancelledException();
+                }
+            }
+        };
     }
 
     private String defaultSpace() {

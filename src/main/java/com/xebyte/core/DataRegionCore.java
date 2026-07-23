@@ -2,10 +2,14 @@ package com.xebyte.core;
 
 import java.math.BigInteger;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressSet;
@@ -15,6 +19,7 @@ import ghidra.program.model.data.BitFieldDataType;
 import ghidra.program.model.data.DataType;
 import ghidra.program.model.data.Dynamic;
 import ghidra.program.model.data.FactoryDataType;
+import ghidra.program.model.data.TypeDef;
 import ghidra.program.model.data.Undefined;
 import ghidra.program.model.listing.CommentType;
 import ghidra.program.model.listing.Data;
@@ -33,8 +38,6 @@ import ghidra.util.task.TaskMonitor;
 final class DataRegionCore {
     static final int MAX_REGIONS = 1024;
     static final long MAX_PLANNED_ELEMENTS = 1_000_000;
-    private static final BigInteger UNSIGNED_LONG_MAX =
-        BigInteger.ONE.shiftLeft(Long.SIZE).subtract(BigInteger.ONE);
 
     record RangeMath(
             long elementCount,
@@ -200,24 +203,45 @@ final class DataRegionCore {
     }
 
     static void validateSplitRanges(
-            long firstStart, long secondStart, long count) {
+            Address firstStart, Address secondStart, long count) {
         if (count <= 0) {
             throw new IllegalArgumentException("count must be positive");
         }
-        BigInteger first = unsigned(firstStart);
-        BigInteger second = unsigned(secondStart);
-        BigInteger width = BigInteger.valueOf(count - 1);
-        BigInteger firstEnd = first.add(width);
-        BigInteger secondEnd = second.add(width);
-        if (firstEnd.compareTo(UNSIGNED_LONG_MAX) > 0
-                || secondEnd.compareTo(UNSIGNED_LONG_MAX) > 0) {
-            throw new IllegalArgumentException(
-                "split pointer source range overflows address width");
-        }
-        if (first.compareTo(secondEnd) <= 0
-                && second.compareTo(firstEnd) <= 0) {
+        Address firstEnd = splitSourceEnd(
+            firstStart, count, "first");
+        Address secondEnd = splitSourceEnd(
+            secondStart, count, "second");
+        if (firstStart.getAddressSpace() == secondStart.getAddressSpace()
+                && firstStart.compareTo(secondEnd) <= 0
+                && secondStart.compareTo(firstEnd) <= 0) {
             throw new IllegalArgumentException(
                 "split pointer source ranges overlap");
+        }
+    }
+
+    private static Address splitSourceEnd(
+            Address start, long count, String description) {
+        AddressSpace space = start.getAddressSpace();
+        BigInteger endOffset = start.getOffsetAsBigInteger()
+            .add(BigInteger.valueOf(count - 1));
+        BigInteger min = space.getMinAddress().getOffsetAsBigInteger();
+        BigInteger max = space.getMaxAddress().getOffsetAsBigInteger();
+        if (endOffset.compareTo(min) < 0
+                || endOffset.compareTo(max) > 0) {
+            throw new IllegalArgumentException(
+                description
+                    + " split pointer source range exceeds address space "
+                    + space.getName());
+        }
+        try {
+            return space.getAddress(endOffset.longValue());
+        }
+        catch (RuntimeException error) {
+            throw new IllegalArgumentException(
+                description
+                    + " split pointer source range exceeds address space "
+                    + space.getName(),
+                error);
         }
     }
 
@@ -342,10 +366,12 @@ final class DataRegionCore {
         }
         TaskMonitor taskMonitor =
             monitor == null ? TaskMonitor.DUMMY : monitor;
+        taskMonitor.checkCancelled();
         if (plan.clearPlan() != null) {
-            listingClear.apply(program, plan.clearPlan());
+            listingClear.apply(program, plan.clearPlan(), taskMonitor);
         }
         for (NamespaceAction action : plan.namespaceActions()) {
+            taskMonitor.checkCancelled();
             if ("create".equals(action.action())) {
                 resolveNamespace(program, action.name(), true);
             }
@@ -353,16 +379,20 @@ final class DataRegionCore {
         for (RegionPlan region : plan.regions()) {
             taskMonitor.checkCancelled();
             for (DataAction action : region.dataActions()) {
+                taskMonitor.checkCancelled();
                 if ("create".equals(action.action())) {
                     program.getListing().createData(
                         action.address(), action.dataType());
                 }
             }
             if (region.platePlan() != null) {
+                taskMonitor.checkCancelled();
                 comments.apply(program, region.platePlan());
             }
-            applySymbols(program, region.symbolActions());
-            applyReferences(program, region.referenceActions());
+            applySymbols(
+                program, region.symbolActions(), taskMonitor);
+            applyReferences(
+                program, region.referenceActions(), taskMonitor);
         }
     }
 
@@ -430,14 +460,13 @@ final class DataRegionCore {
         }
         Address first = resolve(program, request.firstStart());
         Address second = resolve(program, request.secondStart());
-        requireSameSpace(first, second);
         if (request.count() > remainingElements) {
             addPlannedElements(
                 MAX_PLANNED_ELEMENTS - remainingElements,
                 request.count());
         }
         validateSplitRanges(
-            first.getOffset(), second.getOffset(), request.count());
+            first, second, request.count());
         DataType byteType = resolveFixedType(program, "byte");
         if (byteType.getLength() != 1) {
             throw new IllegalArgumentException(
@@ -620,16 +649,25 @@ final class DataRegionCore {
 
     static DataType requireFixedPlaceable(
             DataType type, String name) {
-        if (type == null || type.getLength() <= 0
-                || Undefined.isUndefined(type)
-                || type instanceof Dynamic
-                || type instanceof FactoryDataType
-                || type instanceof BitFieldDataType) {
-            throw new IllegalArgumentException(
-                "datatype must be fixed and placeable as top-level data: "
-                    + name);
+        DataType current = type;
+        Set<DataType> visited =
+            Collections.newSetFromMap(new IdentityHashMap<>());
+        while (true) {
+            if (current == null || !visited.add(current)
+                    || current.getLength() <= 0
+                    || Undefined.isUndefined(current)
+                    || current instanceof Dynamic
+                    || current instanceof FactoryDataType
+                    || current instanceof BitFieldDataType) {
+                throw new IllegalArgumentException(
+                    "datatype must be fixed and placeable as top-level data: "
+                        + name);
+            }
+            if (!(current instanceof TypeDef typeDef)) {
+                return type;
+            }
+            current = typeDef.getDataType();
         }
-        return type;
     }
 
     private Address resolve(Program program, String text) {
@@ -908,7 +946,35 @@ final class DataRegionCore {
             normalized.add(copyWithActions(
                 region, symbols, region.referenceActions(), platePlan));
         }
-        return List.copyOf(normalized);
+        List<RegionPlan> result = List.copyOf(normalized);
+        validateRequestedNamespaceCollisions(result);
+        return result;
+    }
+
+    private static void validateRequestedNamespaceCollisions(
+            List<RegionPlan> regions) {
+        Set<String> requestedNamespaces = new LinkedHashSet<>();
+        Set<String> requestedGlobalLabels = new LinkedHashSet<>();
+        for (RegionPlan region : regions) {
+            for (SymbolAction symbol : region.symbolActions()) {
+                if ("skipped".equals(symbol.action())) {
+                    continue;
+                }
+                if (symbol.namespace() == null) {
+                    requestedGlobalLabels.add(symbol.name());
+                }
+                else {
+                    requestedNamespaces.add(symbol.namespace());
+                }
+            }
+        }
+        for (String namespace : requestedNamespaces) {
+            if (requestedGlobalLabels.contains(namespace)) {
+                throw new IllegalArgumentException(
+                    "requested namespace conflicts with requested global label: "
+                        + namespace);
+            }
+        }
     }
 
     private static List<NamespaceAction> planNamespaces(
@@ -955,8 +1021,10 @@ final class DataRegionCore {
     }
 
     private static void applySymbols(
-            Program program, List<SymbolAction> actions) throws Exception {
+            Program program, List<SymbolAction> actions,
+            TaskMonitor monitor) throws Exception {
         for (SymbolAction action : actions) {
+            monitor.checkCancelled();
             if ("skipped".equals(action.action())
                     || "unchanged".equals(action.action())) {
                 continue;
@@ -981,8 +1049,10 @@ final class DataRegionCore {
     }
 
     private static void applyReferences(
-            Program program, List<ReferenceAction> actions) {
+            Program program, List<ReferenceAction> actions,
+            TaskMonitor monitor) throws Exception {
         for (ReferenceAction action : actions) {
+            monitor.checkCancelled();
             if ("create".equals(action.action())) {
                 program.getReferenceManager().addMemoryReference(
                     action.from(), action.to(), RefType.DATA,
