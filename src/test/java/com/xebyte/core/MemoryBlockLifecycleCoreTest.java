@@ -3,18 +3,26 @@ package com.xebyte.core;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 
 import org.junit.Test;
 
 import ghidra.program.model.address.Address;
+import ghidra.program.model.address.AddressSetView;
 import ghidra.program.model.address.AddressSpace;
 import ghidra.program.model.address.GenericAddressSpace;
+import ghidra.program.model.listing.Instruction;
+import ghidra.program.model.listing.InstructionIterator;
+import ghidra.program.model.listing.Listing;
 import ghidra.program.model.listing.Program;
+import ghidra.program.model.mem.Memory;
 import ghidra.program.model.mem.MemoryBlock;
 
 public class MemoryBlockLifecycleCoreTest {
@@ -111,6 +119,67 @@ public class MemoryBlockLifecycleCoreTest {
             error.getMessage());
     }
 
+    @Test
+    public void growthLimitsAcceptExactBoundsAndRejectEitherOverflow() {
+        MemoryBlockLifecycleCore.validateGrowthLimits(
+            Memory.MAX_BLOCK_SIZE - 1,
+            1,
+            Memory.MAX_BINARY_SIZE - 1);
+
+        IllegalArgumentException blockError = assertThrows(
+            IllegalArgumentException.class,
+            () -> MemoryBlockLifecycleCore.validateGrowthLimits(
+                Memory.MAX_BLOCK_SIZE, 1, 1));
+        assertEquals(
+            "result exceeds Memory.MAX_BLOCK_SIZE",
+            blockError.getMessage());
+
+        IllegalArgumentException binaryError = assertThrows(
+            IllegalArgumentException.class,
+            () -> MemoryBlockLifecycleCore.validateGrowthLimits(
+                1, 1, Memory.MAX_BINARY_SIZE));
+        assertEquals(
+            "result exceeds Memory.MAX_BINARY_SIZE",
+            binaryError.getMessage());
+    }
+
+    @Test
+    public void eitherDelaySlotBoundaryIsRejected() {
+        Address rootStart = RAM.getAddress(0x4000);
+        Address rootEnd = RAM.getAddress(0x4001);
+        Address slotStart = RAM.getAddress(0x4002);
+        Address slotEnd = RAM.getAddress(0x4003);
+        Instruction root = instruction(rootStart, rootEnd);
+        Instruction slot = instruction(slotStart, slotEnd);
+        when(root.getDelaySlotDepth()).thenReturn(1);
+        when(root.getNext()).thenReturn(slot);
+        when(slot.isInDelaySlot()).thenReturn(true);
+        Listing listing = mock(Listing.class);
+        Program program = mock(Program.class);
+        when(program.getListing()).thenReturn(listing);
+
+        when(listing.getCodeUnitContaining(rootStart)).thenReturn(root);
+        when(listing.getCodeUnitContaining(rootEnd)).thenReturn(root);
+        when(listing.getInstructionAt(rootStart)).thenReturn(root);
+        InstructionIterator rootInstructions = instructions(List.of(root));
+        when(listing.getInstructions(any(AddressSetView.class), eq(true)))
+            .thenReturn(rootInstructions);
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> MemoryBlockLifecycleCore.validateListingBoundary(
+                program,
+                new MemoryBlockLifecycleCore.Range(rootStart, rootEnd)));
+
+        when(listing.getCodeUnitContaining(slotStart)).thenReturn(slot);
+        when(listing.getCodeUnitContaining(slotEnd)).thenReturn(slot);
+        when(listing.getInstructionAt(slotStart)).thenReturn(slot);
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> MemoryBlockLifecycleCore.validateListingBoundary(
+                program,
+                new MemoryBlockLifecycleCore.Range(slotStart, slotEnd)));
+    }
+
     private static MemoryBlockLifecycleCore.ReferenceRecord reference(
             Address source,
             Address target,
@@ -133,4 +202,22 @@ public class MemoryBlockLifecycleCoreTest {
         when(address.getOffset()).thenReturn(offset);
         return address;
     }
+
+    private static Instruction instruction(Address start, Address end) {
+        Instruction instruction = mock(Instruction.class);
+        when(instruction.getMinAddress()).thenReturn(start);
+        when(instruction.getMaxAddress()).thenReturn(end);
+        return instruction;
+    }
+
+    private static InstructionIterator instructions(
+            List<Instruction> values) {
+        Iterator<Instruction> iterator = values.iterator();
+        InstructionIterator result = mock(InstructionIterator.class);
+        when(result.iterator()).thenReturn(iterator);
+        return result;
+    }
+
+    private static final GenericAddressSpace RAM =
+        new GenericAddressSpace("ram", 16, AddressSpace.TYPE_RAM, 0);
 }
