@@ -1,9 +1,16 @@
 import json
+import asyncio
+import threading
+import time
 from copy import deepcopy
+from dataclasses import replace
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
 from bridge_mcp_ghidra import handshake
+from bridge_mcp_ghidra import connection, registry, state, static_tools
 
 
 VERSION = {
@@ -167,6 +174,31 @@ def test_manifest_rejects_counts_and_normalized_collisions():
     assert exc.value.category == "normalized-name collision"
 
 
+def test_renamed_static_wrappers_leave_server_project_tools_available():
+    schema = {
+        "count": 2,
+        "tools": [
+            {
+                "path": "/create_project",
+                "method": "POST",
+                "params": [],
+            },
+            {
+                "path": "/import_file",
+                "method": "POST",
+                "params": [],
+            },
+        ],
+    }
+    manifest = handshake.validate_handshake(
+        deepcopy(VERSION),
+        schema,
+        static_tools.STATIC_TOOL_NAMES,
+    )
+    staged = registry.build_staged_registry(manifest, None)
+    assert set(staged.dynamic_tools) == {"create_project", "import_file"}
+
+
 def test_manifest_serialization_is_exact_utf8_without_unicode_normalization():
     composed = deepcopy(SCHEMA)
     composed["tools"][0]["description"] = "é"
@@ -211,3 +243,440 @@ def test_registry_adapter_rejects_wrong_version_and_stages_atomically(monkeypatc
         adapter.replace_dynamic({"static": Tool("static")})
     assert mcp._tool_manager._tools["dynamic"] is dynamic
 
+
+def _wire_responses(version=None, schema=None):
+    version = deepcopy(version or VERSION)
+    schema = deepcopy(schema or SCHEMA)
+
+    def request(_mode, _endpoint, _method, path, **_kwargs):
+        if path == "/get_version":
+            return json.dumps(version), 200
+        if path == "/mcp/schema":
+            return json.dumps(schema), 200
+        raise AssertionError(path)
+
+    return request
+
+
+@pytest.fixture
+def clean_connection():
+    original_defaults = set(state._default_groups)
+    with state._ghidra_lock:
+        registry._adapter().replace_dynamic({})
+        state._connection = state.ConnectionBundle()
+        state._last_attempt = None
+        state.publish_connection(state._connection)
+        state._lazy_mode = False
+        state._default_groups = original_defaults
+    yield
+    with state._ghidra_lock:
+        registry._adapter().replace_dynamic({})
+        state._connection = state.ConnectionBundle()
+        state._last_attempt = None
+        state.publish_connection(state._connection)
+        state._lazy_mode = False
+        state._default_groups = original_defaults
+
+
+def test_eager_handshake_publishes_complete_bundle(monkeypatch, clean_connection):
+    monkeypatch.setattr(
+        static_tools.transport, "candidate_request", _wire_responses()
+    )
+    result = asyncio.run(
+        connection.handshake_candidate(
+            "connect",
+            mode="tcp",
+            endpoint="http://127.0.0.1:8089",
+            project="Neverending",
+            ctx=None,
+            failure_policy="clear",
+        )
+    )
+    assert result["connected"] is True
+    assert result["manifest_count"] == 2
+    assert result["callable_dynamic_count"] == 2
+    assert result["connection_generation"] == 1
+    assert result["endpoint_count"] == 2
+    assert result["tools_changed"] == {
+        "attempted": False,
+        "sent": False,
+        "error": None,
+    }
+    assert set(state._dynamic_tool_names) == {"alpha", "beta"}
+    assert state._last_attempt["success"] is True
+
+
+def test_lazy_handshake_and_atomic_group_load(monkeypatch, clean_connection):
+    monkeypatch.setattr(
+        static_tools.transport, "candidate_request", _wire_responses()
+    )
+    state._lazy_mode = True
+    state._default_groups = {"listing"}
+    result = asyncio.run(
+        connection.handshake_candidate(
+            "connect",
+            mode="uds",
+            endpoint="/tmp/ghidra.sock",
+            project="Neverending",
+            ctx=None,
+            failure_policy="clear",
+        )
+    )
+    assert result["manifest_count"] == 2
+    assert result["callable_dynamic_count"] == 1
+    assert state._connection.dynamic_names == ("alpha",)
+    loaded = json.loads(asyncio.run(static_tools.load_tool_group("memory")))
+    assert loaded["new_tool_names"] == ["beta"]
+    assert state._connection.generation == 1
+    assert state._connection.callable_dynamic_count == 2
+
+
+def test_failed_switch_preserves_and_failed_refresh_clears(
+    monkeypatch, clean_connection
+):
+    monkeypatch.setattr(
+        static_tools.transport, "candidate_request", _wire_responses()
+    )
+    asyncio.run(
+        connection.handshake_candidate(
+            "connect",
+            mode="tcp",
+            endpoint="http://127.0.0.1:8089",
+            project="A",
+            ctx=None,
+            failure_policy="clear",
+        )
+    )
+    previous = state._connection
+    bad = deepcopy(SCHEMA)
+    bad["count"] = 99
+    monkeypatch.setattr(
+        static_tools.transport,
+        "candidate_request",
+        _wire_responses(schema=bad),
+    )
+    switched = asyncio.run(
+        connection.handshake_candidate(
+            "switch",
+            mode="tcp",
+            endpoint="http://127.0.0.1:8090",
+            project="B",
+            ctx=None,
+            failure_policy="preserve",
+        )
+    )
+    assert "error" in switched
+    assert state._connection is previous
+    assert state._connection.generation == 1
+    assert switched["tools_changed"]["attempted"] is False
+
+    refreshed = asyncio.run(
+        connection.handshake_candidate(
+            "refresh",
+            mode="tcp",
+            endpoint="http://127.0.0.1:8089",
+            project="A",
+            ctx=None,
+            failure_policy="clear",
+        )
+    )
+    assert refreshed["connected"] is False
+    assert state._connection.generation == 1
+    assert state._dynamic_tool_names == []
+    # No Context means the required post-cleanup notification is observable
+    # as not attempted rather than pretending it was sent.
+    assert refreshed["tools_changed"]["attempted"] is False
+
+
+def test_check_tools_reports_manifest_generation(monkeypatch, clean_connection):
+    monkeypatch.setattr(
+        static_tools.transport, "candidate_request", _wire_responses()
+    )
+    state._lazy_mode = True
+    state._default_groups = {"listing"}
+    asyncio.run(
+        connection.handshake_candidate(
+            "connect",
+            mode="tcp",
+            endpoint="http://127.0.0.1:8089",
+            project="A",
+            ctx=None,
+            failure_policy="clear",
+        )
+    )
+    checked = json.loads(
+        asyncio.run(static_tools.check_tools("alpha,beta,missing"))
+    )
+    assert checked["results"]["alpha"]["status"] == "callable"
+    assert checked["results"]["beta"]["status"] == "not_loaded"
+    assert checked["results"]["missing"]["status"] == "not_found"
+    assert checked["manifest_sha256"] == state._connection.manifest_sha256
+    assert checked["connection_generation"] == 1
+
+
+def test_candidate_build_is_never_observable_as_mixed_state(
+    monkeypatch, clean_connection
+):
+    monkeypatch.setattr(
+        static_tools.transport, "candidate_request", _wire_responses()
+    )
+    asyncio.run(
+        connection.handshake_candidate(
+            "connect",
+            mode="tcp",
+            endpoint="http://127.0.0.1:8089",
+            project="A",
+            ctx=None,
+            failure_policy="clear",
+        )
+    )
+    old_digest = state._connection.manifest_sha256
+    changed = deepcopy(SCHEMA)
+    changed["tools"][0]["description"] = "changed"
+    entered = threading.Event()
+    release = threading.Event()
+    original = connection.fetch_staged_candidate
+
+    def paused(mode, endpoint):
+        entered.set()
+        release.wait(timeout=5)
+        return original(mode, endpoint)
+
+    monkeypatch.setattr(connection, "fetch_staged_candidate", paused)
+    monkeypatch.setattr(
+        static_tools.transport,
+        "candidate_request",
+        _wire_responses(schema=changed),
+    )
+
+    worker = threading.Thread(
+        target=lambda: asyncio.run(
+            connection.handshake_candidate(
+                "refresh",
+                mode="tcp",
+                endpoint="http://127.0.0.1:8089",
+                project="A",
+                ctx=None,
+                failure_policy="clear",
+            )
+        )
+    )
+    worker.start()
+    assert entered.wait(timeout=2)
+    observed = []
+
+    def read():
+        observed.append(json.loads(static_tools.get_connection_info()))
+
+    reader = threading.Thread(target=read)
+    reader.start()
+    time.sleep(0.05)
+    release.set()
+    worker.join(timeout=5)
+    reader.join(timeout=5)
+    assert len(observed) == 1
+    assert observed[0]["manifest_sha256"] in {
+        old_digest,
+        state._connection.manifest_sha256,
+    }
+    assert observed[0]["callable_dynamic_count"] in {2}
+
+
+def test_stale_handler_identity_and_get_only_replay(
+    monkeypatch, clean_connection
+):
+    monkeypatch.setattr(
+        static_tools.transport, "candidate_request", _wire_responses()
+    )
+    asyncio.run(
+        connection.handshake_candidate(
+            "connect",
+            mode="tcp",
+            endpoint="http://127.0.0.1:8089",
+            project="A",
+            ctx=None,
+            failure_policy="clear",
+        )
+    )
+    alpha = registry._adapter().snapshot()["alpha"]
+    calls = []
+
+    def request(method, endpoint, **kwargs):
+        calls.append((method, endpoint, kwargs))
+        if len(calls) == 1:
+            raise ConnectionResetError("restart")
+        return '{"ok":true}', 200
+
+    async def reconnect(_ctx, *, cause=None):
+        with state._ghidra_lock:
+            state.publish_connection(
+                replace(
+                    state._connection,
+                    generation=state._connection.generation + 1,
+                )
+            )
+        return {"connected": True, "connection_generation": 2}
+
+    monkeypatch.setattr(static_tools.transport, "do_request", request)
+    monkeypatch.setattr(static_tools, "_reconnect_active", reconnect)
+    assert asyncio.run(alpha.fn()) == '{"ok":true}'
+    assert [item[:2] for item in calls] == [
+        ("GET", "/alpha"),
+        ("GET", "/alpha"),
+    ]
+
+    with state._ghidra_lock:
+        state.publish_connection(
+            replace(
+                state._connection,
+                identities={**state._connection.identities, "alpha": ("GET", "/moved")},
+            )
+        )
+    stale = json.loads(asyncio.run(alpha.fn()))
+    assert stale["category"] == "stale-handler identity"
+
+
+def test_post_reconnects_but_never_replays(monkeypatch, clean_connection):
+    monkeypatch.setattr(
+        static_tools.transport, "candidate_request", _wire_responses()
+    )
+    asyncio.run(
+        connection.handshake_candidate(
+            "connect",
+            mode="tcp",
+            endpoint="http://127.0.0.1:8089",
+            project="A",
+            ctx=None,
+            failure_policy="clear",
+        )
+    )
+    beta = registry._adapter().snapshot()["beta"]
+    calls = 0
+
+    def request(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        raise ConnectionResetError("uncertain")
+
+    async def reconnect(_ctx, *, cause=None):
+        with state._ghidra_lock:
+            state.publish_connection(
+                replace(
+                    state._connection,
+                    generation=state._connection.generation + 1,
+                )
+            )
+        return {"connected": True, "connection_generation": 2}
+
+    monkeypatch.setattr(static_tools.transport, "do_request", request)
+    monkeypatch.setattr(static_tools, "_reconnect_active", reconnect)
+    result = json.loads(asyncio.run(beta.fn()))
+    assert result["category"] == "call not replayed"
+    assert calls == 1
+
+
+def test_registration_failure_rolls_back_eager_and_lazy_maps(
+    monkeypatch, clean_connection
+):
+    monkeypatch.setattr(
+        static_tools.transport, "candidate_request", _wire_responses()
+    )
+    original = registry._build_tool_object
+
+    def fail_beta(definition):
+        if definition["name"] == "beta":
+            raise ValueError("injected")
+        return original(definition)
+
+    monkeypatch.setattr(registry, "_build_tool_object", fail_beta)
+    failed = asyncio.run(
+        connection.handshake_candidate(
+            "connect",
+            mode="tcp",
+            endpoint="http://127.0.0.1:8089",
+            project="A",
+            ctx=None,
+            failure_policy="clear",
+        )
+    )
+    assert failed["connected"] is False
+    assert set(registry._adapter().snapshot()) == static_tools.STATIC_TOOL_NAMES
+
+    monkeypatch.setattr(registry, "_build_tool_object", original)
+    state._lazy_mode = True
+    state._default_groups = {"listing"}
+    asyncio.run(
+        connection.handshake_candidate(
+            "connect",
+            mode="tcp",
+            endpoint="http://127.0.0.1:8089",
+            project="A",
+            ctx=None,
+            failure_policy="clear",
+        )
+    )
+    previous_tool = registry._adapter().snapshot()["alpha"]
+    monkeypatch.setattr(registry, "_build_tool_object", fail_beta)
+    loaded = json.loads(asyncio.run(static_tools.load_tool_group("memory")))
+    assert loaded["failure"]["category"] == "registration failure"
+    assert registry._adapter().snapshot()["alpha"] is previous_tool
+    assert "beta" not in registry._adapter().snapshot()
+
+
+def test_notifications_follow_commits_and_failure_is_post_commit(
+    monkeypatch, clean_connection
+):
+    monkeypatch.setattr(
+        static_tools.transport, "candidate_request", _wire_responses()
+    )
+    sender = AsyncMock()
+    ctx = SimpleNamespace(
+        _request_context=object(),
+        request_context=SimpleNamespace(
+            session=SimpleNamespace(send_tool_list_changed=sender)
+        ),
+    )
+    connected = asyncio.run(
+        connection.handshake_candidate(
+            "connect",
+            mode="tcp",
+            endpoint="http://127.0.0.1:8089",
+            project="A",
+            ctx=ctx,
+            failure_policy="clear",
+        )
+    )
+    assert connected["tools_changed"]["sent"] is True
+    refreshed = asyncio.run(
+        connection.handshake_candidate(
+            "refresh",
+            mode="tcp",
+            endpoint="http://127.0.0.1:8089",
+            project="A",
+            ctx=ctx,
+            failure_policy="clear",
+        )
+    )
+    assert refreshed["tools_changed"]["sent"] is True
+    assert sender.await_count == 2
+    assert state._connection.generation == 2
+
+    sender.side_effect = RuntimeError("client closed")
+    post_commit = asyncio.run(
+        connection.handshake_candidate(
+            "refresh",
+            mode="tcp",
+            endpoint="http://127.0.0.1:8089",
+            project="A",
+            ctx=ctx,
+            failure_policy="clear",
+        )
+    )
+    assert post_commit["connected"] is True
+    assert post_commit["connection_generation"] == 3
+    assert post_commit["tools_changed"] == {
+        "attempted": True,
+        "sent": False,
+        "error": "client closed",
+    }
+    assert state._last_attempt["tools_changed"] == post_commit["tools_changed"]

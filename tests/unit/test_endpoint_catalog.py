@@ -426,7 +426,13 @@ class TestEndpointsJson(unittest.TestCase):
             ].fn
             self.assertEqual(
                 list(inspect.signature(handler).parameters),
-                ["changes", "dry_run", "program"],
+                ["changes", "dry_run", "program", "ctx"],
+            )
+            self.assertNotIn(
+                "ctx",
+                bridge.mcp._tool_manager._tools[
+                    "configure_analyzers"
+                ].parameters.get("properties", {}),
             )
         finally:
             bridge.register_tools_from_schema([])
