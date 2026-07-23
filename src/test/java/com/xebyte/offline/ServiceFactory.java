@@ -4,6 +4,7 @@ import com.xebyte.core.AnalysisService;
 import com.xebyte.core.BinaryComparisonService;
 import com.xebyte.core.CommentService;
 import com.xebyte.core.DataTypeService;
+import com.xebyte.core.DataRegionService;
 import com.xebyte.core.DebuggerService;
 import com.xebyte.core.FunctionService;
 import com.xebyte.core.FlowDisassemblyService;
@@ -53,6 +54,8 @@ public final class ServiceFactory {
         ProgramScriptService programScriptService = new ProgramScriptService(provider, ts);
         MemoryBlockService memoryBlockService =
             new MemoryBlockService(provider, ts);
+        DataRegionService dataRegionService =
+            new DataRegionService(provider, ts);
         EmulationService emulationService = new EmulationService(provider, ts);
         ExportService exportService = new ExportService(provider);
         FlowDisassemblyService flowDisassemblyService =
@@ -81,6 +84,7 @@ public final class ServiceFactory {
             malwareSecurityService,
             programScriptService,
             memoryBlockService,
+            dataRegionService,
             emulationService,
             exportService,
             flowDisassemblyService,

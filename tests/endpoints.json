@@ -1,7 +1,7 @@
 {
   "version": "5.15.0",
   "description": "GhidraMCP REST API Endpoint Specification",
-  "total_endpoints": 242,
+  "total_endpoints": 243,
   "categories": {
     "listing": "List program data",
     "getter": "Get specific data",
@@ -189,6 +189,17 @@
         "program"
       ],
       "description": "Apply data classification"
+    },
+    {
+      "path": "/apply_data_regions",
+      "method": "POST",
+      "category": "data",
+      "params": [
+        "regions",
+        "dry_run",
+        "program"
+      ],
+      "description": "Atomically define fixed data ranges and generic pointer tables"
     },
     {
       "path": "/apply_data_type",

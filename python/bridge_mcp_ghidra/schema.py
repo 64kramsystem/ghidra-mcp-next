@@ -65,7 +65,12 @@ def _parse_schema(raw: dict) -> list[dict]:
         properties = {}
         required = []
         for p in params:
-            pdef: dict = {"type": p.get("type", "string")}
+            fragment = p.get("schema")
+            pdef: dict = (
+                dict(fragment)
+                if isinstance(fragment, dict)
+                else {"type": p.get("type", "string")}
+            )
             if p.get("description"):
                 pdef["description"] = p["description"]
             if "default" in p and p["default"] is not None:

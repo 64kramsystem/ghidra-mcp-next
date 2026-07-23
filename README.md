@@ -1,7 +1,7 @@
 # Ghidra MCP Server
 
 Ghidra MCP connects AI clients to Ghidra through a Java extension and a thin
-Python MCP bridge. Version 5.15.0 exposes 242 tools for local static analysis,
+Python MCP bridge. Version 5.15.0 exposes 243 tools for local static analysis,
 multi-program work, P-code emulation, local comparison, and Ghidra's built-in
 TraceRMI debugger.
 

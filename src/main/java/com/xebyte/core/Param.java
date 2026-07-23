@@ -81,6 +81,13 @@ public @interface Param {
     boolean optional() default false;
 
     /**
+     * Optional JSON object fragment merged into this parameter's generated
+     * schema. This preserves nested arrays/unions without weakening runtime
+     * binding to a JSON-encoded string.
+     */
+    String schemaFragment() default "";
+
+    /**
      * Semantic type hint for this parameter, propagated to /mcp/schema.
      * Use "address" for parameters that carry memory addresses.
      * The bridge uses this to apply address sanitization before dispatch.
