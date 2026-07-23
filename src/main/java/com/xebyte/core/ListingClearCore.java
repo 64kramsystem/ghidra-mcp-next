@@ -1,11 +1,13 @@
 package com.xebyte.core;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressRange;
@@ -14,11 +16,12 @@ import ghidra.program.model.address.AddressSetView;
 import ghidra.program.model.listing.Bookmark;
 import ghidra.program.model.listing.BookmarkManager;
 import ghidra.program.model.listing.CodeUnit;
-import ghidra.program.model.listing.CodeUnitIterator;
 import ghidra.program.model.listing.CommentType;
 import ghidra.program.model.listing.Data;
+import ghidra.program.model.listing.DataIterator;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.Instruction;
+import ghidra.program.model.listing.InstructionIterator;
 import ghidra.program.model.listing.Listing;
 import ghidra.program.model.listing.Program;
 import ghidra.program.model.lang.Register;
@@ -142,6 +145,8 @@ final class ListingClearCore {
             List<CodeUnitSnapshot> units,
             List<FunctionSnapshot> functions,
             AnnotationSnapshot annotations,
+            AnnotationSnapshot removedAnnotations,
+            Map<SourceType, Integer> removedReferencesBySource,
             RemovalCounts removalCounts,
             List<String> conflicts) {
 
@@ -149,6 +154,9 @@ final class ListingClearCore {
             expanded = new AddressSet(expanded);
             units = List.copyOf(units);
             functions = List.copyOf(functions);
+            removedReferencesBySource =
+                Collections.unmodifiableMap(
+                    new LinkedHashMap<>(removedReferencesBySource));
             conflicts = List.copyOf(conflicts);
         }
 
@@ -192,14 +200,20 @@ final class ListingClearCore {
         Listing listing = program.getListing();
         Map<Address, CodeUnit> intersecting = new LinkedHashMap<>();
         for (AddressRange range : requested) {
-            addUnit(intersecting, listing.getCodeUnitContaining(range.getMinAddress()));
-            CodeUnitIterator iterator =
-                listing.getCodeUnits(new AddressSet(range.getMinAddress(), range.getMaxAddress()),
-                    true);
-            while (iterator.hasNext()) {
-                addUnit(intersecting, iterator.next());
+            addUnit(intersecting, definedUnitContaining(
+                listing, range.getMinAddress()));
+            AddressSet bounded =
+                new AddressSet(range.getMinAddress(), range.getMaxAddress());
+            InstructionIterator instructions = listing.getInstructions(bounded, true);
+            while (instructions.hasNext()) {
+                addUnit(intersecting, instructions.next());
             }
-            addUnit(intersecting, listing.getCodeUnitContaining(range.getMaxAddress()));
+            DataIterator data = listing.getDefinedData(bounded, true);
+            while (data.hasNext()) {
+                addUnit(intersecting, data.next());
+            }
+            addUnit(intersecting, definedUnitContaining(
+                listing, range.getMaxAddress()));
         }
         if (selection.clearInstructions()) {
             expandDelaySlotGroups(listing, intersecting);
@@ -245,20 +259,37 @@ final class ListingClearCore {
             functions = List.of();
         }
 
-        AnnotationSnapshot annotations = captureAnnotations(program, expanded, preservation);
+        AnnotationPartition annotationPartition =
+            partitionAnnotations(program, expanded, preservation);
         int instructionCount =
             (int) units.stream().filter(unit -> unit.kind() == UnitKind.INSTRUCTION).count();
         int dataCount =
             (int) units.stream().filter(unit -> unit.kind() == UnitKind.DATA).count();
         RemovalCounts removalCounts =
             new RemovalCounts(instructionCount, dataCount, functions.size());
-        return new Plan(expanded, units, functions, annotations, removalCounts, conflicts);
+        return new Plan(
+            expanded,
+            units,
+            functions,
+            annotationPartition.preserved(),
+            annotationPartition.removed(),
+            countReferencesBySource(annotationPartition.removed().references()),
+            removalCounts,
+            conflicts);
     }
 
     private static void addUnit(Map<Address, CodeUnit> units, CodeUnit unit) {
         if (unit != null) {
             units.putIfAbsent(unit.getMinAddress(), unit);
         }
+    }
+
+    private static CodeUnit definedUnitContaining(
+            Listing listing, Address address) {
+        Instruction instruction = listing.getInstructionContaining(address);
+        return instruction != null
+            ? instruction
+            : listing.getDefinedDataContaining(address);
     }
 
     private static boolean isSelected(CodeUnit unit, Selection selection) {
@@ -277,8 +308,9 @@ final class ListingClearCore {
         for (Instruction selected : selectedInstructions) {
             Instruction root = selected;
             while (root.isInDelaySlot()) {
-                CodeUnit previous = listing.getCodeUnitBefore(root.getMinAddress());
-                if (!(previous instanceof Instruction instruction)) {
+                Instruction instruction =
+                    listing.getInstructionBefore(root.getMinAddress());
+                if (instruction == null) {
                     break;
                 }
                 root = instruction;
@@ -289,8 +321,9 @@ final class ListingClearCore {
                 root.getPrototype() != null && root.getPrototype().hasDelaySlots();
             Instruction current = root;
             while (followDelaySlots || current.isInDelaySlot()) {
-                CodeUnit next = listing.getCodeUnitAfter(current.getMaxAddress());
-                if (!(next instanceof Instruction instruction) || !instruction.isInDelaySlot()) {
+                Instruction instruction =
+                    listing.getInstructionAfter(current.getMaxAddress());
+                if (instruction == null || !instruction.isInDelaySlot()) {
                     break;
                 }
                 addUnit(intersecting, instruction);
@@ -324,22 +357,37 @@ final class ListingClearCore {
                         " at " + function.entry());
             }
         }
+        removePlannedLabels(program, plan.removedAnnotations().labels());
+        removePlannedComments(program, plan.removedAnnotations().comments());
+        removePlannedBookmarks(program, plan.removedAnnotations().bookmarks());
+        removeOutgoingReferences(program, plan.expanded());
         for (CodeUnitSnapshot unit : plan.units()) {
             program.getListing().clearCodeUnits(unit.start(), unit.end(), false);
         }
         annotationRestorer.restore(program, plan.annotations());
     }
 
-    private static AnnotationSnapshot captureAnnotations(
+    private record AnnotationPartition(
+            AnnotationSnapshot preserved,
+            AnnotationSnapshot removed) {
+    }
+
+    private static AnnotationPartition partitionAnnotations(
             Program program,
             AddressSetView expanded,
             Preservation preservation) {
-        List<LabelSnapshot> labels = new ArrayList<>();
-        List<CommentSnapshot> comments = new ArrayList<>();
-        List<BookmarkSnapshot> bookmarks = new ArrayList<>();
-        List<ReferenceSnapshot> references = new ArrayList<>();
+        List<LabelSnapshot> preservedLabels = new ArrayList<>();
+        List<CommentSnapshot> preservedComments = new ArrayList<>();
+        List<BookmarkSnapshot> preservedBookmarks = new ArrayList<>();
+        List<ReferenceSnapshot> preservedReferences = new ArrayList<>();
+        List<LabelSnapshot> removedLabels = new ArrayList<>();
+        List<CommentSnapshot> removedComments = new ArrayList<>();
+        List<BookmarkSnapshot> removedBookmarks = new ArrayList<>();
+        List<ReferenceSnapshot> removedReferences = new ArrayList<>();
         if (expanded.isEmpty()) {
-            return new AnnotationSnapshot(labels, comments, bookmarks, references);
+            AnnotationSnapshot empty =
+                new AnnotationSnapshot(List.of(), List.of(), List.of(), List.of());
+            return new AnnotationPartition(empty, empty);
         }
 
         Listing listing = program.getListing();
@@ -350,69 +398,188 @@ final class ListingClearCore {
         var addresses = expanded.getAddresses(true);
         while (addresses.hasNext()) {
             Address address = addresses.next();
-            if (preservation.labels()) {
-                Symbol[] atAddress = symbolTable.getSymbols(address);
-                if (atAddress != null) {
-                    for (Symbol symbol : atAddress) {
-                        if (!symbol.isDynamic() && isPreservedSource(symbol.getSource())) {
-                            labels.add(new LabelSnapshot(
-                                address,
-                                symbol.getName(),
-                                symbol.getParentNamespace(),
-                                symbol.getSource(),
-                                symbol.getSymbolType(),
-                                symbol.isPrimary(),
-                                symbol.isPinned()));
-                        }
+            Symbol[] atAddress = symbolTable.getSymbols(address);
+            if (atAddress != null) {
+                for (Symbol symbol : atAddress) {
+                    // Dynamic symbols are projections of surviving references, not
+                    // owned annotations. They may disappear and reappear as Ghidra
+                    // recomputes them, so neither preservation nor removal counts
+                    // claim them.
+                    if (symbol.isDynamic()
+                            || symbol.getSymbolType() != SymbolType.LABEL) {
+                        continue;
+                    }
+                    LabelSnapshot snapshot = new LabelSnapshot(
+                        address,
+                        symbol.getName(),
+                        symbol.getParentNamespace(),
+                        symbol.getSource(),
+                        symbol.getSymbolType(),
+                        symbol.isPrimary(),
+                        symbol.isPinned());
+                    if (preservation.labels() && !symbol.isDynamic()
+                            && isPreservedSource(symbol.getSource())) {
+                        preservedLabels.add(snapshot);
+                    }
+                    else {
+                        removedLabels.add(snapshot);
                     }
                 }
             }
-            if (preservation.comments()) {
-                for (CommentType type : CommentType.values()) {
-                    String text = listing.getComment(type, address);
-                    if (text != null) {
-                        comments.add(new CommentSnapshot(address, type, text));
-                    }
+            for (CommentType type : CommentType.values()) {
+                String text = listing.getComment(type, address);
+                if (text != null) {
+                    (preservation.comments()
+                        ? preservedComments
+                        : removedComments).add(
+                            new CommentSnapshot(address, type, text));
                 }
             }
-            if (preservation.bookmarks()) {
-                Bookmark[] atAddress = bookmarkManager.getBookmarks(address);
-                if (atAddress != null) {
-                    for (Bookmark bookmark : atAddress) {
-                        bookmarks.add(new BookmarkSnapshot(
+            Bookmark[] bookmarksAtAddress = bookmarkManager.getBookmarks(address);
+            if (bookmarksAtAddress != null) {
+                for (Bookmark bookmark : bookmarksAtAddress) {
+                    (preservation.bookmarks()
+                        ? preservedBookmarks
+                        : removedBookmarks).add(new BookmarkSnapshot(
                             address,
                             bookmark.getTypeString(),
                             bookmark.getCategory(),
                             bookmark.getComment()));
-                    }
                 }
             }
-            if (preservation.userReferences()) {
-                Reference[] fromAddress = referenceManager.getReferencesFrom(address);
-                if (fromAddress != null) {
-                    for (Reference reference : fromAddress) {
-                        if (isPreservedSource(reference.getSource())) {
-                            references.add(snapshot(reference));
-                        }
+            Reference[] fromAddress = referenceManager.getReferencesFrom(address);
+            if (fromAddress != null) {
+                for (Reference reference : fromAddress) {
+                    ReferenceSnapshot snapshot = snapshot(reference);
+                    if (preservation.userReferences()
+                            && isPreservedSource(reference.getSource())) {
+                        preservedReferences.add(snapshot);
+                    }
+                    else {
+                        removedReferences.add(snapshot);
                     }
                 }
             }
         }
 
-        labels.sort(Comparator.comparing(LabelSnapshot::address)
+        Comparator<LabelSnapshot> labelOrder = Comparator.comparing(LabelSnapshot::address)
             .thenComparing(LabelSnapshot::name)
-            .thenComparing(label -> label.source().name()));
-        comments.sort(Comparator.comparing(CommentSnapshot::address)
-            .thenComparingInt(comment -> comment.type().ordinal()));
-        bookmarks.sort(Comparator.comparing(BookmarkSnapshot::address)
-            .thenComparing(BookmarkSnapshot::type)
-            .thenComparing(BookmarkSnapshot::category)
-            .thenComparing(BookmarkSnapshot::comment));
-        references.sort(Comparator.comparing(ReferenceSnapshot::from)
+            .thenComparing(label -> label.source().name());
+        Comparator<CommentSnapshot> commentOrder = Comparator.comparing(CommentSnapshot::address)
+            .thenComparingInt(comment -> comment.type().ordinal());
+        Comparator<BookmarkSnapshot> bookmarkOrder = Comparator.comparing(
+                BookmarkSnapshot::address)
+            .thenComparing(
+                BookmarkSnapshot::type,
+                Comparator.nullsFirst(String::compareTo))
+            .thenComparing(
+                BookmarkSnapshot::category,
+                Comparator.nullsFirst(String::compareTo))
+            .thenComparing(
+                BookmarkSnapshot::comment,
+                Comparator.nullsFirst(String::compareTo));
+        Comparator<ReferenceSnapshot> referenceOrder = Comparator.comparing(
+                ReferenceSnapshot::from)
             .thenComparingInt(ReferenceSnapshot::operandIndex)
             .thenComparing(ReferenceSnapshot::to)
-            .thenComparing(reference -> reference.source().name()));
-        return new AnnotationSnapshot(labels, comments, bookmarks, references);
+            .thenComparing(reference -> reference.source().name());
+        preservedLabels.sort(labelOrder);
+        removedLabels.sort(labelOrder);
+        preservedComments.sort(commentOrder);
+        removedComments.sort(commentOrder);
+        preservedBookmarks.sort(bookmarkOrder);
+        removedBookmarks.sort(bookmarkOrder);
+        preservedReferences.sort(referenceOrder);
+        removedReferences.sort(referenceOrder);
+        return new AnnotationPartition(
+            new AnnotationSnapshot(
+                preservedLabels,
+                preservedComments,
+                preservedBookmarks,
+                preservedReferences),
+            new AnnotationSnapshot(
+                removedLabels,
+                removedComments,
+                removedBookmarks,
+                removedReferences));
+    }
+
+    private static Map<SourceType, Integer> countReferencesBySource(
+            List<ReferenceSnapshot> references) {
+        Map<SourceType, Integer> counts = new LinkedHashMap<>();
+        for (SourceType source : SourceType.values()) {
+            int count = (int) references.stream()
+                .filter(reference -> reference.source() == source)
+                .count();
+            if (count > 0) {
+                counts.put(source, count);
+            }
+        }
+        return counts;
+    }
+
+    private static void removePlannedLabels(
+            Program program, List<LabelSnapshot> labels) {
+        SymbolTable table = program.getSymbolTable();
+        for (LabelSnapshot snapshot : labels) {
+            Symbol[] atAddress = table.getSymbols(snapshot.address());
+            if (atAddress == null) {
+                continue;
+            }
+            for (Symbol symbol : atAddress) {
+                if (!symbol.isDynamic()
+                        && symbol.getSymbolType() == SymbolType.LABEL
+                        && snapshot.name().equals(symbol.getName())
+                        && snapshot.source() == symbol.getSource()
+                        && Objects.equals(
+                            snapshot.namespace(), symbol.getParentNamespace())) {
+                    if (!symbol.delete() && !symbol.isDeleted()) {
+                        throw new IllegalStateException(
+                            "failed to remove label " + snapshot.name()
+                                + " at " + snapshot.address());
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    private static void removePlannedComments(
+            Program program, List<CommentSnapshot> comments) {
+        Listing listing = program.getListing();
+        for (CommentSnapshot comment : comments) {
+            listing.setComment(comment.address(), comment.type(), null);
+        }
+    }
+
+    private static void removePlannedBookmarks(
+            Program program, List<BookmarkSnapshot> snapshots) {
+        BookmarkManager manager = program.getBookmarkManager();
+        for (BookmarkSnapshot snapshot : snapshots) {
+            Bookmark[] atAddress = manager.getBookmarks(snapshot.address());
+            if (atAddress == null) {
+                continue;
+            }
+            for (Bookmark bookmark : atAddress) {
+                if (Objects.equals(snapshot.type(), bookmark.getTypeString())
+                        && Objects.equals(
+                            snapshot.category(), bookmark.getCategory())
+                        && Objects.equals(
+                            snapshot.comment(), bookmark.getComment())) {
+                    manager.removeBookmark(bookmark);
+                    break;
+                }
+            }
+        }
+    }
+
+    private static void removeOutgoingReferences(
+            Program program, AddressSetView affected) {
+        ReferenceManager manager = program.getReferenceManager();
+        var addresses = affected.getAddresses(true);
+        while (addresses.hasNext()) {
+            manager.removeAllReferencesFrom(addresses.next());
+        }
     }
 
     private static boolean isPreservedSource(SourceType source) {
@@ -467,11 +634,25 @@ final class ListingClearCore {
         Listing listing = program.getListing();
         for (CommentSnapshot comment : annotations.comments()) {
             listing.setComment(comment.address(), comment.type(), comment.text());
+            if (!Objects.equals(
+                    comment.text(),
+                    listing.getComment(comment.type(), comment.address()))) {
+                throw new IllegalStateException(
+                    "failed to restore " + comment.type()
+                        + " comment at " + comment.address());
+            }
         }
         BookmarkManager bookmarks = program.getBookmarkManager();
         for (BookmarkSnapshot bookmark : annotations.bookmarks()) {
-            bookmarks.setBookmark(
-                bookmark.address(), bookmark.type(), bookmark.category(), bookmark.comment());
+            Bookmark restored = bookmarks.setBookmark(
+                bookmark.address(),
+                bookmark.type(),
+                bookmark.category(),
+                bookmark.comment());
+            if (restored == null) {
+                throw new IllegalStateException(
+                    "failed to restore bookmark at " + bookmark.address());
+            }
         }
         restoreReferences(program, annotations.references());
     }
@@ -489,13 +670,16 @@ final class ListingClearCore {
                 symbol = table.createLabel(
                     label.address(), label.name(), namespace, label.source());
             }
-            if (symbol != null) {
-                if (label.primary() && !symbol.isPrimary()) {
-                    symbol.setPrimary();
-                }
-                if (label.pinned() != symbol.isPinned()) {
-                    symbol.setPinned(label.pinned());
-                }
+            if (symbol == null) {
+                throw new IllegalStateException(
+                    "failed to restore label " + label.name()
+                        + " at " + label.address());
+            }
+            if (label.primary() && !symbol.isPrimary()) {
+                symbol.setPrimary();
+            }
+            if (label.pinned() != symbol.isPinned()) {
+                symbol.setPinned(label.pinned());
             }
         }
     }

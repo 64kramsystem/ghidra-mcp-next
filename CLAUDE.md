@@ -2,7 +2,7 @@
 
 ## Overview
 
-Ghidra MCP 5.15.0 exposes 235 tools through a Java Ghidra extension/headless
+Ghidra MCP 5.15.0 exposes 236 tools through a Java Ghidra extension/headless
 server and a Python MCP bridge.
 
 ```text
@@ -35,7 +35,7 @@ asked.
   handling.
 - `python/bridge_mcp_ghidra/` — discovery, schema normalization, tool groups,
   dispatch, transports, and CLI.
-- `tests/endpoints.json` — authoritative repository catalog (235 endpoints).
+- `tests/endpoints.json` — authoritative repository catalog (236 endpoints).
 - `ghidra_scripts/` — exact reviewed generic-script allowlist.
 - `tools/setup/` — setup, Maven build, deploy, and atomic version management.
 

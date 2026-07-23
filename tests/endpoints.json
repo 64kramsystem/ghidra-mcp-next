@@ -1,7 +1,7 @@
 {
   "version": "5.15.0",
   "description": "GhidraMCP REST API Endpoint Specification",
-  "total_endpoints": 235,
+  "total_endpoints": 236,
   "categories": {
     "listing": "List program data",
     "getter": "Get specific data",
@@ -2535,6 +2535,25 @@
       "category": "utility",
       "params": [],
       "description": "List all running Ghidra tool windows"
+    },
+    {
+      "path": "/undefine_range",
+      "method": "POST",
+      "category": "listing",
+      "params": [
+        "start",
+        "end",
+        "clear_instructions",
+        "clear_data",
+        "preserve_labels",
+        "preserve_comments",
+        "preserve_bookmarks",
+        "preserve_user_references",
+        "remove_intersecting_functions",
+        "dry_run",
+        "program"
+      ],
+      "description": "Preview or atomically clear complete instructions and/or data units"
     },
     {
       "path": "/validate_data_type",
