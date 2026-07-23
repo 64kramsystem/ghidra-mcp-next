@@ -59,6 +59,7 @@ public class HeadlessEndpointHandler {
     private final com.xebyte.core.ProgramScriptService programScriptService;
     private final com.xebyte.core.MemoryBlockService memoryBlockService;
     private final com.xebyte.core.DataRegionService dataRegionService;
+    private final com.xebyte.core.SymbolProfileService symbolProfileService;
     private final com.xebyte.core.EmulationService emulationService;
     private final com.xebyte.core.ExportService exportService;
     private final com.xebyte.core.FlowDisassemblyService flowDisassemblyService;
@@ -85,6 +86,9 @@ public class HeadlessEndpointHandler {
             new com.xebyte.core.MemoryBlockService(programProvider, threadingStrategy);
         this.dataRegionService =
             new com.xebyte.core.DataRegionService(programProvider, threadingStrategy);
+        this.symbolProfileService =
+            new com.xebyte.core.SymbolProfileService(
+                programProvider, threadingStrategy);
         this.emulationService = new com.xebyte.core.EmulationService(programProvider, threadingStrategy);
         this.exportService = new com.xebyte.core.ExportService(programProvider);
         this.flowDisassemblyService =
@@ -116,6 +120,9 @@ public class HeadlessEndpointHandler {
     }
     public com.xebyte.core.DataRegionService getDataRegionService() {
         return dataRegionService;
+    }
+    public com.xebyte.core.SymbolProfileService getSymbolProfileService() {
+        return symbolProfileService;
     }
     public com.xebyte.core.EmulationService getEmulationService() { return emulationService; }
     public com.xebyte.core.ExportService getExportService() { return exportService; }

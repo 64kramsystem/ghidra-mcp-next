@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.regex.Pattern;
+import ghidra.program.model.mem.Memory;
 
 /**
  * Strict, platform-neutral parser for versioned symbol profiles.
@@ -320,6 +321,10 @@ public final class SymbolProfileParser {
             rejectUnknown(object, BLOCK_FIELDS, path);
             String name =
                 requireNonBlankString(object, "name", path);
+            if (!Memory.isValidMemoryBlockName(name)) {
+                throw invalid(
+                    path + " invalid memory block name '" + name + "'");
+            }
             String start = requireAddress(object, "start", path);
             long length = requireLong(object, "length", path);
             if (length <= 0) {

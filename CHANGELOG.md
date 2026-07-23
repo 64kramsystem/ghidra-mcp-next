@@ -26,6 +26,11 @@ Complete version history for the Ghidra MCP Server project.
   to operation safety. Dynamic handlers validate their captured
   name/method/path after reconnect, replay only GET requests, and use hidden
   MCP context for `tools/list_changed`.
+- Added `validate_symbol_profile` and `apply_symbol_profile` for strict,
+  versioned, platform-neutral metadata profiles. Profiles can preview or
+  atomically apply labels, nested namespaces, entry points, value and operand
+  equates, address comments, and opt-in memory blocks with deterministic
+  idempotence and explicit `error`, `keep`, or protected `replace` policies.
 - Added `apply_data_regions` for atomic fixed data ranges, interleaved
   records, and generic contiguous or independently addressed split pointer
   tables with dry-run previews, conflict preservation, cancellation-safe

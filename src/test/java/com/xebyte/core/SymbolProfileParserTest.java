@@ -178,6 +178,10 @@ public class SymbolProfileParserTest {
             {"schema_version":1,"id":"x","version":"1","memory_blocks":[{
               "name":"x","start":"1000","length":1,"fill":256}]}
             """, "fill");
+        assertRejected("""
+            {"schema_version":1,"id":"x","version":"1","memory_blocks":[{
+              "name":"bad\\nname","start":"1000","length":1}]}
+            """, "invalid memory block name");
     }
 
     private static SymbolProfileParser.SymbolProfile parse(String json) {
