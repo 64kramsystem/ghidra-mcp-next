@@ -11,6 +11,8 @@ import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import javax.swing.SwingUtilities;
+
 import org.junit.Before;
 import org.junit.Test;
 
@@ -171,6 +173,32 @@ public class FlowDisassemblyServiceGhidraTest {
             response.toJson().contains("\"request_identity\":\"analysis-request-42\""));
         assertTrue(response.toJson(),
             response.toJson().contains("\"analysis_request\""));
+        assertEquals(1, analysisCalls.get());
+    }
+
+    @Test
+    public void postCommitAnalysisQueueRunsThroughGuiThreadingStrategy() {
+        FlowDisassemblyService service = new FlowDisassemblyService(
+            provider,
+            new SwingThreadingStrategy(),
+            (ignoredProgram, request) -> plan,
+            (ignoredProgram, ignoredPlan, ignoredClearPlan) ->
+                new FlowDisassemblyService.CommitResult(
+                    plan.plannedNewInstructions(), List.of()),
+            (ignoredProgram, ignoredSet) -> {
+                assertTrue(
+                    "GUI analysis scheduling must run on the Swing event thread",
+                    SwingUtilities.isEventDispatchThread());
+                analysisCalls.incrementAndGet();
+                return new FlowDisassemblyService.AnalysisSubmission(
+                    true, "analysis-request-gui");
+            });
+
+        Response response = call(service, false, true);
+
+        assertTrue(response.toJson(), response instanceof Response.Ok);
+        assertTrue(response.toJson(),
+            response.toJson().contains("\"analysis_status\":\"queued\""));
         assertEquals(1, analysisCalls.get());
     }
 

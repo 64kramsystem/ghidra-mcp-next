@@ -243,7 +243,10 @@ public class AnalysisService {
     public Response configureAnalyzer(
             @Param(value = "analyzer", source = ParamSource.BODY)
             String analyzer,
-            @Param(value = "enabled", source = ParamSource.BODY)
+            @Param(
+                value = "enabled",
+                source = ParamSource.BODY,
+                strictBoolean = true)
             boolean enabled,
             @Param(
                 value = "program",
@@ -274,7 +277,8 @@ public class AnalysisService {
             @Param(
                 value = "dry_run",
                 source = ParamSource.BODY,
-                defaultValue = "true")
+                defaultValue = "true",
+                strictBoolean = true)
             boolean dryRun,
             @Param(
                 value = "program",
@@ -437,6 +441,9 @@ public class AnalysisService {
             }
             catch (RuntimeException ignored) {
                 // Some unavailable analyzers cannot compute a program default.
+            }
+            if (!options.contains(analyzerName)) {
+                return defaultEnabled;
             }
             return options.getBoolean(analyzerName, defaultEnabled);
         }
@@ -5369,7 +5376,6 @@ public class AnalysisService {
         return Response.ok(out);
     }
 }
-
 
 
 

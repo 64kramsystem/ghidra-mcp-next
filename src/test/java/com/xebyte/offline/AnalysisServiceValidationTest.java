@@ -2,6 +2,7 @@ package com.xebyte.offline;
 
 import com.xebyte.core.AnalysisService;
 import com.xebyte.core.AnnotationScanner;
+import com.xebyte.core.EndpointDef;
 import com.xebyte.core.FunctionService;
 import com.xebyte.core.Response;
 import com.xebyte.core.ThreadingStrategy;
@@ -107,5 +108,53 @@ public class AnalysisServiceValidationTest extends TestCase {
         assertFalse(
             "raw /configure_analyzer registration duplicates the annotated route",
             source.contains("safeContext(\"/configure_analyzer\""));
+    }
+
+    public void testAnalyzerConfigurationRejectsUnsafeBooleanCoercionAtTransport()
+            throws Exception {
+        AnnotationScanner scanner = new AnnotationScanner(
+            ServiceFactory.stubProvider(), ServiceFactory.buildAllServices());
+        EndpointDef single = scanner.getEndpoints().stream()
+            .filter(endpoint -> "/configure_analyzer".equals(endpoint.path()))
+            .findFirst()
+            .orElseThrow();
+        EndpointDef batch = scanner.getEndpoints().stream()
+            .filter(endpoint -> "/configure_analyzers".equals(endpoint.path()))
+            .findFirst()
+            .orElseThrow();
+
+        Response missingEnabled = single.handler().handle(
+            Map.of(),
+            Map.of("analyzer", "Subroutine References"));
+        assertTrue(missingEnabled instanceof Response.Err);
+        assertTrue(
+            missingEnabled.toJson(),
+            missingEnabled.toJson().contains("enabled") &&
+                missingEnabled.toJson().contains("required"));
+
+        Response malformedEnabled = single.handler().handle(
+            Map.of(),
+            Map.of(
+                "analyzer", "Subroutine References",
+                "enabled", "disable"));
+        assertTrue(malformedEnabled instanceof Response.Err);
+        assertTrue(
+            malformedEnabled.toJson(),
+            malformedEnabled.toJson().contains("enabled") &&
+                malformedEnabled.toJson().contains("JSON boolean"));
+
+        Response malformedDryRun = batch.handler().handle(
+            Map.of(),
+            Map.of(
+                "changes",
+                List.of(Map.of(
+                    "analyzer", "Subroutine References",
+                    "enabled", true)),
+                "dry_run", "commit"));
+        assertTrue(malformedDryRun instanceof Response.Err);
+        assertTrue(
+            malformedDryRun.toJson(),
+            malformedDryRun.toJson().contains("dry_run") &&
+                malformedDryRun.toJson().contains("JSON boolean"));
     }
 }

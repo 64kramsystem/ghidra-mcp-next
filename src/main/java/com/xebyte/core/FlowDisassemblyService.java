@@ -11,6 +11,7 @@ import java.util.PriorityQueue;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.UUID;
 
 import com.google.gson.JsonElement;
 import com.google.gson.JsonParseException;
@@ -35,6 +36,7 @@ import ghidra.program.model.listing.Program;
 import ghidra.program.model.mem.Memory;
 import ghidra.program.model.symbol.FlowType;
 import ghidra.program.model.symbol.SourceType;
+import ghidra.util.Msg;
 import ghidra.util.task.TaskMonitor;
 
 /**
@@ -117,7 +119,7 @@ public final class FlowDisassemblyService {
         this(
             programProvider,
             threadingStrategy,
-            FlowDisassemblyService::submitAnalysis);
+            defaultAnalysisQueue(threadingStrategy));
     }
 
     FlowDisassemblyService(
@@ -316,8 +318,9 @@ public final class FlowDisassemblyService {
             AnalysisSubmission submission = null;
             if (request.enableAnalysis() && !committed.createdInstructions().isEmpty()) {
                 try {
-                    submission =
-                        analysisQueue.submit(program, committed.createdInstructions());
+                    submission = threadingStrategy.executeRead(() ->
+                        analysisQueue.submit(
+                            program, committed.createdInstructions()));
                     if (submission != null && submission.queued()) {
                         analysisStatus = "queued";
                     }
@@ -1364,13 +1367,46 @@ public final class FlowDisassemblyService {
         return disassembler.disassemble(starts, restriction, followFlow);
     }
 
+    private static AnalysisQueue defaultAnalysisQueue(
+            ThreadingStrategy threadingStrategy) {
+        return (program, created) ->
+            submitAnalysis(program, created, threadingStrategy);
+    }
+
     private static AnalysisSubmission submitAnalysis(
             Program program,
-            AddressSetView created) {
+            AddressSetView created,
+            ThreadingStrategy threadingStrategy) {
         AutoAnalysisManager manager =
             AutoAnalysisManager.getAnalysisManager(program);
         manager.codeDefined(created);
-        return new AnalysisSubmission(manager.startBackgroundAnalysis(), null);
+        String requestIdentity = "analysis-" + UUID.randomUUID();
+        if (!threadingStrategy.isHeadless()) {
+            return new AnalysisSubmission(
+                manager.startBackgroundAnalysis(), requestIdentity);
+        }
+
+        Thread worker = new Thread(() -> {
+            try {
+                threadingStrategy.executeWrite(
+                    program,
+                    "Run Scoped Auto Analysis",
+                    () -> {
+                        manager.startAnalysis(TaskMonitor.DUMMY);
+                        return null;
+                    });
+            }
+            catch (Exception failure) {
+                Msg.error(
+                    FlowDisassemblyService.class,
+                    "Scoped auto-analysis request " + requestIdentity +
+                        " failed",
+                    failure);
+            }
+        }, "ghidra-mcp-" + requestIdentity);
+        worker.setDaemon(true);
+        worker.start();
+        return new AnalysisSubmission(true, requestIdentity);
     }
 
     private static Map<String, Object> resultMap(

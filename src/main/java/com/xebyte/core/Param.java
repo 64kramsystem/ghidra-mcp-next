@@ -53,6 +53,13 @@ public @interface Param {
     String description() default "";
 
     /**
+     * Require a body boolean to be present when it has no default and to arrive
+     * as a JSON boolean rather than coercing strings, numbers, or other values.
+     * This is intended for safety-sensitive mutation controls.
+     */
+    boolean strictBoolean() default false;
+
+    /**
      * Semantic type hint for this parameter, propagated to /mcp/schema.
      * Use "address" for parameters that carry memory addresses.
      * The bridge uses this to apply address sanitization before dispatch.
