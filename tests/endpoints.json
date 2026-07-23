@@ -1,7 +1,7 @@
 {
   "version": "5.15.0",
   "description": "GhidraMCP REST API Endpoint Specification",
-  "total_endpoints": 236,
+  "total_endpoints": 238,
   "categories": {
     "listing": "List program data",
     "getter": "Get specific data",
@@ -446,12 +446,25 @@
       "path": "/configure_analyzer",
       "method": "POST",
       "category": "analysis",
+      "supports_dry_run": false,
       "params": [
-        "name",
+        "analyzer",
         "enabled",
         "program"
       ],
-      "description": "Configure an analysis plugin"
+      "description": "Enable or disable one exact analyzer without running analysis"
+    },
+    {
+      "path": "/configure_analyzers",
+      "method": "POST",
+      "category": "analysis",
+      "supports_dry_run": false,
+      "params": [
+        "changes",
+        "dry_run",
+        "program"
+      ],
+      "description": "Atomically preview or apply ordered exact-name analyzer enablement changes"
     },
     {
       "path": "/convert_number",
@@ -1141,6 +1154,15 @@
         "program"
       ],
       "description": "List all physical and overlay address spaces in the program (overlays include is_overlay flag and overlayed_space name)"
+    },
+    {
+      "path": "/get_analyzer_configuration",
+      "method": "GET",
+      "category": "analysis",
+      "params": [
+        "program"
+      ],
+      "description": "Inspect exact analyzer names, enabled states, types, priorities, and availability"
     },
     {
       "path": "/get_assembly_context",

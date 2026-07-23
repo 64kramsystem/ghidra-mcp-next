@@ -321,6 +321,7 @@
                                 <additionalClasspathElement>${ghidra.test.install.dir}/Ghidra/Framework/Generic/lib/log4j-core-2.25.4.jar</additionalClasspathElement>
                                 <!-- Generic collections and XML support loaded by ProgramDB. -->
                                 <additionalClasspathElement>${ghidra.test.install.dir}/Ghidra/Framework/Generic/lib/commons-collections4-4.1.jar</additionalClasspathElement>
+                                <additionalClasspathElement>${ghidra.test.install.dir}/Ghidra/Framework/Generic/lib/commons-io-2.19.0.jar</additionalClasspathElement>
                                 <additionalClasspathElement>${ghidra.test.install.dir}/Ghidra/Framework/Generic/lib/guava-32.1.3-jre.jar</additionalClasspathElement>
                                 <additionalClasspathElement>${ghidra.test.install.dir}/Ghidra/Framework/Generic/lib/jdom2-2.0.6.1.jar</additionalClasspathElement>
                                 <!-- Runtime-only framework modules reached during language initialization. -->

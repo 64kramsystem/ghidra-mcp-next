@@ -2,6 +2,7 @@ package com.xebyte.core;
 
 import ghidra.app.decompiler.DecompileResults;
 import ghidra.app.plugin.core.analysis.AutoAnalysisManager;
+import ghidra.app.services.Analyzer;
 import ghidra.framework.options.Options;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressIterator;
@@ -33,6 +34,7 @@ import ghidra.program.model.symbol.ReferenceManager;
 import ghidra.program.model.symbol.Symbol;
 
 import ghidra.util.Msg;
+import ghidra.util.classfinder.ClassSearcher;
 import ghidra.util.task.ConsoleTaskMonitor;
 import ghidra.util.task.TaskMonitor;
 
@@ -163,20 +165,295 @@ public class AnalysisService {
         Program program = pe.program();
 
         try {
-            Options options = program.getOptions(Program.ANALYSIS_PROPERTIES);
-            List<String> names = options.getOptionNames();
-            List<Map<String, Object>> entries = new ArrayList<>();
-            for (String name : names) {
-                try {
-                    boolean enabled = options.getBoolean(name, false);
-                    entries.add(JsonHelper.mapOf("name", name, "enabled", enabled));
-                } catch (Exception ignored) {
-                    // Not a boolean option -- skip non-analyzer properties
+            return threadingStrategy.executeRead(() -> {
+                AnalyzerConfiguration.Backend backend =
+                    new GhidraAnalyzerBackend(program);
+                List<Map<String, Object>> entries = new ArrayList<>();
+                for (AnalyzerConfiguration.AnalyzerDescriptor descriptor :
+                        backend.descriptors()) {
+                    entries.add(JsonHelper.mapOf(
+                        "name", descriptor.analyzer(),
+                        "enabled", backend.readEnabled(descriptor.analyzer()),
+                        "available", descriptor.available(),
+                        "description", descriptor.description(),
+                        "analysis_type", descriptor.analysisType(),
+                        "priority", descriptor.priority()));
                 }
-            }
-            return Response.ok(JsonHelper.mapOf("analyzers", entries, "count", entries.size()));
+                return Response.ok(JsonHelper.mapOf(
+                    "program", program.getName(),
+                    "analyzers", entries,
+                    "count", entries.size()));
+            });
         } catch (Exception e) {
             return Response.err(e.getMessage());
+        }
+    }
+
+    @McpTool(
+        path = "/get_analyzer_configuration",
+        description = "Inspect exact analyzer names, enabled states, types, priorities, and availability",
+        category = "analysis")
+    public Response getAnalyzerConfiguration(
+            @Param(
+                value = "program",
+                description = "Target program name (omit to use the active program)",
+                defaultValue = "")
+            String programName) {
+        ServiceUtils.ProgramOrError pe =
+            ServiceUtils.getProgramOrError(programProvider, programName);
+        if (pe.hasError()) return pe.error();
+        Program program = pe.program();
+
+        try {
+            return threadingStrategy.executeRead(() -> {
+                AnalyzerConfiguration.Backend backend =
+                    new GhidraAnalyzerBackend(program);
+                List<Map<String, Object>> entries = new ArrayList<>();
+                for (AnalyzerConfiguration.AnalyzerDescriptor descriptor :
+                        backend.descriptors()) {
+                    entries.add(JsonHelper.mapOf(
+                        "analyzer", descriptor.analyzer(),
+                        "enabled", backend.readEnabled(descriptor.analyzer()),
+                        "available", descriptor.available(),
+                        "description", descriptor.description(),
+                        "analysis_type", descriptor.analysisType(),
+                        "priority", descriptor.priority()));
+                }
+                return Response.ok(JsonHelper.mapOf(
+                    "program", program.getName(),
+                    "analyzers", entries,
+                    "count", entries.size(),
+                    "analysis_run", false,
+                    "message",
+                    "Configuration inspection does not run analysis or change existing artifacts."));
+            });
+        }
+        catch (Exception e) {
+            return Response.err(
+                "Unable to inspect analyzer configuration: " + e.getMessage());
+        }
+    }
+
+    @McpTool(
+        path = "/configure_analyzer",
+        method = "POST",
+        description = "Enable or disable one exact analyzer without running analysis",
+        category = "analysis",
+        supportsDryRun = false)
+    public Response configureAnalyzer(
+            @Param(value = "analyzer", source = ParamSource.BODY)
+            String analyzer,
+            @Param(value = "enabled", source = ParamSource.BODY)
+            boolean enabled,
+            @Param(
+                value = "program",
+                description = "Target program name (omit to use the active program)",
+                defaultValue = "")
+            String programName) {
+        return configureAnalyzers(
+            JsonHelper.toJson(List.of(Map.of(
+                "analyzer", analyzer == null ? "" : analyzer,
+                "enabled", enabled))),
+            false,
+            programName);
+    }
+
+    @McpTool(
+        path = "/configure_analyzers",
+        method = "POST",
+        description = "Atomically preview or apply ordered exact-name analyzer enablement changes",
+        category = "analysis",
+        supportsDryRun = false)
+    public Response configureAnalyzers(
+            @Param(
+                value = "changes",
+                source = ParamSource.BODY,
+                fieldsJson = true,
+                description = "Ordered array of {analyzer, enabled} objects")
+            String changesJson,
+            @Param(
+                value = "dry_run",
+                source = ParamSource.BODY,
+                defaultValue = "true")
+            boolean dryRun,
+            @Param(
+                value = "program",
+                description = "Target program name (omit to use the active program)",
+                defaultValue = "")
+            String programName) {
+        ServiceUtils.ProgramOrError pe =
+            ServiceUtils.getProgramOrError(programProvider, programName);
+        if (pe.hasError()) return pe.error();
+        Program program = pe.program();
+
+        try {
+            AnalyzerConfiguration.Outcome outcome;
+            if (dryRun) {
+                outcome = threadingStrategy.executeRead(() ->
+                    AnalyzerConfiguration.configure(
+                        new GhidraAnalyzerBackend(program), changesJson, true));
+            }
+            else {
+                outcome = threadingStrategy.executeWrite(
+                    program,
+                    "Configure Analyzers",
+                    () -> AnalyzerConfiguration.configure(
+                        new GhidraAnalyzerBackend(program), changesJson, false));
+            }
+            return analyzerConfigurationResponse(program, outcome);
+        }
+        catch (Exception e) {
+            // If an exceptional backend prevented the explicit in-transaction
+            // restoration, executeWrite rolled the options back. Reinitialize
+            // afterward so scheduler state observes those rolled-back values.
+            if (!dryRun) {
+                try {
+                    threadingStrategy.executeRead(() -> {
+                        new GhidraAnalyzerBackend(program).synchronize();
+                        return null;
+                    });
+                }
+                catch (Exception synchronizationFailure) {
+                    e.addSuppressed(synchronizationFailure);
+                }
+            }
+            return Response.err(
+                "Analyzer configuration failed atomically; no analysis was run: " +
+                exceptionDetails(e));
+        }
+    }
+
+    private static Response analyzerConfigurationResponse(
+            Program program,
+            AnalyzerConfiguration.Outcome outcome) {
+        List<Map<String, Object>> states = new ArrayList<>();
+        for (AnalyzerConfiguration.AnalyzerState state : outcome.analyzers()) {
+            states.add(JsonHelper.mapOf(
+                "analyzer", state.analyzer(),
+                "before", state.before(),
+                "requested", state.requested(),
+                "after", state.after()));
+        }
+        return Response.ok(JsonHelper.mapOf(
+            "program", program.getName(),
+            "dry_run", outcome.dryRun(),
+            "committed", outcome.committed(),
+            "analyzers", states,
+            "analysis_run", false,
+            "message",
+            "Analyzer configuration does not run analysis or remove existing functions, instructions, or analyzer artifacts."));
+    }
+
+    private static String exceptionDetails(Exception failure) {
+        String message = failure.getMessage();
+        if (message == null || message.isBlank()) {
+            message = failure.getClass().getSimpleName();
+        }
+        if (failure.getSuppressed().length == 0) {
+            return message;
+        }
+        List<String> rollbackFailures = Arrays.stream(failure.getSuppressed())
+            .map(suppressed -> {
+                String detail = suppressed.getMessage();
+                return detail == null || detail.isBlank()
+                    ? suppressed.getClass().getSimpleName()
+                    : detail;
+            })
+            .toList();
+        return message + "; rollback verification failures: " +
+            rollbackFailures;
+    }
+
+    /**
+     * Backs the transport-neutral atomic core with Ghidra's analyzer registry
+     * and ANALYSIS_PROPERTIES option store. Only actual Analyzer extension
+     * points are exposed; unrelated boolean options are never treated as
+     * analyzers.
+     */
+    private static final class GhidraAnalyzerBackend
+            implements AnalyzerConfiguration.Backend {
+        private final Program program;
+        private final Options options;
+        private final AutoAnalysisManager manager;
+        private final Map<String, Analyzer> analyzers;
+        private final List<AnalyzerConfiguration.AnalyzerDescriptor> descriptors;
+
+        GhidraAnalyzerBackend(Program program) {
+            this.program = program;
+            this.options = program.getOptions(Program.ANALYSIS_PROPERTIES);
+            this.manager = AutoAnalysisManager.getAnalysisManager(program);
+
+            Map<String, Analyzer> discovered = new TreeMap<>();
+            for (Analyzer candidate : ClassSearcher.getInstances(Analyzer.class)) {
+                discovered.putIfAbsent(candidate.getName(), candidate);
+            }
+
+            // The manager is authoritative for analyzer availability for this
+            // exact program and may select a program-specific implementation.
+            for (String name : new ArrayList<>(discovered.keySet())) {
+                Analyzer available = manager.getAnalyzer(name);
+                if (available != null) {
+                    discovered.put(name, available);
+                }
+            }
+            this.analyzers = Map.copyOf(discovered);
+
+            List<AnalyzerConfiguration.AnalyzerDescriptor> records =
+                new ArrayList<>();
+            for (Map.Entry<String, Analyzer> entry : discovered.entrySet()) {
+                Analyzer analyzer = entry.getValue();
+                boolean available = manager.getAnalyzer(entry.getKey()) != null;
+                records.add(new AnalyzerConfiguration.AnalyzerDescriptor(
+                    entry.getKey(),
+                    analyzer.getDescription() == null
+                        ? ""
+                        : analyzer.getDescription(),
+                    analyzer.getAnalysisType() == null
+                        ? ""
+                        : analyzer.getAnalysisType().name(),
+                    analyzer.getPriority() == null
+                        ? ""
+                        : analyzer.getPriority().toString(),
+                    available));
+            }
+            this.descriptors = List.copyOf(records);
+        }
+
+        @Override
+        public List<AnalyzerConfiguration.AnalyzerDescriptor> descriptors() {
+            return descriptors;
+        }
+
+        @Override
+        public boolean readEnabled(String analyzerName) {
+            Analyzer analyzer = analyzers.get(analyzerName);
+            if (analyzer == null) {
+                throw new IllegalArgumentException(
+                    "Unknown analyzer: " + analyzerName);
+            }
+            boolean defaultEnabled = false;
+            try {
+                defaultEnabled = analyzer.getDefaultEnablement(program);
+            }
+            catch (RuntimeException ignored) {
+                // Some unavailable analyzers cannot compute a program default.
+            }
+            return options.getBoolean(analyzerName, defaultEnabled);
+        }
+
+        @Override
+        public void setEnabled(String analyzerName, boolean enabled) {
+            if (!options.contains(analyzerName)) {
+                throw new IllegalStateException(
+                    "Analyzer option is not registered for this program: " +
+                    analyzerName);
+            }
+            options.setBoolean(analyzerName, enabled);
+        }
+
+        @Override
+        public void synchronize() {
+            manager.initializeOptions();
         }
     }
 
@@ -5092,8 +5369,6 @@ public class AnalysisService {
         return Response.ok(out);
     }
 }
-
-
 
 
 
