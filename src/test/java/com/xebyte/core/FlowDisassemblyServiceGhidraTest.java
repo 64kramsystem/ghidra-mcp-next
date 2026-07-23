@@ -943,10 +943,11 @@ public class FlowDisassemblyServiceGhidraTest {
             builder.withTransaction(() -> {
                 liveProgram.getMemory().getBlock(builder.addr("0x1000"))
                     .setExecute(false);
-                liveProgram.getOptions(Program.PROGRAM_INFO).setBoolean(
+                liveProgram.getOptions(Program.DISASSEMBLER_PROPERTIES).setBoolean(
                     Disassembler.RESTRICT_DISASSEMBLY_TO_EXECUTE_MEMORY_PROPERTY,
                     true);
             });
+            assertTrue(Disassembler.isRestrictToExecuteMemory(liveProgram));
 
             FlowDisassemblyService service = liveService(liveProgram);
             Response preview = service.disassembleFlow(
