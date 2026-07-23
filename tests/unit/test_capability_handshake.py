@@ -264,6 +264,11 @@ def test_registry_adapter_rejects_wrong_version_and_stages_atomically(monkeypatc
         adapter.replace_dynamic({"static": Tool("static")})
     assert mcp._tool_manager._tools["dynamic"] is dynamic
 
+    static = mcp._tool_manager._tools.pop("static")
+    with pytest.raises(handshake.HandshakeError, match="disappeared"):
+        adapter.replace_dynamic({})
+    mcp._tool_manager._tools["static"] = static
+
 
 def test_runtime_dependency_and_startup_adapter_are_exact():
     root = Path(__file__).resolve().parents[2]

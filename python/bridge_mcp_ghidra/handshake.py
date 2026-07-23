@@ -399,11 +399,13 @@ class RegistryAdapter:
                     f"{getattr(tool, 'name', None)!r}",
                 )
         current = self._manager._tools
-        static = {
-            name: current[name]
-            for name in self._static_names
-            if name in current
-        }
+        missing = self._static_names.difference(current)
+        if missing:
+            raise HandshakeError(
+                "registration failure",
+                f"static tools disappeared from FastMCP registry: {sorted(missing)}",
+            )
+        static = {name: current[name] for name in self._static_names}
         staged = {**static, **dynamic}
         self._manager._tools = staged
         published = self._manager._tools
