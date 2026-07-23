@@ -17,9 +17,6 @@ public sealed interface Response permits Response.Ok, Response.Err, Response.Tex
     record Ok(Object data) implements Response {
         @Override
         public String toJson() {
-            if (data instanceof com.google.gson.JsonElement jsonElement) {
-                return jsonElement.toString();
-            }
             return JsonHelper.toJson(data);
         }
     }

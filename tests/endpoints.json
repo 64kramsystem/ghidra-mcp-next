@@ -1020,6 +1020,7 @@
       "path": "/export_ascii_listing",
       "method": "POST",
       "category": "export",
+      "supports_dry_run": false,
       "params": [
         "output_path",
         "start",

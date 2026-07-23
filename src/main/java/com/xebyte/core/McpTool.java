@@ -35,4 +35,10 @@ public @interface McpTool {
 
     /** Tool category for grouping (e.g., "listing", "function", "analysis"). */
     String category() default "";
+
+    /**
+     * Whether transports may expose the generic transaction-backed synthetic
+     * {@code dry_run} parameter for this POST endpoint.
+     */
+    boolean supportsDryRun() default true;
 }

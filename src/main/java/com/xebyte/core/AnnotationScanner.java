@@ -148,6 +148,10 @@ public class AnnotationScanner {
         boolean isWrite = "POST".equalsIgnoreCase(tool.method());
         return (query, body) -> {
             try {
+                if (isWrite && !tool.supportsDryRun()
+                        && "true".equalsIgnoreCase(query.get("dry_run"))) {
+                    return Response.err(tool.path() + " does not support dry_run");
+                }
                 Object[] args = new Object[bindings.length];
                 for (int i = 0; i < bindings.length; i++) {
                     if (bindings[i] != null) {
@@ -156,7 +160,9 @@ public class AnnotationScanner {
                 }
 
                 // Dry-run support: wrap POST endpoints in a transaction that always rolls back
-                if (isWrite && "true".equalsIgnoreCase(query.get("dry_run")) && programProvider != null) {
+                if (isWrite && tool.supportsDryRun()
+                        && "true".equalsIgnoreCase(query.get("dry_run"))
+                        && programProvider != null) {
                     Program program = resolveProgramForDryRun(bindings, query);
                     if (program != null) {
                         int tx = program.startTransaction("[DRY RUN] " + tool.path());
@@ -412,7 +418,7 @@ public class AnnotationScanner {
             ));
         }
         return new ToolDescriptor(tool.path(), tool.method(), tool.description(),
-            category, categoryDescription, params);
+            category, categoryDescription, tool.supportsDryRun(), params);
     }
 
     private static String jsonType(Class<?> type, boolean fieldsJson) {
@@ -433,7 +439,8 @@ public class AnnotationScanner {
 
     /** Describes an MCP tool for schema generation. */
     public record ToolDescriptor(String path, String method, String description,
-            String category, String categoryDescription, List<ParamDescriptor> params) {
+            String category, String categoryDescription, boolean supportsDryRun,
+            List<ParamDescriptor> params) {
 
         /** Serialize to JSON. */
         public String toJson() {
@@ -448,6 +455,9 @@ public class AnnotationScanner {
             }
             if (categoryDescription != null && !categoryDescription.isEmpty()) {
                 sb.append(", \"category_description\": ").append(jsonStr(categoryDescription));
+            }
+            if (!supportsDryRun) {
+                sb.append(", \"supports_dry_run\": false");
             }
             sb.append(", \"params\": [");
             for (int i = 0; i < params.size(); i++) {

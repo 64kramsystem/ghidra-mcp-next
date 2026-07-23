@@ -23,7 +23,7 @@ public class RegenerateEndpointsJsonMergeTest extends TestCase {
             params.add(new AnnotationScanner.ParamDescriptor(n, "String", "BODY", false, null, "", "string"));
         }
         return new AnnotationScanner.ToolDescriptor("/open_project", "POST", "scanner description",
-                "headless", null, params);
+                "headless", null, true, params);
     }
 
     private static JsonObject entry(String description, String category, String... paramNames) {

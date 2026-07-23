@@ -7,6 +7,7 @@ Verifies that:
 3. Bridge dynamically registers from /mcp/schema (no hardcoded tools)
 """
 
+import inspect
 import json
 import os
 import re
@@ -150,10 +151,34 @@ class TestEndpointsJson(unittest.TestCase):
         endpoint = matches[0]
         self.assertEqual(endpoint["method"], "POST")
         self.assertEqual(endpoint["category"], "export")
+        self.assertIs(endpoint["supports_dry_run"], False)
         self.assertEqual(
             endpoint["params"],
             ["output_path", "start", "end", "overwrite", "program"],
         )
+
+        from bridge_mcp_ghidra import _parse_schema
+        from bridge_mcp_ghidra.registry import _build_tool_function
+
+        tool = _parse_schema(
+            {
+                "tools": [
+                    {
+                        "path": endpoint["path"],
+                        "method": endpoint["method"],
+                        "supports_dry_run": endpoint["supports_dry_run"],
+                        "params": [],
+                    }
+                ]
+            }
+        )[0]
+        handler = _build_tool_function(
+            tool["endpoint"],
+            tool["http_method"],
+            tool["input_schema"],
+            tool["supports_synthetic_dry_run"],
+        )
+        self.assertNotIn("dry_run", inspect.signature(handler).parameters)
 
     @unittest.skipUnless(ENDPOINTS_JSON.exists(), "endpoints.json not found")
     def test_catalog_tool_names_are_capi_safe_after_bridge_parsing(self):
