@@ -213,14 +213,26 @@ public class ListingService {
             @Param(value = "min_xrefs", defaultValue = "1",
                    description = "When undefined items are included, only return addresses with at least this many xrefs. Default 1 suppresses padding/alignment noise; set to 0 for the firehose.") int minXrefs,
             @Param(value = "include_all_sections", defaultValue = "false",
-                   description = "By default only data sections are scanned. Pass true to include every memory section.") boolean includeAllSections,
+                   description = "By default only data sections are scanned. Pass true for flat executable memory snapshots or to include every memory section.") boolean includeAllSections,
             @Param(value = "program", description = "Target program name (omit to use the active program — always specify when multiple programs are open)", defaultValue = "") String programName) {
         ServiceUtils.ProgramOrError pe = ServiceUtils.getProgramOrError(programProvider, programName);
         if (pe.hasError()) return pe.error();
         Program program = pe.program();
 
-        String fSym = (filter == null || filter.isEmpty()) ? "defined" : filter.toLowerCase();
-        String fType = (typeFilter == null || typeFilter.isEmpty()) ? "all" : typeFilter.toLowerCase();
+        String fSym;
+        String fType;
+        String outputFormat;
+        try {
+            fSym = normalizeOption(filter, "defined", "filter",
+                "all", "defined", "undefined");
+            fType = normalizeOption(typeFilter, "all", "type_filter",
+                "all", "defined", "undefined");
+            outputFormat = normalizeOption(format, "text", "format",
+                "text", "json");
+        }
+        catch (IllegalArgumentException error) {
+            return Response.err(error.getMessage());
+        }
         int xrefMin = Math.max(0, minXrefs);
 
         List<DataItemInfo> dataItems = new ArrayList<>();
@@ -288,11 +300,10 @@ public class ListingService {
 
         dataItems.sort((a, b) -> Integer.compare(b.xrefCount, a.xrefCount));
 
-        if ("json".equalsIgnoreCase(format)) {
+        if ("json".equals(outputFormat)) {
             return formatDataItemsAsJson(dataItems, offset, limit);
-        } else {
-            return formatDataItemsAsText(dataItems, offset, limit);
         }
+        return formatDataItemsAsText(dataItems, offset, limit);
     }
 
     /** Backward-compat overload preserving the pre-5.7.x signature (no
@@ -510,7 +521,7 @@ public class ListingService {
         ));
     }
 
-    @McpTool(path = "/list_globals", description = "List global DATA symbols. By default returns every global in the program (named + unnamed-but-xrefed undefined addresses). `filter` and `type_filter` (each: all/defined/undefined) compose orthogonally to scope the result — e.g., `filter=named, type_filter=undefined` returns the cleanup backlog (placeholders awaiting real types). `min_xrefs` (default 1) suppresses zero-xref noise when including undefined items. Code labels (branch targets, error handlers) are still excluded — they're not data globals. Each line ends with `xrefs=N` for prioritization.", category = "listing")
+    @McpTool(path = "/list_globals", description = "List global DATA symbols. By default returns every global in data sections (named + unnamed-but-xrefed undefined addresses). `filter` and `type_filter` (each: all/defined/undefined) compose orthogonally to scope the result — e.g., `filter=defined, type_filter=undefined` returns named placeholders awaiting real types. `name_substring` performs optional substring matching. `min_xrefs` (default 1) suppresses zero-xref noise when including undefined items. Code labels (branch targets, error handlers) are excluded.", category = "listing")
     public Response listGlobals(
             @Param(value = "offset", defaultValue = "0") int offset,
             @Param(value = "limit", defaultValue = "100") int limit,
@@ -521,7 +532,7 @@ public class ListingService {
             @Param(value = "min_xrefs", defaultValue = "1",
                    description = "When undefined items are included, only return addresses with at least this many xrefs. Default 1 suppresses padding/alignment noise; set to 0 for the firehose.") int minXrefs,
             @Param(value = "include_all_sections", defaultValue = "false",
-                   description = "By default only data sections (.data/.rdata/.bss and similar) are scanned. Pass true to include every memory section (rare — picks up .text gaps which are usually padding).") boolean includeAllSections,
+                   description = "By default only data sections are scanned. Pass true for flat executable memory snapshots or to include every memory section.") boolean includeAllSections,
             @Param(value = "name_substring", defaultValue = "",
                    description = "Optional substring match against the symbol's display line (case-insensitive). Empty = no substring filter.") String nameSubstring,
             @Param(value = "program", description = "Target program name (omit to use the active program — always specify when multiple programs are open)", defaultValue = "") String programName) {
@@ -529,9 +540,17 @@ public class ListingService {
         if (pe.hasError()) return pe.error();
         Program program = pe.program();
 
-        // Normalize filter axes (case-insensitive, default `all`).
-        String fSym = (filter == null || filter.isEmpty()) ? "all" : filter.toLowerCase();
-        String fType = (typeFilter == null || typeFilter.isEmpty()) ? "all" : typeFilter.toLowerCase();
+        String fSym;
+        String fType;
+        try {
+            fSym = normalizeOption(filter, "all", "filter",
+                "all", "defined", "undefined");
+            fType = normalizeOption(typeFilter, "all", "type_filter",
+                "all", "defined", "undefined");
+        }
+        catch (IllegalArgumentException error) {
+            return Response.err(error.getMessage());
+        }
         int xrefMin = Math.max(0, minXrefs);
         String subFilter = (nameSubstring == null) ? "" : nameSubstring.toLowerCase();
 
@@ -640,7 +659,8 @@ public class ListingService {
             }
         }
 
-        return Response.text(ServiceUtils.paginateList(globals, offset, limit));
+        String page = ServiceUtils.paginateList(globals, offset, limit);
+        return Response.text(page.isEmpty() ? "No matching globals" : page);
     }
 
     /** Backward-compat overload preserving the pre-5.7.x signature
@@ -789,7 +809,28 @@ public class ListingService {
             lines.add(line.toString());
         }
 
+        if (lines.isEmpty()) {
+            return Response.text("No matching data items");
+        }
         return Response.text(String.join("\n", lines));
+    }
+
+    private static String normalizeOption(
+            String value,
+            String defaultValue,
+            String parameter,
+            String... allowed) {
+        String normalized = value == null || value.isEmpty()
+            ? defaultValue
+            : value.toLowerCase(Locale.ROOT);
+        for (String candidate : allowed) {
+            if (candidate.equals(normalized)) {
+                return normalized;
+            }
+        }
+        throw new IllegalArgumentException(
+            "Parameter '" + parameter + "' must be one of: "
+                + String.join(", ", allowed));
     }
 
     private Response formatDataItemsAsJson(List<DataItemInfo> dataItems, int offset, int limit) {
