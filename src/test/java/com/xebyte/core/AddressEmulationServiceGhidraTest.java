@@ -31,6 +31,8 @@ import ghidra.program.database.ProgramDB;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.listing.Instruction;
 import ghidra.program.model.mem.MemoryAccessException;
+import ghidra.util.classfinder.ClassSearcher;
+import ghidra.util.task.TaskMonitor;
 
 public class AddressEmulationServiceGhidraTest {
 
@@ -42,6 +44,8 @@ public class AddressEmulationServiceGhidraTest {
         String installDir = System.getProperty("ghidra.test.install.dir");
         assumeTrue("ghidra.test.install.dir is required",
             installDir != null && !installDir.isBlank());
+        System.setProperty(
+            "class.searcher.search.all.jars", Boolean.TRUE.toString());
         if (!Application.isInitialized()) {
             ApplicationConfiguration configuration =
                 new ApplicationConfiguration();
@@ -50,6 +54,7 @@ public class AddressEmulationServiceGhidraTest {
                 new GhidraApplicationLayout(new File(installDir)),
                 configuration);
         }
+        ClassSearcher.search(TaskMonitor.DUMMY);
     }
 
     @Before
