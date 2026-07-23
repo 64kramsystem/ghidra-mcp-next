@@ -102,8 +102,10 @@ public class ListingRangeServiceGhidraTest {
         assertEquals(1, nestedCount(units, "labels", "inside_data"));
         assertEquals(1, nestedCount(units, "labels", "undefined_entry"));
         assertEquals(1, nestedCount(units, "comments", "undefined plate"));
-        assertEquals(1, nestedCount(units, "outgoing_references", "0807"));
-        assertEquals(1, nestedCount(units, "incoming_references", "080c"));
+        assertEquals(1,
+            nestedFieldCount(units, "outgoing_references", "destination", "0807"));
+        assertEquals(1,
+            nestedFieldCount(units, "incoming_references", "destination", "080c"));
         JsonObject data = findKind(units, "data");
         assertNotNull(data);
         assertFalse(data.get("data_type").isJsonNull());
@@ -171,5 +173,20 @@ public class ListingRangeServiceGhidraTest {
             }
         }
         return (int) flattened.stream().filter(value::equals).count();
+    }
+
+    private static int nestedFieldCount(
+            JsonArray units, String collection, String field, String value) {
+        int count = 0;
+        for (var unitElement : units) {
+            for (var itemElement
+                    : unitElement.getAsJsonObject().getAsJsonArray(collection)) {
+                JsonObject item = itemElement.getAsJsonObject();
+                if (item.has(field) && value.equals(item.get(field).getAsString())) {
+                    count++;
+                }
+            }
+        }
+        return count;
     }
 }
