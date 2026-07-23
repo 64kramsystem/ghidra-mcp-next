@@ -63,6 +63,7 @@ Complete version history for the Ghidra MCP Server project.
 
 ### Fixed
 
+- `list_globals` and `list_data_items_by_xrefs` now reject unknown filter axes and output formats instead of silently returning partial or empty results. Empty text pages return explicit no-match messages, and their schema identifies `name_substring` as the substring matcher and `include_all_sections=true` as required for flat executable snapshots.
 - `set_plate_comment` now sets a plate comment at any valid program address
   through Ghidra's exact-address listing API, including instruction, data,
   undefined, label-only, and qualified overlay addresses. The response reports
