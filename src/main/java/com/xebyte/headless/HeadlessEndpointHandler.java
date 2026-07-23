@@ -59,6 +59,7 @@ public class HeadlessEndpointHandler {
     private final com.xebyte.core.MalwareSecurityService malwareSecurityService;
     private final com.xebyte.core.ProgramScriptService programScriptService;
     private final com.xebyte.core.EmulationService emulationService;
+    private final com.xebyte.core.ExportService exportService;
 
     public HeadlessEndpointHandler(ProgramProvider programProvider, ThreadingStrategy threadingStrategy) {
         this.programProvider = programProvider;
@@ -77,6 +78,7 @@ public class HeadlessEndpointHandler {
         this.malwareSecurityService = new com.xebyte.core.MalwareSecurityService(programProvider, threadingStrategy);
         this.programScriptService = new com.xebyte.core.ProgramScriptService(programProvider, threadingStrategy);
         this.emulationService = new com.xebyte.core.EmulationService(programProvider, threadingStrategy);
+        this.exportService = new com.xebyte.core.ExportService(programProvider);
     }
 
     // ==========================================================================
@@ -94,6 +96,7 @@ public class HeadlessEndpointHandler {
     public com.xebyte.core.MalwareSecurityService getMalwareSecurityService() { return malwareSecurityService; }
     public com.xebyte.core.ProgramScriptService getProgramScriptService() { return programScriptService; }
     public com.xebyte.core.EmulationService getEmulationService() { return emulationService; }
+    public com.xebyte.core.ExportService getExportService() { return exportService; }
     public ProgramProvider getProgramProvider() { return programProvider; }
 
     // ==========================================================================

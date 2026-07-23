@@ -8,6 +8,12 @@ Complete version history for the Ghidra MCP Server project.
 
 ### Added
 
+- Added `export_ascii_listing`, a GUI/headless native `AsciiExporter` endpoint
+  for whole-program or inclusive bounded listings. It enforces
+  `GHIDRA_MCP_FILE_ROOT`, publishes through a sibling temporary file so failed
+  exports cannot replace a valid destination, and intentionally returns
+  Ghidra's human-readable listing format rather than round-trip assembler
+  source.
 - Added `debugger_attach` for exact-offer, typed TraceRMI PID attachment. The attach-only flow supports native local GDB without synthesizing debugger commands; required-image Wine launchers remain on the existing launch path.
 - Added `debugger_wait_for_stop` for event-driven, bounded waits with explicit stopped, terminated, and timeout results.
 - Added `debugger_memory_maps` for sorted current-snapshot region enumeration with optional process-PID filtering.

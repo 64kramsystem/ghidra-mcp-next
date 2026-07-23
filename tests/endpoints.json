@@ -1,7 +1,7 @@
 {
   "version": "5.15.0",
   "description": "GhidraMCP REST API Endpoint Specification",
-  "total_endpoints": 233,
+  "total_endpoints": 234,
   "categories": {
     "listing": "List program data",
     "getter": "Get specific data",
@@ -14,6 +14,7 @@
     "analysis": "Analysis tools",
     "program": "Program management",
     "project": "Project lifecycle management",
+    "export": "Native program export",
     "script": "Script execution",
     "utility": "Utility endpoints",
     "emulation": "P-code emulation (run functions with controlled inputs)"
@@ -1014,6 +1015,19 @@
       "category": "program",
       "params": [],
       "description": "Save and exit Ghidra"
+    },
+    {
+      "path": "/export_ascii_listing",
+      "method": "POST",
+      "category": "export",
+      "params": [
+        "output_path",
+        "start",
+        "end",
+        "overwrite",
+        "program"
+      ],
+      "description": "Export Ghidra AsciiExporter listing text without running a script"
     },
     {
       "path": "/export_program",
