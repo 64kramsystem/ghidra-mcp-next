@@ -3,6 +3,7 @@
 import inspect
 import json
 import sys
+from copy import deepcopy
 
 from . import dispatch
 from . import state
@@ -200,8 +201,36 @@ def _register_tool_def(tool_def: dict) -> bool:
     handler.__doc__ = description
 
     mcp.tool(name=name, description=description)(handler)
+    _restore_structured_parameter_schemas(
+        mcp._tool_manager._tools[name], input_schema
+    )
     state._dynamic_tool_names.append(name)
     return True
+
+
+def _restore_structured_parameter_schemas(tool, input_schema: dict) -> None:
+    """Restore nested JSON Schema that Python type hints cannot represent.
+
+    FastMCP derives its public schema from the generated callable signature.
+    A plain ``list`` annotation necessarily collapses nested ``items`` unions
+    to ``items: {}``, so copy trusted structural fragments from Ghidra's
+    reviewed schema after registration. Transport-only keywords stay private.
+    """
+    registered_properties = tool.parameters.setdefault("properties", {})
+    for name, definition in input_schema.get("properties", {}).items():
+        if not any(
+            key in definition
+            for key in ("items", "properties", "oneOf", "anyOf", "allOf")
+        ):
+            continue
+        public = deepcopy(definition)
+        public.pop("source", None)
+        public.pop("param_type", None)
+        if "default" in public:
+            public["default"] = _coerce_schema_default(
+                public["default"], public.get("type", "string")
+            )
+        registered_properties[name] = public
 
 
 def _report_tool_registration_failures(failures: list[str]) -> None:

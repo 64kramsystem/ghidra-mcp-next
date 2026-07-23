@@ -6,6 +6,7 @@ passes through JSON from Java, so we test the dispatch layer's
 error responses and JSON validity.
 """
 
+import asyncio
 import json
 import unittest
 from pathlib import Path
@@ -104,7 +105,11 @@ class TestSchemaJsonFormat(unittest.TestCase):
         self.assertIsNotNone(tool)
 
     def test_nested_region_schema_is_preserved(self):
-        from bridge_mcp_ghidra import _parse_schema
+        from bridge_mcp_ghidra import (
+            _parse_schema,
+            mcp,
+            register_tools_from_schema,
+        )
         fragment = {
             "type": "array",
             "minItems": 1,
@@ -155,6 +160,40 @@ class TestSchemaJsonFormat(unittest.TestCase):
             parsed["input_schema"]["properties"]["regions"],
             {**fragment, "source": "body"},
         )
+        parsed["name"] = "nested_region_registration_test"
+        parsed["original_name"] = "nested_region_registration_test"
+        try:
+            with patch(
+                "bridge_mcp_ghidra.dispatch.dispatch_post",
+                return_value='{"committed": false}',
+            ) as dispatch:
+                register_tools_from_schema([parsed])
+                tool = mcp._tool_manager._tools[
+                    "nested_region_registration_test"
+                ]
+                registered = tool.parameters["properties"]["regions"]
+                self.assertEqual(registered["maxItems"], 1024)
+                self.assertEqual(
+                    registered["items"]["oneOf"][0]["properties"]
+                    ["kind"]["const"],
+                    "contiguous",
+                )
+                native = [{"kind": "contiguous"}]
+                asyncio.run(
+                    mcp.call_tool(
+                        "nested_region_registration_test",
+                        {"regions": native},
+                    )
+                )
+                dispatch.assert_called_once_with(
+                    "/apply_data_regions",
+                    data={"regions": native},
+                    query_params=None,
+                )
+        finally:
+            mcp._tool_manager._tools.pop(
+                "nested_region_registration_test", None
+            )
 
 
 if __name__ == "__main__":
