@@ -1,7 +1,7 @@
 # Ghidra MCP Server
 
 Ghidra MCP connects AI clients to Ghidra through a Java extension and a thin
-Python MCP bridge. Version 5.15.0 exposes 248 tools for local static analysis,
+Python MCP bridge. Version 5.15.0 exposes 249 tools for local static analysis,
 multi-program work, P-code emulation, local comparison, and Ghidra's built-in
 TraceRMI debugger.
 
@@ -21,6 +21,8 @@ The maintained architecture is local-first:
   project.
 - Search strings, bytes, operands, symbols, functions, and references.
 - Decompile and disassemble functions; repair flow and function boundaries.
+- Emulate bounded code from any mapped address with ordered register and
+  memory evidence, without requiring a function.
 - Create memory blocks, functions, labels, comments, prototypes, structures,
   enums, arrays, and other datatypes.
 - Strictly validate, preview, and atomically apply platform-neutral symbol

@@ -1,9 +1,16 @@
 package com.xebyte.offline;
 
+import ghidra.pcode.emu.PcodeEmulationCallbacks;
+import ghidra.pcode.emu.PcodeEmulator;
+import ghidra.pcode.emu.PcodeThread;
+import ghidra.program.model.address.AddressSpace;
+import ghidra.program.model.lang.Language;
+import ghidra.program.model.pcode.PcodeOp;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.function.BiFunction;
 import junit.framework.TestCase;
 
 /** Source-level regression guards for the Ghidra 12.1 API migration. */
@@ -63,5 +70,23 @@ public class Ghidra121ApiMigrationTest extends TestCase {
                 MAIN_SOURCE.resolve("com/xebyte/core/ProgramScriptService.java"));
         assertTrue("GUI imports must release their temporary service consumer",
                 guiSource.contains("program.release(this)"));
+    }
+
+    public void testPcodeEmulatorCallbackApiCompilesAgainstPinnedGhidra() {
+        PcodeEmulationCallbacks<byte[]> callbacks = new PcodeEmulationCallbacks<>() {
+            @Override
+            public void afterLoad(PcodeThread<byte[]> thread, PcodeOp op,
+                    AddressSpace space, byte[] offset, int size, byte[] value) {
+            }
+
+            @Override
+            public void afterStore(PcodeThread<byte[]> thread, PcodeOp op,
+                    AddressSpace space, byte[] offset, int size, byte[] value) {
+            }
+        };
+        BiFunction<Language, PcodeEmulationCallbacks<byte[]>, PcodeEmulator> constructor =
+            PcodeEmulator::new;
+        assertNotNull(callbacks);
+        assertNotNull(constructor);
     }
 }
