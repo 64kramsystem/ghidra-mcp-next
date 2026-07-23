@@ -44,6 +44,7 @@ import ghidra.program.model.symbol.StackReference;
 import ghidra.program.model.symbol.Symbol;
 import ghidra.program.model.symbol.SymbolTable;
 import ghidra.program.model.symbol.SymbolType;
+import ghidra.util.task.TaskMonitor;
 
 /**
  * Plans complete-code-unit clears without opening a transaction.
@@ -55,7 +56,9 @@ final class ListingClearCore {
 
     @FunctionalInterface
     interface AnnotationRestorer {
-        void restore(Program program, AnnotationSnapshot annotations) throws Exception;
+        void restore(
+            Program program, AnnotationSnapshot annotations,
+            TaskMonitor monitor) throws Exception;
     }
 
     enum UnitKind {
@@ -365,6 +368,12 @@ final class ListingClearCore {
     }
 
     void apply(Program program, Plan plan) throws Exception {
+        apply(program, plan, TaskMonitor.DUMMY);
+    }
+
+    void apply(
+            Program program, Plan plan, TaskMonitor monitor)
+            throws Exception {
         if (program == null) {
             throw new IllegalArgumentException("program is required");
         }
@@ -375,22 +384,32 @@ final class ListingClearCore {
             throw new IllegalStateException(
                 "listing clear plan has conflicts: " + String.join("; ", plan.conflicts()));
         }
+        TaskMonitor taskMonitor =
+            monitor == null ? TaskMonitor.DUMMY : monitor;
+        taskMonitor.checkCancelled();
 
         for (FunctionSnapshot function : plan.functions()) {
+            taskMonitor.checkCancelled();
             if (!program.getFunctionManager().removeFunction(function.entry())) {
                 throw new IllegalStateException(
                     "failed to remove function " + function.name() +
                         " at " + function.entry());
             }
         }
-        removePlannedLabels(program, plan.removedAnnotations().labels());
-        removePlannedComments(program, plan.removedAnnotations().comments());
-        removePlannedBookmarks(program, plan.removedAnnotations().bookmarks());
-        removeOutgoingReferences(program, plan.expanded());
+        removePlannedLabels(
+            program, plan.removedAnnotations().labels(), taskMonitor);
+        removePlannedComments(
+            program, plan.removedAnnotations().comments(), taskMonitor);
+        removePlannedBookmarks(
+            program, plan.removedAnnotations().bookmarks(), taskMonitor);
+        removeOutgoingReferences(program, plan.expanded(), taskMonitor);
         for (CodeUnitSnapshot unit : plan.units()) {
+            taskMonitor.checkCancelled();
             program.getListing().clearCodeUnits(unit.start(), unit.end(), false);
         }
-        annotationRestorer.restore(program, plan.annotations());
+        taskMonitor.checkCancelled();
+        annotationRestorer.restore(
+            program, plan.annotations(), taskMonitor);
     }
 
     private record AnnotationPartition(
@@ -771,9 +790,11 @@ final class ListingClearCore {
     }
 
     private static void removePlannedLabels(
-            Program program, List<LabelSnapshot> labels) {
+            Program program, List<LabelSnapshot> labels,
+            TaskMonitor monitor) throws Exception {
         SymbolTable table = program.getSymbolTable();
         for (LabelSnapshot snapshot : labels) {
+            monitor.checkCancelled();
             Symbol[] atAddress = table.getSymbols(snapshot.address());
             if (atAddress == null) {
                 continue;
@@ -797,17 +818,21 @@ final class ListingClearCore {
     }
 
     private static void removePlannedComments(
-            Program program, List<CommentSnapshot> comments) {
+            Program program, List<CommentSnapshot> comments,
+            TaskMonitor monitor) throws Exception {
         Listing listing = program.getListing();
         for (CommentSnapshot comment : comments) {
+            monitor.checkCancelled();
             listing.setComment(comment.address(), comment.type(), null);
         }
     }
 
     private static void removePlannedBookmarks(
-            Program program, List<BookmarkSnapshot> snapshots) {
+            Program program, List<BookmarkSnapshot> snapshots,
+            TaskMonitor monitor) throws Exception {
         BookmarkManager manager = program.getBookmarkManager();
         for (BookmarkSnapshot snapshot : snapshots) {
+            monitor.checkCancelled();
             Bookmark[] atAddress = manager.getBookmarks(snapshot.address());
             if (atAddress == null) {
                 continue;
@@ -826,9 +851,11 @@ final class ListingClearCore {
     }
 
     private static void removeOutgoingReferences(
-            Program program, AddressSetView affected) {
+            Program program, AddressSetView affected,
+            TaskMonitor monitor) throws Exception {
         ReferenceManager manager = program.getReferenceManager();
         for (AddressRange range : affected) {
+            monitor.checkCancelled();
             manager.removeAllReferencesFrom(
                 range.getMinAddress(), range.getMaxAddress());
         }
@@ -881,10 +908,12 @@ final class ListingClearCore {
 
     private static void restoreAnnotations(
             Program program,
-            AnnotationSnapshot annotations) throws Exception {
-        restoreLabels(program, annotations.labels());
+            AnnotationSnapshot annotations,
+            TaskMonitor monitor) throws Exception {
+        restoreLabels(program, annotations.labels(), monitor);
         Listing listing = program.getListing();
         for (CommentSnapshot comment : annotations.comments()) {
+            monitor.checkCancelled();
             listing.setComment(comment.address(), comment.type(), comment.text());
             if (!Objects.equals(
                     comment.text(),
@@ -896,6 +925,7 @@ final class ListingClearCore {
         }
         BookmarkManager bookmarks = program.getBookmarkManager();
         for (BookmarkSnapshot bookmark : annotations.bookmarks()) {
+            monitor.checkCancelled();
             Bookmark restored = bookmarks.setBookmark(
                 bookmark.address(),
                 bookmark.type(),
@@ -906,13 +936,16 @@ final class ListingClearCore {
                     "failed to restore bookmark at " + bookmark.address());
             }
         }
-        restoreReferences(program, annotations.references());
+        restoreReferences(program, annotations.references(), monitor);
     }
 
-    private static void restoreLabels(Program program, List<LabelSnapshot> labels)
+    private static void restoreLabels(
+            Program program, List<LabelSnapshot> labels,
+            TaskMonitor monitor)
             throws Exception {
         SymbolTable table = program.getSymbolTable();
         for (LabelSnapshot label : labels) {
+            monitor.checkCancelled();
             Namespace namespace = label.namespace();
             if (namespace == null) {
                 throw new IllegalStateException(
@@ -946,9 +979,11 @@ final class ListingClearCore {
 
     private static void restoreReferences(
             Program program,
-            List<ReferenceSnapshot> references) throws Exception {
+            List<ReferenceSnapshot> references,
+            TaskMonitor monitor) throws Exception {
         ReferenceManager manager = program.getReferenceManager();
         for (ReferenceSnapshot snapshot : references) {
+            monitor.checkCancelled();
             Reference restored = switch (snapshot.kind()) {
                 case EXTERNAL -> manager.addExternalReference(
                     snapshot.from(),

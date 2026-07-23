@@ -525,7 +525,8 @@ public class ListingClearCoreTest {
             .thenReturn(List.of(function).iterator());
         when(fixture.functions().removeFunction(start)).thenReturn(true);
 
-        ListingClearCore core = new ListingClearCore((program, annotations) -> {
+        ListingClearCore core = new ListingClearCore((
+                program, annotations, monitor) -> {
             assertTrue(annotations.labels().isEmpty());
             verify(fixture.listing()).clearCodeUnits(start, end, false);
         });
@@ -681,7 +682,8 @@ public class ListingClearCoreTest {
         Address start = RAM.getAddress(0x1600);
         Data data = unit(Data.class, start, start);
         Fixture fixture = fixture(List.of(data));
-        ListingClearCore core = new ListingClearCore((program, annotations) -> {
+        ListingClearCore core = new ListingClearCore((
+                program, annotations, monitor) -> {
             throw new Exception("restore failed");
         });
         ListingClearCore.Plan plan = core.plan(
