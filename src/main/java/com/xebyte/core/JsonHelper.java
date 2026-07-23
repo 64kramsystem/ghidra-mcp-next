@@ -30,6 +30,12 @@ public final class JsonHelper {
 
     /** Serialize any object to JSON string. */
     public static String toJson(Object obj) {
+        // Gson's Object overload drops explicit JsonNull members because its
+        // writer has serializeNulls disabled. A pre-built JSON tree is already
+        // the caller's exact wire representation, so preserve it verbatim.
+        if (obj instanceof JsonElement element) {
+            return element.toString();
+        }
         return GSON.toJson(obj);
     }
 

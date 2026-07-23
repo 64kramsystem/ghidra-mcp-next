@@ -2488,7 +2488,7 @@
         "comment",
         "program"
       ],
-      "description": "Set plate comment"
+      "description": "Set a plate comment at any valid program address."
     },
     {
       "path": "/set_variable_storage",

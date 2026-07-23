@@ -1,10 +1,13 @@
 package com.xebyte.offline;
 
 import com.xebyte.core.CommentService;
+import com.xebyte.core.AnnotationScanner;
 import com.xebyte.core.Response;
 import com.xebyte.core.ThreadingStrategy;
 import junit.framework.TestCase;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -54,5 +57,25 @@ public class CommentServiceValidationTest extends TestCase {
 
     public void testGetPlateCommentDegradesGracefully() {
         assertNoProgram(comments.getPlateComment("0x401000", ""));
+    }
+
+    public void testPlateCommentDescriptionIsAddressGenericEverywhere()
+            throws Exception {
+        String expected =
+            "Set a plate comment at any valid program address.";
+        AnnotationScanner.ToolDescriptor tool =
+            new AnnotationScanner(comments).getDescriptors().stream()
+                .filter(candidate ->
+                    "/set_plate_comment".equals(candidate.path()))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(expected, tool.description());
+
+        String legacyRegistry = Files.readString(Path.of(
+            "src/main/java/com/xebyte/core/EndpointRegistry.java"));
+        assertTrue(
+            "compiled legacy registry must use the same address-generic description",
+            legacyRegistry.contains(
+                "post(\"/set_plate_comment\", \"" + expected + "\""));
     }
 }

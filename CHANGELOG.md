@@ -57,6 +57,11 @@ Complete version history for the Ghidra MCP Server project.
 
 ### Fixed
 
+- `set_plate_comment` now sets a plate comment at any valid program address
+  through Ghidra's exact-address listing API, including instruction, data,
+  undefined, label-only, and qualified overlay addresses. The response reports
+  previous/resulting state and idempotency, and batch plate writes share the
+  same atomic writer.
 - Kept the live GUI TCP and Unix-socket schemas aligned: both now advertise local project creation/opening plus the retained emulation and 22 TraceRMI debugger tools. Project lifecycle routes are annotation-scanned so their handlers and schema metadata cannot drift apart.
 - Mirrored Ghidra's FrontEnd project-close notification when MCP switches local
   projects, preventing stale listeners from treating the replacement as a

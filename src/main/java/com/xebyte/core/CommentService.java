@@ -1,5 +1,9 @@
 package com.xebyte.core;
 
+import com.google.gson.JsonNull;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonPrimitive;
+
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressSetView;
 import ghidra.program.model.listing.*;
@@ -21,10 +25,12 @@ public class CommentService {
 
     private final ProgramProvider programProvider;
     private final ThreadingStrategy threadingStrategy;
+    private final AddressCommentCore addressCommentCore;
 
     public CommentService(ProgramProvider programProvider, ThreadingStrategy threadingStrategy) {
         this.programProvider = programProvider;
         this.threadingStrategy = threadingStrategy;
+        this.addressCommentCore = new AddressCommentCore();
     }
 
     // -----------------------------------------------------------------------
@@ -155,9 +161,9 @@ public class CommentService {
     }
 
     /**
-     * Set function plate (header) comment.
+     * Set a plate comment at an exact mapped program address.
      */
-    @McpTool(path = "/set_plate_comment", method = "POST", description = "Set function header/plate comment. On programs with multiple address spaces (e.g., embedded targets), prefix addresses with the space name (mem:1000) to avoid ambiguous resolution.", category = "comment")
+    @McpTool(path = "/set_plate_comment", method = "POST", description = "Set a plate comment at any valid program address.", category = "comment")
     public Response setPlateComment(
             @Param(value = "address", paramType = "address", source = ParamSource.BODY,
                    description = "Address in the program. Accepts 0x<hex> (default space) or <space>:<hex> "
@@ -172,53 +178,65 @@ public class CommentService {
         Program program = pe.program();
 
         if (functionAddress == null || functionAddress.isEmpty()) {
-            return Response.err("Function address is required");
+            return Response.err("Address is required");
         }
         if (comment == null) {
             return Response.err("Comment is required");
         }
 
-        // Resolve address before entering SwingUtilities lambda
-        Address resolvedAddr = ServiceUtils.parseAddress(program, functionAddress);
-        if (resolvedAddr == null) return Response.err(ServiceUtils.getLastParseError());
-
-        final AtomicBoolean success = new AtomicBoolean(false);
-        final AtomicReference<String> errorMsg = new AtomicReference<>();
+        final Address resolvedAddr;
+        try {
+            resolvedAddr =
+                addressCommentCore.resolveAddress(program, functionAddress);
+        }
+        catch (IllegalArgumentException e) {
+            return Response.err(e.getMessage());
+        }
 
         try {
-            SwingUtilities.invokeAndWait(() -> {
-                int tx = program.startTransaction("Set Plate Comment");
-                try {
-                    Function func = program.getFunctionManager().getFunctionAt(resolvedAddr);
-                    if (func == null) {
-                        errorMsg.set("No function at address: " + functionAddress);
-                        return;
-                    }
+            AddressCommentCore.WriteMode mode =
+                comment.isEmpty()
+                    ? AddressCommentCore.WriteMode.REMOVE
+                    : AddressCommentCore.WriteMode.REPLACE;
+            AddressCommentCore.Plan plan =
+                threadingStrategy.executeWrite(
+                    program,
+                    "Set Plate Comment",
+                    () -> {
+                        AddressCommentCore.Plan prepared =
+                            addressCommentCore.plan(
+                                program,
+                                resolvedAddr,
+                                CommentType.PLATE,
+                                comment,
+                                mode);
+                        addressCommentCore.apply(program, prepared);
+                        return prepared;
+                    });
 
-                    func.setComment(comment);
-                    success.set(true);
-                } catch (Exception e) {
-                    errorMsg.set(e.getMessage());
-                    Msg.error(this, "Error setting plate comment", e);
-                } finally {
-                    program.endTransaction(tx, success.get());
-                }
-            });
-
-            // Force event processing to ensure changes propagate to decompiler cache
-            if (success.get()) {
-                program.flushEvents();
-                try { Thread.sleep(500); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
-            }
-        } catch (Exception e) {
-            return Response.err("Failed to execute on Swing thread: " + e.getMessage());
+            JsonObject result = new JsonObject();
+            ServiceUtils.addressToJson(resolvedAddr, program)
+                .forEach((key, value) ->
+                    result.addProperty(key, String.valueOf(value)));
+            result.add(
+                "previous",
+                plan.previous() == null
+                    ? JsonNull.INSTANCE
+                    : new JsonPrimitive(plan.previous()));
+            result.add(
+                "resulting",
+                plan.resulting() == null
+                    ? JsonNull.INSTANCE
+                    : new JsonPrimitive(plan.resulting()));
+            result.addProperty("changed", plan.changed());
+            return Response.ok(result);
         }
-
-        if (success.get()) {
-            return Response.ok(JsonHelper.mapOf("status", "success", "message",
-                    "Set plate comment for function at " + functionAddress));
+        catch (Exception e) {
+            return Response.err(
+                e.getMessage() != null
+                    ? e.getMessage()
+                    : "Failed to set plate comment");
         }
-        return Response.err(errorMsg.get() != null ? errorMsg.get() : "Unknown failure");
     }
 
     public Response setPlateComment(String functionAddress, String comment) {
@@ -245,11 +263,17 @@ public class CommentService {
         if (pe.hasError()) return pe.error();
         Program program = pe.program();
 
-        // Resolve function address before entering SwingUtilities lambda
+        // Resolve the top-level address before entering the write transaction.
         final Address funcAddr;
         if (functionAddress != null && !functionAddress.isEmpty()) {
-            funcAddr = ServiceUtils.parseAddress(program, functionAddress);
-            if (funcAddr == null) return Response.err(ServiceUtils.getLastParseError());
+            try {
+                funcAddr =
+                    addressCommentCore.resolveAddress(
+                        program, functionAddress);
+            }
+            catch (IllegalArgumentException e) {
+                return Response.err(e.getMessage());
+            }
         } else {
             funcAddr = null;
         }
@@ -265,45 +289,24 @@ public class CommentService {
             SwingUtilities.invokeAndWait(() -> {
                 int tx = program.startTransaction("Batch Set Comments");
                 try {
-                    // Set or clear plate comment (v3.0.1: null=skip, ""=clear, non-empty=set)
-                    // - Function target → use Function.setComment (existing behavior).
-                    // - Data-global target → use Listing.setComment(addr, PLATE_COMMENT, …).
-                    //   Without this, plate writes on data addresses silently no-op'd
-                    //   (returning success with `plate_comment_set: false`), which is
-                    //   exactly what made the globals worker think it had set a plate
-                    //   when nothing actually landed.
+                    // Set or clear the exact-address plate through the same
+                    // planner/writer as set_plate_comment.
                     if (plateComment != null && !plateComment.equals("null") && funcAddr != null) {
-                        Function func = program.getFunctionManager().getFunctionAt(funcAddr);
-                        if (func != null) {
-                            String existingPlate = func.getComment();
-                            if (existingPlate != null && !existingPlate.isEmpty()) {
-                                overwrittenCount.incrementAndGet();
-                            }
-                            func.setComment(plateComment.isEmpty() ? null : plateComment);
-                            plateSet.set(true);
-                        } else {
-                            // Data-global path. Previously gated on
-                            // `getDefinedDataAt(funcAddr) != null` which
-                            // silently skipped the plate write when the
-                            // address had no defined data yet (the most
-                            // common pre-documentation state — symbol
-                            // exists but type hasn't been applied). The
-                            // caller would see `plate_comment_set: false`
-                            // hidden inside an overall success response.
-                            // Listing.setComment works on any in-memory
-                            // address regardless of defined-data status,
-                            // so the gate was never necessary.
-                            Listing dataListing = program.getListing();
-                            String existingPlate = dataListing.getComment(CommentType.PLATE, funcAddr);
-                            if (existingPlate != null && !existingPlate.isEmpty()) {
-                                overwrittenCount.incrementAndGet();
-                            }
-                            dataListing.setComment(
-                                    funcAddr,
-                                    CommentType.PLATE,
-                                    plateComment.isEmpty() ? null : plateComment);
-                            plateSet.set(true);
+                        AddressCommentCore.Plan platePlan =
+                            addressCommentCore.plan(
+                                program,
+                                funcAddr,
+                                CommentType.PLATE,
+                                plateComment,
+                                plateComment.isEmpty()
+                                    ? AddressCommentCore.WriteMode.REMOVE
+                                    : AddressCommentCore.WriteMode.REPLACE);
+                        if (platePlan.previous() != null
+                                && !platePlan.previous().isEmpty()) {
+                            overwrittenCount.incrementAndGet();
                         }
+                        addressCommentCore.apply(program, platePlan);
+                        plateSet.set(true);
                     }
 
                     // Set decompiler comments (PRE_COMMENT)

@@ -209,6 +209,24 @@ class TestEndpointsJson(unittest.TestCase):
         )
 
     @unittest.skipUnless(ENDPOINTS_JSON.exists(), "endpoints.json not found")
+    def test_set_plate_comment_is_address_generic(self):
+        data = json.loads(ENDPOINTS_JSON.read_text())
+        matches = [
+            ep
+            for ep in data.get("endpoints", [])
+            if ep["path"] == "/set_plate_comment"
+        ]
+        self.assertEqual(len(matches), 1)
+        endpoint = matches[0]
+        self.assertEqual(endpoint["method"], "POST")
+        self.assertEqual(endpoint["category"], "comment")
+        self.assertEqual(endpoint["params"], ["address", "comment", "program"])
+        self.assertEqual(
+            endpoint["description"],
+            "Set a plate comment at any valid program address.",
+        )
+
+    @unittest.skipUnless(ENDPOINTS_JSON.exists(), "endpoints.json not found")
     def test_undefine_range_contract_and_bridge_signature(self):
         data = json.loads(ENDPOINTS_JSON.read_text())
         matches = [

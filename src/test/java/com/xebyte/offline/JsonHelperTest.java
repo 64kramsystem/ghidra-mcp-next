@@ -1,5 +1,7 @@
 package com.xebyte.offline;
 
+import com.google.gson.JsonNull;
+import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.xebyte.core.EndpointDef;
 import com.xebyte.core.JsonHelper;
@@ -59,5 +61,15 @@ public class JsonHelperTest extends TestCase {
         assertEquals("na\"me", params.get(0).get("name"));
         assertEquals("line\nvalue", params.get(0).get("default"));
         assertEquals("path \\ detail", params.get(0).get("description"));
+    }
+
+    public void testExplicitNullInJsonTreeIsPreserved() {
+        JsonObject tree = new JsonObject();
+        tree.add("previous", JsonNull.INSTANCE);
+        tree.addProperty("changed", true);
+
+        assertEquals(
+            "{\"previous\":null,\"changed\":true}",
+            JsonHelper.toJson(tree));
     }
 }
