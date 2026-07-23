@@ -38,11 +38,14 @@ public class GuiTransportSchemaParityTest extends TestCase {
         assertEquals("headless", tools.get("/open_project").category());
     }
 
-    public void testTcpScannerIncludesGuiProjectLifecycleService() throws IOException {
+    public void testTcpScannerIncludesExportAndProtectedGuiServices() throws IOException {
         String source = Files.readString(ROOT.resolve(
                 "src/main/java/com/xebyte/GhidraMCPPlugin.java"));
+        assertTrue("TCP must construct ExportService", source.contains(
+                "this.exportService = new com.xebyte.core.ExportService(programProvider)"));
         assertTrue("TCP scanner must include GuiProjectService so schema and routes agree",
                 source.matches("(?s).*new AnnotationScanner\\(programProvider,.*"
+                        + "programScriptService,\\s*emulationService,\\s*exportService,\\s*"
                         + "debuggerService,\\s*guiProjectService\\).*"));
     }
 
@@ -51,14 +54,35 @@ public class GuiTransportSchemaParityTest extends TestCase {
                 "src/main/java/com/xebyte/core/ServerManager.java"));
         assertTrue("UDS must construct EmulationService", source.contains(
                 "EmulationService emulationService = new EmulationService"));
+        assertTrue("UDS must construct ExportService", source.contains(
+                "ExportService exportService = new ExportService"));
         assertTrue("UDS must construct DebuggerService", source.contains(
                 "DebuggerService debuggerService = new DebuggerService"));
         assertTrue("UDS must construct GuiProjectService", source.contains(
                 "GuiProjectService guiProjectService = new GuiProjectService"));
-        assertTrue("UDS scanner must advertise emulation, debugger, and project tools",
+        assertTrue("UDS scanner must advertise emulation, export, debugger, and project tools",
                 source.matches("(?s).*new AnnotationScanner\\(programProvider,.*"
-                        + "programScriptService,\\s*emulationService,\\s*debuggerService,\\s*"
-                        + "guiProjectService\\).*"));
+                        + "programScriptService,\\s*emulationService,\\s*exportService,\\s*"
+                        + "debuggerService,\\s*guiProjectService\\).*"));
+    }
+
+    public void testHeadlessScannerIncludesExportService() throws IOException {
+        String handlerSource = Files.readString(ROOT.resolve(
+                "src/main/java/com/xebyte/headless/HeadlessEndpointHandler.java"));
+        assertTrue("Headless handler must construct ExportService", handlerSource.contains(
+                "this.exportService = new com.xebyte.core.ExportService(programProvider)"));
+        assertTrue("Headless handler must expose ExportService to the scanner",
+                handlerSource.contains(
+                        "getExportService() { return exportService; }"));
+
+        String serverSource = Files.readString(ROOT.resolve(
+                "src/main/java/com/xebyte/headless/GhidraMCPHeadlessServer.java"));
+        assertTrue("Headless scanner must advertise export tools",
+                serverSource.matches("(?s).*new AnnotationScanner\\("
+                        + "endpointHandler\\.getProgramProvider\\(\\),.*"
+                        + "endpointHandler\\.getEmulationService\\(\\),\\s*"
+                        + "endpointHandler\\.getExportService\\(\\),\\s*"
+                        + "managementService\\).*"));
     }
 
     private Set<String> parameterNames(AnnotationScanner.ToolDescriptor tool) {
