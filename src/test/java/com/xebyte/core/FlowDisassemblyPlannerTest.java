@@ -345,6 +345,58 @@ public class FlowDisassemblyPlannerTest {
     }
 
     @Test
+    public void laterExternalBranchIntoAlreadyPlannedDataMiddleConflicts() {
+        FakeSource source = new FakeSource();
+        for (long offset = 0x1010; offset <= 0x1011; offset++) {
+            source.locate(FlowDisassemblyService.Location.data(
+                address(offset), address(0x1010), address(0x1011)));
+        }
+        source.define(instruction(0x1010, 1, RefType.FLOW, 0x1011L));
+        source.define(instruction(0x1011, 1, RefType.TERMINATOR, null));
+        source.define(instruction(
+            0x1020, 1, RefType.UNCONDITIONAL_JUMP, null, 0x1011));
+
+        FlowDisassemblyService.FlowPlan plan =
+            new FlowDisassemblyService.FlowPlanner(source).plan(
+                request(
+                    List.of(address(0x1010), address(0x1020)),
+                    true,
+                    false,
+                    100));
+
+        assertEquals(3, plan.instructions().size());
+        assertEquals(1, source.decodeCount(address(0x1011)));
+        assertTrue(plan.conflicts().stream()
+            .anyMatch(conflict ->
+                conflict.address().equals(address(0x1011)) &&
+                conflict.origin().equals(address(0x1020)) &&
+                conflict.edgeKind() == FlowDisassemblyService.EdgeKind.BRANCH &&
+                "middle_of_defined_data".equals(conflict.reason())));
+    }
+
+    @Test
+    public void laterOrdinaryDuplicateTargetDoesNotDecodeOrConflictAgain() {
+        FakeSource source = new FakeSource();
+        source.define(instruction(
+            0x1000, 1, RefType.UNCONDITIONAL_JUMP, null, 0x1010));
+        source.define(instruction(0x1010, 1, RefType.TERMINATOR, null));
+        source.define(instruction(
+            0x1020, 1, RefType.UNCONDITIONAL_JUMP, null, 0x1010));
+
+        FlowDisassemblyService.FlowPlan plan =
+            new FlowDisassemblyService.FlowPlanner(source).plan(
+                request(
+                    List.of(address(0x1000), address(0x1020)),
+                    true,
+                    true,
+                    100));
+
+        assertEquals(3, plan.instructions().size());
+        assertEquals(1, source.decodeCount(address(0x1010)));
+        assertTrue(plan.conflicts().isEmpty());
+    }
+
+    @Test
     public void acceptedInstructionOverlappingDataStartSchedulesCompleteUnit() {
         FakeSource source = new FakeSource();
         source.define(instruction(0x1000, 2, RefType.FLOW, 0x1002L));
@@ -424,9 +476,14 @@ public class FlowDisassemblyPlannerTest {
             implements FlowDisassemblyService.InstructionSource {
         private final Map<Address, FlowDisassemblyService.DecodedInstruction> decoded =
             new HashMap<>();
+        private final Map<Address, Integer> decodeCounts = new HashMap<>();
 
         void define(FlowDisassemblyService.DecodedInstruction instruction) {
             decoded.put(instruction.address(), instruction);
+        }
+
+        int decodeCount(Address address) {
+            return decodeCounts.getOrDefault(address, 0);
         }
 
         private final Map<Address, FlowDisassemblyService.Location> locations =
@@ -444,6 +501,7 @@ public class FlowDisassemblyPlannerTest {
 
         @Override
         public FlowDisassemblyService.DecodedInstruction decode(Address address) {
+            decodeCounts.merge(address, 1, Integer::sum);
             return decoded.get(address);
         }
 
