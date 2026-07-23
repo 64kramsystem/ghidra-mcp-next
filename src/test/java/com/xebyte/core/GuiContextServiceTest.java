@@ -57,14 +57,14 @@ public class GuiContextServiceTest {
     }
 
     @Test
-    public void activeProgramWithoutLocationKeepsProgramIdentity() {
+    public void cachedProviderProgramIsNotAnActiveGuiContext() {
         Program program = program("/games/story", "story", null, false);
         when(provider.getCurrentProgram()).thenReturn(program);
 
         Map<String, Object> result = parse(service.getCurrentAddress());
 
-        assertEquals(Boolean.TRUE, result.get("has_program"));
-        assertEquals("/games/story", result.get("program"));
+        assertEquals(Boolean.FALSE, result.get("has_program"));
+        assertNull(result.get("program"));
         assertEquals(Boolean.FALSE, result.get("has_address"));
         assertNull(result.get("address"));
         assertNull(result.get("address_space"));
@@ -90,7 +90,7 @@ public class GuiContextServiceTest {
     @Test
     public void emptySelectionUsesNormalizedContextAndEmptyRanges() {
         Program program = program("/games/story", "story", null, false);
-        when(provider.getCurrentProgram()).thenReturn(program);
+        gui.activeProgram = program;
         gui.selection = new ProgramSelection();
 
         Map<String, Object> result = parse(service.getCurrentSelection());
@@ -163,10 +163,9 @@ public class GuiContextServiceTest {
         gui.location = location(previous, previousAddress);
         gui.activeProgram = previous;
         gui.navigableProgram = target;
+        gui.openPrograms = List.of(previous, target);
         gui.onNavigate = () ->
             gui.location = location(target, targetAddress);
-        when(provider.getAllOpenPrograms()).thenReturn(
-            new Program[] { previous, target });
 
         Map<String, Object> result =
             parse(service.goToAddress("ram:2000", "/games/story"));
@@ -191,9 +190,51 @@ public class GuiContextServiceTest {
     }
 
     @Test
+    public void cachedProviderProgramCannotSatisfyOmittedNavigation() {
+        Address address = address("ram:2000", "ram");
+        Program cached =
+            program("/games/cached", "cached", address, true);
+        when(provider.getCurrentProgram()).thenReturn(cached);
+        gui.navigableProgram = cached;
+
+        Map<String, Object> result =
+            parse(service.goToAddress("ram:2000", ""));
+
+        assertEquals(Boolean.FALSE, result.get("success"));
+        assertEquals(Boolean.FALSE, result.get("changed"));
+        assertTrue(result.get("error").toString().contains(
+            "No active program"));
+        assertEquals(0, gui.activationCount);
+        assertEquals(0, gui.navigationCount);
+        assertContext(result, "previous_context", null, null);
+        assertContext(result, "current_context", null, null);
+    }
+
+    @Test
+    public void providerOnlyOpenProgramCannotSatisfyNamedGuiTarget() {
+        Address address = address("ram:2000", "ram");
+        Program cached =
+            program("/games/cached", "cached", address, true);
+        when(provider.getAllOpenPrograms()).thenReturn(
+            new Program[] { cached });
+        gui.navigableProgram = cached;
+
+        Map<String, Object> result =
+            parse(service.goToAddress(
+                "ram:2000", "/games/cached"));
+
+        assertEquals(Boolean.FALSE, result.get("success"));
+        assertEquals(Boolean.FALSE, result.get("changed"));
+        assertTrue(result.get("error").toString().contains(
+            "Open program not found"));
+        assertEquals(0, gui.activationCount);
+        assertEquals(0, gui.navigationCount);
+    }
+
+    @Test
     public void navigationRejectsInvalidAddressBeforeProgramActivation() {
         Program program = program("/games/story", "story", null, false);
-        when(provider.getAllOpenPrograms()).thenReturn(new Program[] { program });
+        gui.openPrograms = List.of(program);
         gui.navigableProgram = program;
 
         Map<String, Object> result =
@@ -208,8 +249,6 @@ public class GuiContextServiceTest {
 
     @Test
     public void navigationRejectsUnknownNamedProgram() {
-        when(provider.getAllOpenPrograms()).thenReturn(new Program[0]);
-
         Map<String, Object> result =
             parse(service.goToAddress("ram:2000", "/games/missing"));
 
@@ -229,13 +268,9 @@ public class GuiContextServiceTest {
         gui.location = location(previous, previousAddress);
         gui.activeProgram = previous;
         gui.navigableProgram = target;
+        gui.openPrograms = List.of(previous, target);
         gui.navigateResult = false;
-        gui.onActivate = () -> {
-            gui.location = null;
-            when(provider.getCurrentProgram()).thenReturn(target);
-        };
-        when(provider.getAllOpenPrograms()).thenReturn(
-            new Program[] { previous, target });
+        gui.onActivate = () -> gui.location = null;
 
         Map<String, Object> result =
             parse(service.goToAddress("ram:2000", "/games/story"));
@@ -255,8 +290,8 @@ public class GuiContextServiceTest {
         gui.location = location(program, address);
         gui.activeProgram = program;
         gui.navigableProgram = program;
+        gui.openPrograms = List.of(program);
         gui.selection = new ProgramSelection();
-        when(provider.getAllOpenPrograms()).thenReturn(new Program[] { program });
         GuiContextService swingService =
             new GuiContextService(gui, provider, new SwingThreadingStrategy());
 
@@ -368,6 +403,7 @@ public class GuiContextServiceTest {
         private ProgramSelection selection;
         private Program activeProgram;
         private Program navigableProgram;
+        private List<Program> openPrograms = List.of();
         private boolean navigateResult = true;
         private Runnable onActivate = () -> {};
         private Runnable onNavigate = () -> {};
@@ -391,6 +427,12 @@ public class GuiContextServiceTest {
         public Program currentProgram() {
             assertEventThread();
             return activeProgram;
+        }
+
+        @Override
+        public List<Program> openPrograms() {
+            assertEventThread();
+            return openPrograms;
         }
 
         @Override
