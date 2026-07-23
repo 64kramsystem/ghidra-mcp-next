@@ -97,57 +97,30 @@ import java.util.regex.Pattern;
 
 // Load version from properties file (populated by Maven during build)
 class VersionInfo {
-    private static String VERSION = "5.15.0"; // Default fallback
-    private static String APP_NAME = "GhidraMCP";
-    private static String GHIDRA_VERSION = "unknown"; // Loaded from version.properties (Maven-filtered)
-    private static String BUILD_TIMESTAMP = "dev"; // Will be replaced by Maven
-    private static String BUILD_NUMBER = "0"; // Will be replaced by Maven
     // Default fallback when the plugin has not yet finished registering its
     // scanner-driven endpoints (e.g., headless usage that imports this class
     // without running the GUI activation path). The live value is set via
     // setEndpointCount() once the scanner has enumerated everything.
     private static volatile int ENDPOINT_COUNT = 245;
 
-    static {
-        // v5.4.2: loading "/version.properties" from the classpath root was
-        // hitting a sibling version.properties exported by another Ghidra
-        // module, which resolved first and returned stale values. Move the
-        // resource under the com/xebyte/ package path so the lookup is scoped
-        // to this plugin's classes.
-        try (InputStream input = GhidraMCPPlugin.class
-                .getResourceAsStream("/com/xebyte/version.properties")) {
-            if (input != null) {
-                Properties props = new Properties();
-                props.load(input);
-                VERSION = props.getProperty("app.version", VERSION);
-                APP_NAME = props.getProperty("app.name", APP_NAME);
-                GHIDRA_VERSION = props.getProperty("ghidra.version", GHIDRA_VERSION);
-                BUILD_TIMESTAMP = props.getProperty("build.timestamp", BUILD_TIMESTAMP);
-                BUILD_NUMBER = props.getProperty("build.number", BUILD_NUMBER);
-            }
-        } catch (IOException e) {
-            // Use defaults (hard-coded above) if file not found.
-        }
-    }
-
     public static String getVersion() {
-        return VERSION;
+        return com.xebyte.core.VersionPayload.getVersion();
     }
 
     public static String getAppName() {
-        return APP_NAME;
+        return com.xebyte.core.VersionPayload.getPluginName();
     }
 
     public static String getGhidraVersion() {
-        return GHIDRA_VERSION;
+        return com.xebyte.core.VersionPayload.getGhidraVersion();
     }
 
     public static String getBuildTimestamp() {
-        return BUILD_TIMESTAMP;
+        return com.xebyte.core.VersionPayload.getBuildTimestamp();
     }
 
     public static String getBuildNumber() {
-        return BUILD_NUMBER;
+        return com.xebyte.core.VersionPayload.getBuildNumber();
     }
 
     public static int getEndpointCount() {
@@ -165,7 +138,7 @@ class VersionInfo {
     }
 
     public static String getFullVersion() {
-        return VERSION + " (build " + BUILD_NUMBER + ", " + BUILD_TIMESTAMP + ")";
+        return com.xebyte.core.VersionPayload.getFullVersion();
     }
 }
 
@@ -2258,18 +2231,8 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
      * Get version information about the plugin and Ghidra (v1.7.0)
      */
     private String getVersion() {
-        StringBuilder version = new StringBuilder();
-        version.append("{\n");
-        version.append("  \"plugin_version\": \"").append(VersionInfo.getVersion()).append("\",\n");
-        version.append("  \"plugin_name\": \"").append(VersionInfo.getAppName()).append("\",\n");
-        version.append("  \"build_timestamp\": \"").append(VersionInfo.getBuildTimestamp()).append("\",\n");
-        version.append("  \"build_number\": \"").append(VersionInfo.getBuildNumber()).append("\",\n");
-        version.append("  \"full_version\": \"").append(VersionInfo.getFullVersion()).append("\",\n");
-        version.append("  \"ghidra_version\": \"").append(VersionInfo.getGhidraVersion()).append("\",\n");
-        version.append("  \"java_version\": \"").append(System.getProperty("java.version")).append("\",\n");
-        version.append("  \"endpoint_count\": ").append(VersionInfo.getEndpointCount()).append("\n");
-        version.append("}");
-        return version.toString();
+        return com.xebyte.core.VersionPayload.toJson(
+            "gui", VersionInfo.getEndpointCount());
     }
 
     /**

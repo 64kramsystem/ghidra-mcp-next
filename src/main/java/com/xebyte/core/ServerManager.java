@@ -159,6 +159,15 @@ public class ServerManager {
             } catch (Exception ignored) {}
         });
 
+        server.createContext("/get_version", exchange -> {
+            try {
+                sendJsonResponse(
+                    exchange,
+                    VersionPayload.toJson("gui", scanner.getEndpoints().size()));
+            } catch (Exception ignored) {
+            }
+        });
+
         // Live instance info — queried by bridge on demand
         server.createContext("/mcp/instance_info", exchange -> {
             try {

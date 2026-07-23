@@ -381,7 +381,10 @@ public class GhidraMCPHeadlessServer implements GhidraLaunchable {
         });
 
         safeContext("/get_version", exchange -> {
-            sendResponse(exchange, endpointHandler.getVersion());
+            sendResponse(
+                exchange,
+                com.xebyte.core.VersionPayload.toJson(
+                    "headless", registeredEndpointCount));
         });
 
         // ==========================================================================

@@ -159,13 +159,7 @@ public class HeadlessEndpointHandler {
     // ==========================================================================
 
     public String getVersion() {
-        StringBuilder sb = new StringBuilder();
-        sb.append("{");
-        sb.append("\"plugin_version\": \"").append(VERSION).append("\",");
-        sb.append("\"plugin_name\": \"GhidraMCP Headless\",");
-        sb.append("\"mode\": \"headless\"");
-        sb.append("}");
-        return sb.toString();
+        return com.xebyte.core.VersionPayload.toJson("headless", 0);
     }
 
     /**
