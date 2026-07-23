@@ -13,7 +13,7 @@ from . import dispatch
 from . import handshake
 from . import state
 from . import transport
-from .config import STATIC_TOOL_NAMES, logger
+from .config import STATIC_TOOL_NAMES
 from .schema import _TYPE_MAP, _normalize_tool_def_names, _parse_schema
 from .server import Context, mcp
 from .validation import sanitize_address, validate_tool_name

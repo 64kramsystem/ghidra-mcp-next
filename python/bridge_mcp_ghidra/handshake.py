@@ -324,11 +324,12 @@ def validate_handshake(
         parsed["name_collided"] = False
         parsed_defs.append(parsed)
 
-    sort_key = lambda item: (
-        sanitize_tool_name(item.get("name") or item["path"].lstrip("/")),
-        item["method"],
-        item["path"],
-    )
+    def sort_key(item):
+        return (
+            sanitize_tool_name(item.get("name") or item["path"].lstrip("/")),
+            item["method"],
+            item["path"],
+        )
     manifest_value = {"tools": sorted(normalized_raw, key=sort_key)}
     manifest_bytes = canonical_json_bytes(manifest_value)
     callable_value = sorted(
