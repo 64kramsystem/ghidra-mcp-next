@@ -1,6 +1,7 @@
 package com.xebyte.core;
 
 import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -50,7 +51,8 @@ public final class DataRegionService {
         + "\"kind\":{\"const\":\"split_pointer_table\"},"
         + "\"first_start\":{\"type\":\"string\"},"
         + "\"second_start\":{\"type\":\"string\"},"
-        + "\"count\":{\"type\":\"integer\",\"minimum\":1},"
+        + "\"count\":{\"type\":\"integer\",\"minimum\":1,"
+        + "\"maximum\":1000000},"
         + "\"layout\":{\"enum\":[\"split_low_high\",\"split_high_low\"]},"
         + "\"target_space\":{\"type\":\"string\"},"
         + "\"target_base\":{\"type\":\"integer\",\"minimum\":0,\"default\":0},"
@@ -109,7 +111,8 @@ public final class DataRegionService {
                 value = "regions",
                 source = ParamSource.BODY,
                 schemaFragment = REGIONS_SCHEMA,
-                description = "Native JSON array of 1..1024 flat region records")
+                description = "Native JSON array of 1..1024 flat region records; "
+                    + "at most 1000000 logical elements across the request")
                 Object regionsValue,
             @Param(
                 value = "dry_run",
@@ -128,12 +131,13 @@ public final class DataRegionService {
             Program program = requireProgram(programName);
             if (dryRun) {
                 DataRegionCore.Plan plan = threading.executeRead(
-                    () -> core.plan(program, requests));
+                    () -> core.plan(program, requests, monitor));
                 return Response.ok(result(plan, false));
             }
             return threading.executeWrite(
                 program, "Apply data regions", () -> {
-                    DataRegionCore.Plan plan = core.plan(program, requests);
+                    DataRegionCore.Plan plan =
+                        core.plan(program, requests, monitor);
                     monitor.checkCancelled();
                     core.apply(program, plan, monitor);
                     return Response.ok(result(plan, true));
@@ -188,8 +192,8 @@ public final class DataRegionService {
     private static DataRegionCore.ContiguousRequest parseContiguous(
             Map<String, Object> map) {
         rejectUnknown(map, CONTIGUOUS_FIELDS);
-        Long stride = optionalExactLong(map, "stride");
-        if (stride != null && stride <= 0) {
+        BigInteger stride = optionalExactBigInteger(map, "stride");
+        if (stride != null && stride.signum() <= 0) {
             throw new IllegalArgumentException("stride must be positive");
         }
         DataRegionCore.PointerOptions pointers = null;
@@ -217,10 +221,14 @@ public final class DataRegionService {
     private static DataRegionCore.SplitPointerRequest parseSplit(
             Map<String, Object> map) {
         rejectUnknown(map, SPLIT_FIELDS);
-        int count = Math.toIntExact(requiredExactLong(map, "count"));
-        if (count <= 0) {
-            throw new IllegalArgumentException("count must be positive");
+        long countValue = requiredExactLong(map, "count");
+        if (countValue <= 0
+                || countValue > DataRegionCore.MAX_PLANNED_ELEMENTS) {
+            throw new IllegalArgumentException(
+                "count must be between 1 and "
+                    + DataRegionCore.MAX_PLANNED_ELEMENTS);
         }
+        int count = (int) countValue;
         String layout = requiredString(map, "layout");
         return new DataRegionCore.SplitPointerRequest(
             requiredString(map, "first_start"),
@@ -239,9 +247,11 @@ public final class DataRegionService {
 
     private static DataRegionCore.PointerOptions pointerOptions(
             Map<String, Object> map, String layout) {
-        Long baseValue = optionalExactLong(map, "target_base");
-        long base = baseValue == null ? 0 : baseValue;
-        if (base < 0) {
+        BigInteger base = optionalExactBigInteger(map, "target_base");
+        if (base == null) {
+            base = BigInteger.ZERO;
+        }
+        if (base.signum() < 0) {
             throw new IllegalArgumentException(
                 "target_base must be non-negative");
         }
@@ -262,15 +272,57 @@ public final class DataRegionService {
         JsonArray createdData = new JsonArray();
         JsonArray references = new JsonArray();
         JsonArray symbols = new JsonArray();
+        JsonArray comments = new JsonArray();
         for (DataRegionCore.RegionPlan region : plan.regions()) {
             JsonObject item = new JsonObject();
             item.addProperty("kind", region.kind());
             item.addProperty("placement", region.placement().toString());
+            DataRegionCore.Metadata metadata = region.metadata();
+            addNullable(item, "name",
+                metadata == null ? null : metadata.name());
+            addNullable(item, "namespace",
+                metadata == null ? null : metadata.namespace());
+            addNullable(item, "plate_comment",
+                metadata == null ? null : metadata.plateComment());
+            item.addProperty(
+                "clear_conflicts",
+                metadata != null && metadata.clearConflicts());
             item.addProperty(
                 "element_count",
                 "contiguous".equals(region.kind())
                     ? region.elementAddresses().size()
                     : region.splitFirst().size());
+            if (region.request()
+                    instanceof DataRegionCore.ContiguousRequest request) {
+                item.addProperty(
+                    "start", region.placement().toString());
+                item.addProperty(
+                    "end", contiguousEnd(region).toString());
+                item.addProperty(
+                    "type_name", region.dataType().getPathName());
+                item.addProperty("data_length", region.dataLength());
+                item.addProperty("stride", region.stride());
+                item.addProperty(
+                    "allow_trailing_bytes",
+                    request.allowTrailingBytes());
+                item.add(
+                    "pointer_options",
+                    pointerOptionsJson(region.pointerOptions()));
+            }
+            else {
+                DataRegionCore.SplitPointerRequest request =
+                    (DataRegionCore.SplitPointerRequest) region.request();
+                item.addProperty(
+                    "first_start",
+                    region.splitFirst().get(0).toString());
+                item.addProperty(
+                    "second_start",
+                    region.splitSecond().get(0).toString());
+                item.addProperty("count", request.count());
+                item.addProperty("layout", request.layout());
+                addPointerOptionsFlat(
+                    item, region.pointerOptions());
+            }
             JsonArray addresses = new JsonArray();
             if ("contiguous".equals(region.kind())) {
                 region.elementAddresses().forEach(
@@ -324,68 +376,86 @@ public final class DataRegionService {
             }
             item.add("pointers", pointerResults);
             regions.add(item);
-            List<Address> definitions = new ArrayList<>(
-                region.elementAddresses());
-            if (!region.splitFirst().isEmpty()) {
-                definitions.add(region.splitFirst().get(0));
-                definitions.add(region.splitSecond().get(0));
-            }
-            for (Address address : definitions) {
+            for (DataRegionCore.DataAction action
+                    : region.dataActions()) {
                 JsonObject data = new JsonObject();
-                data.addProperty("address", address.toString());
                 data.addProperty(
-                    "type_name", region.dataType().getPathName());
-                data.addProperty("length", region.dataLength());
+                    "address", action.address().toString());
                 data.addProperty(
-                    "action",
-                    region.existingData().contains(address)
-                        ? "unchanged" : "create");
+                    "type_name", action.dataType().getPathName());
+                data.addProperty("length", action.length());
+                data.addProperty("action", action.action());
                 createdData.add(data);
             }
-            if (region.metadata() != null
-                    && region.metadata().name() != null) {
+            for (DataRegionCore.SymbolAction action
+                    : region.symbolActions()) {
                 JsonObject symbol = new JsonObject();
-                symbol.addProperty("address", region.placement().toString());
-                symbol.addProperty("name", region.metadata().name());
-                symbol.addProperty(
-                    "namespace", region.metadata().namespace());
-                symbol.addProperty("kind", "region");
+                addNullable(symbol, "address",
+                    action.address() == null
+                        ? null : action.address().toString());
+                symbol.addProperty("name", action.name());
+                addNullable(
+                    symbol, "namespace", action.namespace());
+                symbol.addProperty("kind", action.kind());
+                symbol.addProperty("action", action.action());
+                if (action.reason() != null) {
+                    symbol.addProperty("reason", action.reason());
+                }
+                symbol.addProperty("primary", action.primary());
                 symbols.add(symbol);
             }
-            DataRegionCore.PointerOptions options =
-                region.pointerOptions();
-            for (DataRegionCore.PointerPlan pointer : region.pointers()) {
-                if (!pointer.valid()) {
-                    continue;
+            for (DataRegionCore.ReferenceAction action
+                    : region.referenceActions()) {
+                JsonObject reference = new JsonObject();
+                reference.addProperty(
+                    "from", action.from().toString());
+                addNullable(
+                    reference, "to",
+                    action.to() == null
+                        ? null : action.to().toString());
+                reference.addProperty("type", "data");
+                reference.addProperty("source", "user_defined");
+                reference.addProperty(
+                    "operand_index",
+                    ghidra.program.model.symbol.Reference.MNEMONIC);
+                reference.addProperty("action", action.action());
+                if (action.reason() != null) {
+                    reference.addProperty("reason", action.reason());
                 }
-                if (options != null && options.createReferences()) {
-                    for (Address source : pointer.sources()) {
-                        JsonObject reference = new JsonObject();
-                        reference.addProperty(
-                            "from", source.toString());
-                        reference.addProperty(
-                            "to", pointer.target().toString());
-                        references.add(reference);
-                    }
-                }
-                if (pointer.labelName() != null) {
-                    JsonObject symbol = new JsonObject();
-                    symbol.addProperty(
-                        "address", pointer.target().toString());
-                    symbol.addProperty("name", pointer.labelName());
-                    symbol.addProperty(
-                        "namespace",
-                        options == null
-                            ? null : options.labelNamespace());
-                    symbol.addProperty("kind", "pointer_target");
-                    symbols.add(symbol);
-                }
+                references.add(reference);
+            }
+            if (region.platePlan() != null) {
+                JsonObject comment = new JsonObject();
+                comment.addProperty(
+                    "address", region.placement().toString());
+                comment.addProperty("type", "plate");
+                addNullable(
+                    comment, "previous",
+                    region.platePlan().previous());
+                addNullable(
+                    comment, "resulting",
+                    region.platePlan().resulting());
+                comment.addProperty(
+                    "action",
+                    region.platePlan().changed()
+                        ? "create" : "unchanged");
+                comments.add(comment);
             }
         }
         result.add("regions", regions);
         result.add("created_data", createdData);
         result.add("symbols", symbols);
         result.add("references", references);
+        result.add("comments", comments);
+        JsonArray namespaces = new JsonArray();
+        for (DataRegionCore.NamespaceAction action
+                : plan.namespaceActions()) {
+            JsonObject namespace = new JsonObject();
+            namespace.addProperty("name", action.name());
+            namespace.addProperty("action", action.action());
+            namespaces.add(namespace);
+        }
+        result.add("namespaces", namespaces);
         JsonArray conflicts = new JsonArray();
         plan.conflicts().forEach(conflicts::add);
         result.add("conflicts", conflicts);
@@ -404,9 +474,94 @@ public final class DataRegionService {
                 units.add(entry);
             });
             clear.add("code_units", units);
+            JsonArray functions = new JsonArray();
+            plan.clearPlan().functions().forEach(function -> {
+                JsonObject entry = new JsonObject();
+                entry.addProperty(
+                    "entry", function.entry().toString());
+                entry.addProperty("name", function.name());
+                entry.addProperty("action", "remove");
+                functions.add(entry);
+            });
+            clear.add("functions", functions);
+            JsonArray expanded = new JsonArray();
+            plan.clearPlan().expanded().forEach(range -> {
+                JsonObject entry = new JsonObject();
+                entry.addProperty(
+                    "start", range.getMinAddress().toString());
+                entry.addProperty(
+                    "end", range.getMaxAddress().toString());
+                expanded.add(entry);
+            });
+            clear.add("expanded_ranges", expanded);
+            JsonObject counts = new JsonObject();
+            counts.addProperty(
+                "instructions",
+                plan.clearPlan().removalCounts().instructions());
+            counts.addProperty(
+                "data", plan.clearPlan().removalCounts().data());
+            counts.addProperty(
+                "functions",
+                plan.clearPlan().removalCounts().functions());
+            clear.add("removal_counts", counts);
             result.add("clear_plan", clear);
         }
         return result;
+    }
+
+    private static Address contiguousEnd(
+            DataRegionCore.RegionPlan region) {
+        if (region.trailingEnd() != null) {
+            return region.trailingEnd();
+        }
+        if (region.elementAddresses().isEmpty()) {
+            return region.placement();
+        }
+        Address last = region.elementAddresses()
+            .get(region.elementAddresses().size() - 1);
+        return last.add(region.dataLength() - 1L);
+    }
+
+    private static JsonObject pointerOptionsJson(
+            DataRegionCore.PointerOptions options) {
+        if (options == null) {
+            return null;
+        }
+        JsonObject result = new JsonObject();
+        addPointerOptionsFlat(result, options);
+        return result;
+    }
+
+    private static void addPointerOptionsFlat(
+            JsonObject target,
+            DataRegionCore.PointerOptions options) {
+        if (options == null) {
+            return;
+        }
+        target.addProperty("layout", options.layout());
+        addNullable(
+            target, "target_space", options.targetSpace());
+        target.addProperty("target_base", options.targetBase());
+        target.addProperty(
+            "create_references", options.createReferences());
+        target.addProperty(
+            "validate_targets", options.validateTargets());
+        addNullable(
+            target, "target_label_prefix",
+            options.targetLabelPrefix());
+        addNullable(
+            target, "label_namespace",
+            options.labelNamespace());
+    }
+
+    private static void addNullable(
+            JsonObject target, String name, String value) {
+        if (value == null) {
+            target.add(name, JsonNull.INSTANCE);
+        }
+        else {
+            target.addProperty(name, value);
+        }
     }
 
     private static Map<String, Object> stringMap(
@@ -494,6 +649,25 @@ public final class DataRegionService {
         catch (ArithmeticException | NumberFormatException error) {
             throw new IllegalArgumentException(
                 key + " must be an exact 64-bit JSON integer", error);
+        }
+    }
+
+    private static BigInteger optionalExactBigInteger(
+            Map<String, Object> map, String key) {
+        Object value = map.get(key);
+        if (value == null) {
+            return null;
+        }
+        if (!(value instanceof Number number)) {
+            throw new IllegalArgumentException(
+                key + " must be a JSON integer");
+        }
+        try {
+            return new BigDecimal(number.toString()).toBigIntegerExact();
+        }
+        catch (ArithmeticException | NumberFormatException error) {
+            throw new IllegalArgumentException(
+                key + " must be an exact JSON integer", error);
         }
     }
 }
