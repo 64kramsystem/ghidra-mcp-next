@@ -653,7 +653,10 @@ public class AnnotationScanner {
             sb.append(", \"source\": ").append(jsonStr(source));
             sb.append(", \"required\": ").append(!optional);
             if (defaultValue != null) {
-                sb.append(", \"default\": ").append(jsonStr(defaultValue));
+                String jsonDefault = schemaDefaultJson();
+                if (jsonDefault != null) {
+                    sb.append(", \"default\": ").append(jsonDefault);
+                }
             }
             if (description != null && !description.isEmpty()) {
                 sb.append(", \"description\": ").append(jsonStr(description));
@@ -663,6 +666,46 @@ public class AnnotationScanner {
             }
             sb.append("}");
             return sb.toString();
+        }
+
+        private String schemaDefaultJson() {
+            if (defaultValue.isEmpty()
+                    && ("boolean".equals(type)
+                        || "integer".equals(type)
+                        || "number".equals(type))) {
+                return null;
+            }
+            return switch (type) {
+                case "boolean" -> {
+                    if (!"true".equals(defaultValue)
+                            && !"false".equals(defaultValue)) {
+                        throw new IllegalStateException(
+                            "Invalid boolean default for parameter '" + name + "'");
+                    }
+                    yield defaultValue;
+                }
+                case "integer" -> {
+                    try {
+                        yield Long.toString(Long.parseLong(defaultValue));
+                    }
+                    catch (NumberFormatException error) {
+                        throw new IllegalStateException(
+                            "Invalid integer default for parameter '" + name + "'",
+                            error);
+                    }
+                }
+                case "number" -> {
+                    try {
+                        yield new java.math.BigDecimal(defaultValue).toString();
+                    }
+                    catch (NumberFormatException error) {
+                        throw new IllegalStateException(
+                            "Invalid number default for parameter '" + name + "'",
+                            error);
+                    }
+                }
+                default -> jsonStr(defaultValue);
+            };
         }
     }
 
