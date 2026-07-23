@@ -50,10 +50,11 @@ symbol detection is read-only and used only for filtering/audit signals.
 The `bridge_mcp_ghidra` package:
 
 - discovers running GUI/headless instances;
-- fetches the endpoint schema;
+- handshakes the server version and complete endpoint schema into one
+  generation;
 - converts endpoint paths into stable MCP names;
 - provides management tools such as `search_tools`, `list_tool_groups`, and
-  `load_tool_group`;
+  `load_tool_group`, plus connection identity/refresh tools;
 - forwards calls over local UDS or TCP; and
 - optionally serves stdio, Streamable HTTP, or legacy SSE MCP transports.
 

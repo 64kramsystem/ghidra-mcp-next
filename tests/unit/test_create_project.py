@@ -733,21 +733,33 @@ def test_import_file_dispatches_immediately_through_new_target(
     )
     asyncio.run(static_tools.create_project("/projects", "NewProject"))
 
-    def import_post(endpoint, payload):
+    async def import_post(
+        tool_name,
+        method,
+        endpoint,
+        *,
+        query_params,
+        body,
+        ctx,
+    ):
         assert state._transport_mode == "uds"
         assert state._active_socket == instance["socket"]
         assert state._connected_project == "NewProject"
+        assert tool_name == "import_file"
+        assert method == "POST"
+        assert endpoint == "/import_file"
+        assert body["file_path"] == "/samples/program.exe"
         return json.dumps({"success": True})
 
-    post = mock.Mock(side_effect=import_post)
-    monkeypatch.setattr(static_tools.dispatch, "dispatch_post", post)
+    post = mock.AsyncMock(side_effect=import_post)
+    monkeypatch.setattr(static_tools.dispatch, "dispatch_dynamic", post)
 
     result = json.loads(
         asyncio.run(static_tools.import_file("/samples/program.exe"))
     )
 
     assert result["success"] is True
-    post.assert_called_once()
+    post.assert_awaited_once()
 
 
 class TrackingLock:

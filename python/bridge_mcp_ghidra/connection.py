@@ -248,3 +248,28 @@ def get_connection_info_json() -> str:
             else None
         )
     return json.dumps(result)
+
+
+def record_local_failure(
+    operation: str,
+    candidate: dict,
+    category: str,
+    message: str,
+) -> None:
+    """Record selection/preflight failures that never contacted a server."""
+    now = timestamp()
+    with state._ghidra_lock:
+        state._last_attempt = {
+            "operation": operation,
+            "candidate": candidate,
+            "started_at": now,
+            "ended_at": now,
+            "success": False,
+            "failure": {"category": category, "message": message},
+            "server_identity": None,
+            "tools_changed": {
+                "attempted": False,
+                "sent": False,
+                "error": None,
+            },
+        }

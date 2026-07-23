@@ -169,6 +169,12 @@ async def create_and_connect_project(
     try:
         selected, mode, endpoint = _select_instance(instances, instance)
     except InstanceSelectionError as e:
+        connection.record_local_failure(
+            "create-and-connect",
+            {"project": name, "instance": instance},
+            "transport failure",
+            str(e),
+        )
         raise _selection_tool_error(e) from e
 
     attempt = {
@@ -195,6 +201,16 @@ async def create_and_connect_project(
                 mode, endpoint, parent_dir, name
             )
         except Exception as e:
+            connection.record_local_failure(
+                "create-and-connect",
+                {
+                    "project": name,
+                    "transport": mode,
+                    "endpoint": endpoint,
+                },
+                "transport failure",
+                str(e),
+            )
             raise RuntimeError(
                 "create_project request failed with an uncertain outcome; "
                 f"the bridge did not retry another transport: {e}"
@@ -282,6 +298,12 @@ async def connect_instance(project: str, ctx: Context | None = None) -> str:
                 )
                 mode, endpoint = "tcp", scanned
             else:
+                connection.record_local_failure(
+                    "connect",
+                    {"project": project},
+                    "transport failure",
+                    str(error),
+                )
                 return json.dumps(
                     {
                         "error": str(error),
@@ -293,6 +315,12 @@ async def connect_instance(project: str, ctx: Context | None = None) -> str:
             available = [
                 item.get("project", "unknown") for item in instances
             ]
+            connection.record_local_failure(
+                "connect",
+                {"project": project},
+                "transport failure",
+                f"No instance matching '{project}'.",
+            )
             return json.dumps(
                 {
                     "error": f"No instance matching '{project}'.",
@@ -659,7 +687,14 @@ async def import_file_and_notify(
     if compiler_spec:
         payload["compiler_spec"] = compiler_spec
 
-    result = dispatch.dispatch_post("/import_file", payload)
+    result = await dispatch.dispatch_dynamic(
+        "import_file",
+        "POST",
+        "/import_file",
+        query_params=None,
+        body=payload,
+        ctx=ctx,
+    )
 
     # Parse result to check if analysis was started
     try:
@@ -755,3 +790,6 @@ def _auto_connect():
 # Python-level aliases ease source migration without retaining the old MCP names.
 create_project = create_and_connect_project
 import_file = import_file_and_notify
+
+# All decorators above have now populated the complete static map.
+registry.initialize_registry_adapter()

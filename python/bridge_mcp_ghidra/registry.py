@@ -42,6 +42,11 @@ def _adapter() -> handshake.RegistryAdapter:
     return _registry_adapter
 
 
+def initialize_registry_adapter() -> None:
+    """Fail bridge startup before serving requests if FastMCP is unsupported."""
+    _adapter()
+
+
 def _coerce_schema_default(value, json_type: str):
     """Convert trusted wire-schema defaults to their declared Python type."""
     if not isinstance(value, str):
