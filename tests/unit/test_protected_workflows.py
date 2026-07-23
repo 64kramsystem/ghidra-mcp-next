@@ -10,7 +10,7 @@ FILEZILLA_ENDPOINTS = {
     "/list_open_programs", "/switch_program", "/save_program",
     "/search_strings", "/search_functions", "/search_byte_patterns",
     "/search_instructions", "/get_xrefs_to", "/get_xrefs_from",
-    "/decompile_function", "/disassemble_bytes", "/clear_flow_and_repair",
+    "/decompile_function", "/disassemble_flow", "/clear_flow_and_repair",
     "/rename_function", "/rename_label", "/set_disassembly_comment",
     "/create_struct", "/add_struct_field", "/create_memory_block",
     "/run_ghidra_script", "/run_script_inline",

@@ -43,10 +43,13 @@ public class GuiTransportSchemaParityTest extends TestCase {
                 "src/main/java/com/xebyte/GhidraMCPPlugin.java"));
         assertTrue("TCP must construct ExportService", source.contains(
                 "this.exportService = new com.xebyte.core.ExportService(programProvider)"));
+        assertTrue("TCP must construct FlowDisassemblyService", source.contains(
+                "new com.xebyte.core.FlowDisassemblyService(programProvider, threadingStrategy)"));
         assertTrue("TCP scanner must include GuiProjectService so schema and routes agree",
                 source.matches("(?s).*new AnnotationScanner\\(programProvider,.*"
                         + "programScriptService,\\s*emulationService,\\s*exportService,\\s*"
-                        + "debuggerService,\\s*guiProjectService\\).*"));
+                        + "flowDisassemblyService,\\s*debuggerService,\\s*"
+                        + "guiProjectService\\).*"));
     }
 
     public void testUdsScannerIncludesProtectedGuiServices() throws IOException {
@@ -56,6 +59,8 @@ public class GuiTransportSchemaParityTest extends TestCase {
                 "EmulationService emulationService = new EmulationService"));
         assertTrue("UDS must construct ExportService", source.contains(
                 "ExportService exportService = new ExportService"));
+        assertTrue("UDS must construct FlowDisassemblyService", source.contains(
+                "FlowDisassemblyService flowDisassemblyService ="));
         assertTrue("UDS must construct DebuggerService", source.contains(
                 "DebuggerService debuggerService = new DebuggerService"));
         assertTrue("UDS must construct GuiProjectService", source.contains(
@@ -63,7 +68,8 @@ public class GuiTransportSchemaParityTest extends TestCase {
         assertTrue("UDS scanner must advertise emulation, export, debugger, and project tools",
                 source.matches("(?s).*new AnnotationScanner\\(programProvider,.*"
                         + "programScriptService,\\s*emulationService,\\s*exportService,\\s*"
-                        + "debuggerService,\\s*guiProjectService\\).*"));
+                        + "flowDisassemblyService,\\s*debuggerService,\\s*"
+                        + "guiProjectService\\).*"));
     }
 
     public void testHeadlessScannerIncludesExportService() throws IOException {
@@ -74,6 +80,11 @@ public class GuiTransportSchemaParityTest extends TestCase {
         assertTrue("Headless handler must expose ExportService to the scanner",
                 handlerSource.contains(
                         "getExportService() { return exportService; }"));
+        assertTrue("Headless handler must construct FlowDisassemblyService",
+                handlerSource.contains(
+                        "new com.xebyte.core.FlowDisassemblyService(programProvider, threadingStrategy)"));
+        assertTrue("Headless handler must expose FlowDisassemblyService to the scanner",
+                handlerSource.contains("getFlowDisassemblyService()"));
 
         String serverSource = Files.readString(ROOT.resolve(
                 "src/main/java/com/xebyte/headless/GhidraMCPHeadlessServer.java"));
@@ -82,6 +93,7 @@ public class GuiTransportSchemaParityTest extends TestCase {
                         + "endpointHandler\\.getProgramProvider\\(\\),.*"
                         + "endpointHandler\\.getEmulationService\\(\\),\\s*"
                         + "endpointHandler\\.getExportService\\(\\),\\s*"
+                        + "endpointHandler\\.getFlowDisassemblyService\\(\\),\\s*"
                         + "managementService\\).*"));
     }
 

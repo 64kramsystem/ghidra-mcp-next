@@ -269,6 +269,7 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
     private final com.xebyte.core.ProgramScriptService programScriptService;
     private final com.xebyte.core.EmulationService emulationService;
     private final com.xebyte.core.ExportService exportService;
+    private final com.xebyte.core.FlowDisassemblyService flowDisassemblyService;
     private final com.xebyte.core.DebuggerService debuggerService;
 
     public GhidraMCPPlugin(PluginTool tool) {
@@ -290,6 +291,8 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
         this.programScriptService = new com.xebyte.core.ProgramScriptService(programProvider, threadingStrategy);
         this.emulationService = new com.xebyte.core.EmulationService(programProvider, threadingStrategy);
         this.exportService = new com.xebyte.core.ExportService(programProvider);
+        this.flowDisassemblyService =
+            new com.xebyte.core.FlowDisassemblyService(programProvider, threadingStrategy);
         this.debuggerService = new com.xebyte.core.DebuggerService(programProvider, threadingStrategy, tool);
         Msg.info(GhidraMCPPlugin.class, "============================================");
         Msg.info(GhidraMCPPlugin.class, "GhidraMCP " + VersionInfo.getFullVersion());
@@ -550,7 +553,8 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
             listingService, functionService, commentService, symbolLabelService,
             xrefCallGraphService, dataTypeService, analysisService,
             binaryComparisonService, malwareSecurityService, programScriptService,
-            emulationService, exportService, debuggerService, guiProjectService);
+            emulationService, exportService, flowDisassemblyService,
+            debuggerService, guiProjectService);
 
         for (EndpointDef ep : scanner.getEndpoints()) {
             server.createContext(ep.path(), safeHandler(exchange -> {
@@ -3123,14 +3127,6 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
                                           Boolean isThunk, Boolean isExternal, boolean regex,
                                           String sortBy, int offset, int limit, String programName) {
         return analysisService.searchFunctionsEnhanced(namePattern, minXrefs, maxXrefs, callingConvention, hasCustomName, isThunk, isExternal, regex, sortBy, offset, limit, programName).toJson();
-    }
-
-    /**
-     * NEW v1.7.1: Disassemble a range of bytes
-     */
-    private String disassembleBytes(String startAddress, String endAddress, Integer length,
-                                   boolean restrictToExecuteMemory) {
-        return functionService.disassembleBytes(startAddress, endAddress, length, restrictToExecuteMemory).toJson();
     }
 
     /**

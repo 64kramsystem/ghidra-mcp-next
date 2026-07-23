@@ -18,7 +18,7 @@ ENDPOINT_TIMEOUTS = {
     "analyze_data_region": 90,
     "batch_create_labels": 60,
     "batch_delete_labels": 60,
-    "disassemble_bytes": 120,
+    "disassemble_flow": 120,
     "bulk_fuzzy_match": 180,
     "find_similar_functions_fuzzy": 60,
     "import_file": 300,
