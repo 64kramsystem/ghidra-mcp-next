@@ -1358,6 +1358,147 @@ public class MemoryBlockServiceGhidraTest {
         assertArrayEquals(hex("0102"), bytes("0x7500", 2));
     }
 
+    @Test
+    public void patchPreviewCommitClearsWholeUnitsAndPreservesAnnotations()
+            throws Exception {
+        builder.createMemory("patch_ram", "0x7000", 0x20);
+        builder.setBytes(
+            "0x7000",
+            "a9 01 60 ea ea ea ea ea ea ea ea ea ea ea ea ea "
+                + "ea ea ea ea ea ea ea ea ea ea ea ea ea ea ea ea");
+        builder.withTransaction(() ->
+            program.getMemory().getBlock("patch_ram").setWrite(true));
+        builder.disassemble("0x7000", 3);
+        builder.createFunction("0x7000");
+        builder.withTransaction(() -> {
+            try {
+                program.getSymbolTable().createLabel(
+                    builder.addr("0x7001"), "patch_operand",
+                    SourceType.USER_DEFINED);
+                program.getListing().setComment(
+                    builder.addr("0x7001"),
+                    CommentType.PLATE,
+                    "preserved plate");
+                program.getBookmarkManager().setBookmark(
+                    builder.addr("0x7001"),
+                    "NOTE", "patch", "preserved bookmark");
+                program.getReferenceManager().addMemoryReference(
+                    builder.addr("0x7001"),
+                    builder.addr("0x7010"),
+                    RefType.DATA,
+                    SourceType.IMPORTED,
+                    0);
+            }
+            catch (Exception error) {
+                throw new AssertionError(error);
+            }
+        });
+
+        assertError(memory.patchBytes(
+            "0x7001", "ff", null, false, null,
+            false, true, ""), "intersects instruction");
+        JsonObject preview = ok(memory.patchBytes(
+            "0x7001", "ff", null, true, "01",
+            false, true, ""));
+        assertFalse(preview.get("committed").getAsBoolean());
+        assertEquals("01", preview.get("previous").getAsString());
+        assertEquals(1,
+            preview.getAsJsonArray("cleared_code_units").size());
+        assertArrayEquals(hex("a90160"), bytes("0x7000", 3));
+
+        JsonObject committed = ok(memory.patchBytes(
+            "0x7001", "ff", null, true, "01",
+            false, false, ""));
+        assertTrue(committed.get("committed").getAsBoolean());
+        assertArrayEquals(hex("a9ff60"), bytes("0x7000", 3));
+        assertNull(program.getListing().getInstructionContaining(
+            builder.addr("0x7001")));
+        assertNull(program.getFunctionManager().getFunctionAt(
+            builder.addr("0x7000")));
+        assertTrue(program.getSymbolTable().getSymbols(
+            builder.addr("0x7001")).length > 0);
+        assertEquals(
+            "preserved plate",
+            program.getListing().getComment(
+                CommentType.PLATE, builder.addr("0x7001")));
+        assertEquals(
+            1,
+            program.getBookmarkManager().getBookmarks(
+                builder.addr("0x7001")).length);
+        assertEquals(
+            SourceType.IMPORTED,
+            program.getReferenceManager().getReferencesFrom(
+                builder.addr("0x7001"))[0].getSource());
+    }
+
+    @Test
+    public void patchExactOverlayResolutionReadonlyAndRollbackAreAtomic() {
+        JsonObject overlay = create(
+            "patch_overlay", "0x8000", null, "01020304",
+            null, null, true, null,
+            true, false, true, false, "bank", false);
+        String space = overlay.getAsJsonObject("after")
+            .get("address_space").getAsString();
+
+        assertError(memory.patchBytes(
+            "0x8001", "aa", "patch_overlay", true, null,
+            false, false, ""), "read-only");
+        JsonObject preview = ok(memory.patchBytes(
+            "8001", "aa", "patch_overlay", true, "02",
+            true, true, ""));
+        assertEquals(space, preview.get("address_space").getAsString());
+        assertTrue(preview.get("temporary_write_enabled").getAsBoolean());
+        assertFalse(program.getMemory().getBlock("patch_overlay").isWrite());
+        assertError(memory.patchBytes(
+            "ram:8001", "aa", "patch_overlay", true, null,
+            true, true, ""), "conflict");
+
+        Response mismatch = memory.patchBytes(
+            "8001", "aa", "patch_overlay", true, "ff",
+            true, true, "");
+        assertEquals(
+            "{\"error\":\"expected_current mismatch at offset 0: "
+                + "expected ff, actual 02\"}",
+            mismatch.toJson());
+
+        HeadlessProgramProvider provider = new HeadlessProgramProvider();
+        provider.setCurrentProgram(program);
+        MemoryBlockService aborting = new MemoryBlockService(
+            provider, new AbortAfterActionStrategy());
+        assertError(aborting.patchBytes(
+            "8001", "aa", "patch_overlay", true, "02",
+            true, false, ""), "forced rollback");
+        assertArrayEquals(
+            hex("01020304"),
+            bytes(space + ":8000", 4));
+        assertFalse(program.getMemory().getBlock("patch_overlay").isWrite());
+    }
+
+    @Test
+    public void patchRejectsUnsupportedRangesAndBlockKindsBeforeMutation()
+            throws Exception {
+        var oneByte = builder.createMemory("one_byte", "0xffff", 1);
+        builder.setBytes("0xffff", "11");
+        builder.setWrite(oneByte, true);
+        assertError(memory.patchBytes(
+            "0xffff", "2233", null, true, null,
+            false, false, ""), "overflows");
+        assertArrayEquals(hex("11"), bytes("0xffff", 1));
+
+        builder.createUninitializedMemory(
+            "uninitialized", "0x9000", 0x10);
+        assertError(memory.patchBytes(
+            "0x9000", "22", null, true, null,
+            true, true, ""), "initialized");
+
+        builder.createMemory("mapped_base", "0xa000", 0x20);
+        builder.createMappedMemory(
+            "mapped", "0xb000", 0x10, "0xa000");
+        assertError(memory.patchBytes(
+            "0xb000", "22", null, true, null,
+            true, true, ""), "mapped");
+    }
+
     private MemoryBlockService serviceFailingAt(
             MemoryBlockLifecycleCore.MutationStage expected) {
         HeadlessProgramProvider provider = new HeadlessProgramProvider();

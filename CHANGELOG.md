@@ -8,6 +8,11 @@ Complete version history for the Ghidra MCP Server project.
 
 ### Added
 
+- Added `patch_bytes`, a dry-run-first raw hexadecimal patch endpoint for
+  initialized ordinary and overlay blocks. It supports exact block/space
+  resolution, compare-and-swap guards, temporary read-only writes, bounded
+  annotation-preserving code/data clearing, readback verification, compact
+  digests for large commits, and transaction-wide rollback.
 - Added `apply_data_regions` for atomic fixed data ranges, interleaved
   records, and generic contiguous or independently addressed split pointer
   tables with dry-run previews, conflict preservation, cancellation-safe
@@ -58,7 +63,7 @@ Complete version history for the Ghidra MCP Server project.
 
 ### Changed
 
-- Streamlined ghidra-mcp around its local GUI/headless analysis stack, with 238 cataloged endpoints, schema discovery, TCP/UDS transports, and explicit multi-program selection.
+- Streamlined ghidra-mcp around its local GUI/headless analysis stack, with 246 cataloged endpoints, schema discovery, TCP/UDS transports, and explicit multi-program selection.
 - Made Maven the only Java build backend while retaining the uv-packaged
   Python bridge and setup commands.
 - Kept caller-supplied annotations unrestricted and retained generated-symbol

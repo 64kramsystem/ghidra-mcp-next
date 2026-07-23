@@ -1,7 +1,7 @@
 {
   "version": "5.15.0",
   "description": "GhidraMCP REST API Endpoint Specification",
-  "total_endpoints": 245,
+  "total_endpoints": 246,
   "categories": {
     "listing": "List program data",
     "getter": "Get specific data",
@@ -2022,6 +2022,22 @@
         "program"
       ],
       "description": "Open an existing Ghidra project (.gpr file or directory). GUI mode adds optional `headless` (default true) to suppress auto-launching CodeBrowser, and optional `program` to auto-launch CodeBrowser for a specific file when headless=false. Headless server ignores the extra params."
+    },
+    {
+      "path": "/patch_bytes",
+      "method": "POST",
+      "category": "memory",
+      "params": [
+        "address",
+        "bytes",
+        "block",
+        "clear_code_units",
+        "expected_current",
+        "allow_readonly",
+        "dry_run",
+        "program"
+      ],
+      "description": "Preview or atomically patch hexadecimal bytes in one initialized ordinary or overlay block while preserving annotations"
     },
     {
       "path": "/project/info",
