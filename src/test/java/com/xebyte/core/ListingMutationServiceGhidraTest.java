@@ -159,7 +159,7 @@ public class ListingMutationServiceGhidraTest {
 
         assertTrue(response.toJson(), response instanceof Response.Err);
         assertTrue(response.toJson(), response.toJson().contains(
-            "blocked by preflight conflicts"));
+            "remove_intersecting_functions=true"));
         assertTrue(response.toJson(), response.toJson().contains("routine"));
         assertEquals(0, applyCalls.get());
         assertEquals(1, threading.writeCalls);
@@ -763,6 +763,10 @@ public class ListingMutationServiceGhidraTest {
                 true, false, "");
             assertTrue(rejectedCommit.toJson(),
                 rejectedCommit instanceof Response.Err);
+            assertTrue(rejectedCommit.toJson(), rejectedCommit.toJson()
+                .contains("blocked by preflight conflicts"));
+            assertFalse(rejectedCommit.toJson(), rejectedCommit.toJson()
+                .contains("remove_intersecting_functions=true"));
             assertNotNull(liveProgram.getFunctionManager()
                 .getFunctionAt(builder.addr("0x4000")));
             assertNotNull(liveProgram.getListing()
@@ -808,6 +812,90 @@ public class ListingMutationServiceGhidraTest {
                 .getReferencesFrom(builder.addr("0x4001")).length);
             assertEquals(0, liveProgram.getReferenceManager()
                 .getReferencesFrom(builder.addr("0x4002")).length);
+        }
+        finally {
+            builder.dispose();
+        }
+    }
+
+    @Test
+    public void liveFunctionRemovalRejectsDisjointDirectThunkCollateral()
+            throws Exception {
+        initializeGhidraOrSkip();
+        ProgramBuilder builder =
+            new ProgramBuilder("undefine-function-thunk-6502",
+                "6502:LE:16:default", "default", this);
+        try {
+            ProgramDB liveProgram = builder.getProgram();
+            builder.createMemory(".ram", "0x5000", 0x30);
+            builder.setBytes(
+                "0x5000",
+                "ea 60 ea ea ea ea ea ea ea ea ea ea ea ea ea ea "
+                    + "4c 00 50 ea ea ea ea ea ea ea ea ea ea ea ea ea");
+            builder.disassemble("0x5000", 2);
+            builder.disassemble("0x5010", 3);
+            builder.createFunction("0x5000");
+            builder.createFunction("0x5010");
+            builder.withTransaction(() -> {
+                Function target = liveProgram.getFunctionManager()
+                    .getFunctionAt(builder.addr("0x5000"));
+                Function thunk = liveProgram.getFunctionManager()
+                    .getFunctionAt(builder.addr("0x5010"));
+                thunk.setThunkedFunction(target);
+                liveProgram.getListing().setComment(
+                    builder.addr("0x5010"), CommentType.EOL,
+                    "disjoint thunk annotation");
+                liveProgram.getBookmarkManager().setBookmark(
+                    builder.addr("0x5010"), "NOTE", "thunk",
+                    "must remain");
+            });
+            Function target = liveProgram.getFunctionManager()
+                .getFunctionAt(builder.addr("0x5000"));
+            assertEquals(
+                List.of(builder.addr("0x5010")),
+                Arrays.asList(target.getFunctionThunkAddresses(false)));
+
+            ListingMutationService service = liveService(liveProgram);
+            Response preview = service.undefineRange(
+                "0x5000", "0x5000",
+                true, false,
+                true, true, true, true,
+                true, true, "");
+            assertFalse(preview.toJson(), preview instanceof Response.Err);
+            JsonObject previewJson =
+                JsonParser.parseString(preview.toJson()).getAsJsonObject();
+            assertEquals(1, previewJson.getAsJsonArray("conflicts").size());
+            assertTrue(previewJson.getAsJsonArray("conflicts").get(0)
+                .getAsString().contains("direct thunk"));
+            assertTrue(previewJson.getAsJsonArray("conflicts").get(0)
+                .getAsString().contains("5010"));
+
+            Response commit = service.undefineRange(
+                "0x5000", "0x5000",
+                true, false,
+                true, true, true, true,
+                true, false, "");
+            assertTrue(commit.toJson(), commit instanceof Response.Err);
+            assertTrue(commit.toJson(),
+                commit.toJson().contains("blocked by preflight conflicts"));
+            assertFalse(commit.toJson(),
+                commit.toJson().contains("remove_intersecting_functions=true"));
+            assertNotNull(liveProgram.getFunctionManager()
+                .getFunctionAt(builder.addr("0x5000")));
+            assertNotNull(liveProgram.getFunctionManager()
+                .getFunctionAt(builder.addr("0x5010")));
+            assertNotNull(liveProgram.getListing()
+                .getInstructionAt(builder.addr("0x5000")));
+            assertNotNull(liveProgram.getListing()
+                .getInstructionAt(builder.addr("0x5010")));
+            assertEquals(
+                "disjoint thunk annotation",
+                liveProgram.getListing().getComment(
+                    CommentType.EOL, builder.addr("0x5010")));
+            Bookmark[] bookmarks = liveProgram.getBookmarkManager()
+                .getBookmarks(builder.addr("0x5010"));
+            assertEquals(1, bookmarks.length);
+            assertEquals("must remain", bookmarks[0].getComment());
         }
         finally {
             builder.dispose();
