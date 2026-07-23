@@ -270,6 +270,7 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
     private final com.xebyte.core.EmulationService emulationService;
     private final com.xebyte.core.ExportService exportService;
     private final com.xebyte.core.FlowDisassemblyService flowDisassemblyService;
+    private final com.xebyte.core.ListingRangeService listingRangeService;
     private final com.xebyte.core.DebuggerService debuggerService;
 
     public GhidraMCPPlugin(PluginTool tool) {
@@ -293,6 +294,8 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
         this.exportService = new com.xebyte.core.ExportService(programProvider);
         this.flowDisassemblyService =
             new com.xebyte.core.FlowDisassemblyService(programProvider, threadingStrategy);
+        this.listingRangeService =
+            new com.xebyte.core.ListingRangeService(programProvider);
         this.debuggerService = new com.xebyte.core.DebuggerService(programProvider, threadingStrategy, tool);
         Msg.info(GhidraMCPPlugin.class, "============================================");
         Msg.info(GhidraMCPPlugin.class, "GhidraMCP " + VersionInfo.getFullVersion());
@@ -554,6 +557,7 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
             xrefCallGraphService, dataTypeService, analysisService,
             binaryComparisonService, malwareSecurityService, programScriptService,
             emulationService, exportService, flowDisassemblyService,
+            listingRangeService,
             debuggerService, guiProjectService);
 
         for (EndpointDef ep : scanner.getEndpoints()) {

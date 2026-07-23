@@ -1,7 +1,7 @@
 {
   "version": "5.15.0",
   "description": "GhidraMCP REST API Endpoint Specification",
-  "total_endpoints": 234,
+  "total_endpoints": 235,
   "categories": {
     "listing": "List program data",
     "getter": "Get specific data",
@@ -1429,6 +1429,21 @@
         "program"
       ],
       "description": "Dump the program's language description: address spaces, registers, default symbols, endianness, pointer size (issue #192). Use for P-code emulators / ML pipelines that need the SLEIGH-level facts. include_registers/include_default_symbols toggle expensive sections."
+    },
+    {
+      "path": "/get_listing_range",
+      "method": "GET",
+      "category": "listing",
+      "params": [
+        "start",
+        "end",
+        "max_units",
+        "max_bytes",
+        "max_incoming_refs_per_unit",
+        "cursor",
+        "program"
+      ],
+      "description": "Read an authoritative mixed instruction/data/undefined listing range without requiring or creating functions"
     },
     {
       "path": "/get_metadata",

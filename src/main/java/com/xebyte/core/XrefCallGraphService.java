@@ -53,9 +53,14 @@ public class XrefCallGraphService {
 
             ReferenceIterator refIter = refManager.getReferencesTo(addr);
 
-            List<String> refs = new ArrayList<>();
+            List<Reference> references = new ArrayList<>();
             while (refIter.hasNext()) {
-                Reference ref = refIter.next();
+                references.add(refIter.next());
+            }
+            references.sort(ListingRangeService.referenceOrder());
+
+            List<String> refs = new ArrayList<>();
+            for (Reference ref : references) {
                 Address fromAddr = ref.getFromAddress();
                 RefType refType = ref.getReferenceType();
 
