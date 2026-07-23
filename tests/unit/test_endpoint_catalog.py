@@ -414,6 +414,36 @@ class TestEndpointsJson(unittest.TestCase):
             bridge.register_tools_from_schema([])
 
     @unittest.skipUnless(ENDPOINTS_JSON.exists(), "endpoints.json not found")
+    def test_disassemble_flow_contract_has_separate_safe_controls(self):
+        data = json.loads(ENDPOINTS_JSON.read_text())
+        endpoint = next(
+            ep
+            for ep in data.get("endpoints", [])
+            if ep["path"] == "/disassemble_flow"
+        )
+        self.assertEqual(endpoint["method"], "POST")
+        self.assertEqual(endpoint["category"], "disassembly")
+        self.assertEqual(
+            endpoint["params"],
+            [
+                "seeds",
+                "restrict_start",
+                "restrict_end",
+                "dry_run",
+                "follow_calls",
+                "preserve_defined_data",
+                "create_functions",
+                "enable_analysis",
+                "max_instructions",
+                "program",
+            ],
+        )
+        self.assertNotIn("restrict_to_execute_memory", endpoint["params"])
+        self.assertNotIn("disassemble_bytes", {
+            ep["path"].lstrip("/") for ep in data.get("endpoints", [])
+        })
+
+    @unittest.skipUnless(ENDPOINTS_JSON.exists(), "endpoints.json not found")
     def test_catalog_tool_names_are_capi_safe_after_bridge_parsing(self):
         """The generated endpoint catalog should produce valid exposed MCP names."""
         from bridge_mcp_ghidra import _parse_schema

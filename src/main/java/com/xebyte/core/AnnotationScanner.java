@@ -332,12 +332,18 @@ public class AnnotationScanner {
             catch (NumberFormatException e) { return defaultVal; }
 
         } else if (type == boolean.class) {
+            if (binding.param.strictBoolean()) {
+                return resolveStrictBodyBoolean(binding, raw, hasDef, def);
+            }
             boolean defaultVal = hasDef && Boolean.parseBoolean(def);
             if (raw == null) return defaultVal;
             if (raw instanceof Boolean b) return b;
             return "true".equalsIgnoreCase(String.valueOf(raw));
 
         } else if (type == Boolean.class) {
+            if (binding.param.strictBoolean()) {
+                return resolveStrictBodyBoolean(binding, raw, hasDef, def);
+            }
             if (raw == null) {
                 return hasDef ? Boolean.valueOf(def) : null;
             }
@@ -360,6 +366,30 @@ public class AnnotationScanner {
             return raw;
         }
         return raw;
+    }
+
+    private static Boolean resolveStrictBodyBoolean(
+            ParamBinding binding,
+            Object raw,
+            boolean hasDefault,
+            String defaultValue) {
+        String name = binding.param.value();
+        if (raw == null) {
+            if (!hasDefault) {
+                throw new IllegalArgumentException(
+                    "Missing required boolean parameter: " + name);
+            }
+            if (!"true".equals(defaultValue) && !"false".equals(defaultValue)) {
+                throw new IllegalStateException(
+                    "Invalid boolean default for parameter '" + name + "'");
+            }
+            return Boolean.valueOf(defaultValue);
+        }
+        if (raw instanceof Boolean value) {
+            return value;
+        }
+        throw new IllegalArgumentException(
+            "Parameter '" + name + "' must be a JSON boolean");
     }
 
     // ==================================================================

@@ -10,8 +10,8 @@ import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.Set;
+import java.util.TreeSet;
 
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -60,13 +60,18 @@ public class AnalysisServiceConfigurationGhidraTest {
     public void discoveryUsesRealAnalyzersAndExcludesUnrelatedBooleanOptions()
             throws Exception {
         try (Fixture fixture = fixture("analyzer-discovery")) {
-            fixture.program.getOptions(
-                ghidra.program.model.listing.Program.ANALYSIS_PROPERTIES)
+            AutoAnalysisManager manager =
+                AutoAnalysisManager.getAnalysisManager(fixture.program);
+            var options = fixture.program.getOptions(
+                ghidra.program.model.listing.Program.ANALYSIS_PROPERTIES);
+            options
                 .registerOption(
                     "Synthetic Non Analyzer Boolean",
                     Boolean.TRUE,
                     null,
                     "not an analyzer");
+            Set<String> optionNamesBefore =
+                new TreeSet<>(options.getOptionNames());
 
             Response response =
                 fixture.analysis.getAnalyzerConfiguration("");
@@ -80,8 +85,6 @@ public class AnalysisServiceConfigurationGhidraTest {
             assertFalse(response.toJson(),
                 response.toJson().contains("Synthetic Non Analyzer Boolean"));
             boolean sawUnavailable = false;
-            AutoAnalysisManager manager =
-                AutoAnalysisManager.getAnalysisManager(fixture.program);
             for (var element : analyzers) {
                 JsonObject analyzer = element.getAsJsonObject();
                 boolean available = analyzer.get("available").getAsBoolean();
@@ -95,6 +98,10 @@ public class AnalysisServiceConfigurationGhidraTest {
                 assertTrue(analyzer.has("analysis_type"));
             }
             assertTrue("fixture should exercise unavailable metadata", sawUnavailable);
+            assertEquals(
+                "configuration inspection must not register options for unavailable analyzers",
+                optionNamesBefore,
+                new TreeSet<>(options.getOptionNames()));
         }
     }
 
@@ -166,36 +173,8 @@ public class AnalysisServiceConfigurationGhidraTest {
 
             AutoAnalysisManager manager =
                 AutoAnalysisManager.getAnalysisManager(fixture.program);
-            AtomicInteger functionsBeforeAnalysis = new AtomicInteger(-1);
-            AtomicReference<Thread> analysisThread = new AtomicReference<>();
-            AtomicReference<Throwable> analysisFailure = new AtomicReference<>();
             FlowDisassemblyService flow =
-                new FlowDisassemblyService(
-                    fixture.provider,
-                    fixture.threading,
-                    (program, created) -> {
-                        functionsBeforeAnalysis.set(
-                            program.getFunctionManager().getFunctionCount());
-                        manager.codeDefined(created);
-                        Thread worker = new Thread(() -> {
-                            try {
-                                fixture.threading.executeWrite(
-                                    program,
-                                    "Feature 5 explicit scoped analysis",
-                                    () -> {
-                                        manager.startAnalysis(TaskMonitor.DUMMY);
-                                        return null;
-                                    });
-                            }
-                            catch (Throwable failure) {
-                                analysisFailure.set(failure);
-                            }
-                        }, "feature-5-live-analysis");
-                        analysisThread.set(worker);
-                        worker.start();
-                        return new FlowDisassemblyService.AnalysisSubmission(
-                            true, "feature-5-live-request");
-                    });
+                new FlowDisassemblyService(fixture.provider, fixture.threading);
 
             Response response = flow.disassembleFlow(
                 "[\"0x1000\"]",
@@ -215,46 +194,35 @@ public class AnalysisServiceConfigurationGhidraTest {
             assertTrue(response.toJson(),
                 response.toJson().contains("\"analysis_status\":\"queued\""));
             assertTrue(response.toJson(),
-                response.toJson().contains(
-                    "\"request_identity\":\"feature-5-live-request\""));
-            assertEquals(
-                "direct disassembly must not create functions",
-                0,
-                functionsBeforeAnalysis.get());
+                response.toJson().contains("\"request_identity\":\"analysis-"));
+            assertTrue(
+                "direct disassembly must report no direct function mutation",
+                response.toJson().contains("\"function_changes\":[]"));
 
             ProgramScriptService programService =
                 new ProgramScriptService(fixture.provider, fixture.threading);
-            Response statusBeforeWait =
-                programService.analysisStatus(fixture.program.getName());
-            assertTrue(statusBeforeWait.toJson(),
-                statusBeforeWait.toJson().contains("\"function_count\""));
-
-            Thread worker = analysisThread.get();
-            assertNotNull(worker);
             long deadline = System.nanoTime() +
                 java.util.concurrent.TimeUnit.SECONDS.toNanos(30);
-            while (worker.isAlive() && System.nanoTime() < deadline) {
+            JsonObject status = null;
+            do {
                 Response polled =
                     programService.analysisStatus(fixture.program.getName());
-                assertTrue(polled.toJson(),
-                    polled.toJson().contains("\"analyzing\""));
-                Thread.yield();
+                assertTrue(polled.toJson(), polled instanceof Response.Ok);
+                status = JsonParser.parseString(
+                    polled.toJson()).getAsJsonObject();
+                if (!status.get("analyzing").getAsBoolean() &&
+                    status.get("function_count").getAsInt() > 0) {
+                    break;
+                }
+                Thread.sleep(5);
             }
-            worker.join(1_000);
-            assertFalse("analysis worker did not finish", worker.isAlive());
-            if (analysisFailure.get() != null) {
-                throw new AssertionError(
-                    "analysis worker failed", analysisFailure.get());
-            }
+            while (System.nanoTime() < deadline);
 
-            Response statusAfterWait =
-                programService.analysisStatus(fixture.program.getName());
-            JsonObject status = JsonParser.parseString(
-                statusAfterWait.toJson()).getAsJsonObject();
+            assertNotNull(status);
             assertFalse(status.get("analyzing").getAsBoolean());
             assertTrue(
                 "explicit Subroutine References analysis should create the JSR target function: " +
-                    statusAfterWait.toJson(),
+                    status,
                 status.get("function_count").getAsInt() > 0);
             assertFalse(manager.isAnalyzing());
         }

@@ -29,7 +29,12 @@ Complete version history for the Ghidra MCP Server project.
   analyzer discovery and ordered, dry-run-first atomic configuration.
   `configure_analyzer` is now a shared annotated GUI/headless tool. Configuration
   observes Ghidra's scheduler state, restores every original option on failure,
-  and never starts analysis or deletes existing artifacts.
+  never starts analysis or deletes existing artifacts, and rejects missing or
+  non-boolean mutation controls instead of coercing them to `false`.
+- Made `disassemble_flow(enable_analysis=true)` queue scoped analysis through
+  the GUI event thread or a serialized headless analysis worker, returning a
+  request identity while keeping analysis outside the direct mutation
+  transaction.
 - Added `debugger_attach` for exact-offer, typed TraceRMI PID attachment. The attach-only flow supports native local GDB without synthesizing debugger commands; required-image Wine launchers remain on the existing launch path.
 - Added `debugger_wait_for_stop` for event-driven, bounded waits with explicit stopped, terminated, and timeout results.
 - Added `debugger_memory_maps` for sorted current-snapshot region enumeration with optional process-PID filtering.
