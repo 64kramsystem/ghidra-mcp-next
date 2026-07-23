@@ -535,6 +535,23 @@ public final class SymbolProfileService {
                     : requested.applications()) {
                 ApplicationSite site =
                     resolveApplication(program, requested, application);
+                if ("keep".equals(definitionAction)
+                        || "conflict".equals(definitionAction)) {
+                    String conflict =
+                        "equate application at "
+                            + qualified(site.address()) + " operand "
+                            + site.operandIndex()
+                            + scalarSuffix(site)
+                            + " was not applied because parent "
+                            + definitionConflict;
+                    conflicts.add(conflict);
+                    applications.add(new ApplicationPlan(
+                        site,
+                        List.of(),
+                        definitionAction,
+                        conflict));
+                    continue;
+                }
                 List<Equate> atSite = equatesAtSite(
                     table, site);
                 Equate same = atSite.stream()
@@ -667,6 +684,13 @@ public final class SymbolProfileService {
         List<RequestedRange> requestedRanges = new ArrayList<>();
         for (SymbolProfileParser.ProfileMemoryBlock requested
                 : profile.memoryBlocks()) {
+            validateBlockRange(program, requested);
+            if (!createMemoryBlocks) {
+                result.add(new BlockPlan(
+                    requested, null,
+                    "disabled", null));
+                continue;
+            }
             MemoryBlock existing =
                 program.getMemory().getBlock(requested.name());
             if (existing != null
@@ -737,6 +761,22 @@ public final class SymbolProfileService {
                 requested, createPlan, action, conflict));
         }
         return List.copyOf(result);
+    }
+
+    private static void validateBlockRange(
+            Program program,
+            SymbolProfileParser.ProfileMemoryBlock requested) {
+        Address start =
+            ServiceUtils.parseAddress(program, requested.start());
+        if (start == null) {
+            String detail = ServiceUtils.getLastParseError();
+            throw new IllegalArgumentException(
+                "invalid memory block start '" + requested.start()
+                    + "': "
+                    + (detail == null ? "address could not be resolved"
+                        : detail));
+        }
+        checkedEnd(start, requested.length());
     }
 
     private void apply(Program program, Plan plan) throws Exception {
@@ -1219,18 +1259,19 @@ public final class SymbolProfileService {
         }
         boolean overlay =
             block.getStart().getAddressSpace().isOverlaySpace();
+        boolean addressSpaceMatches =
+            (overlay
+                ? block.getStart().getPhysicalAddress().getAddressSpace()
+                : block.getStart().getAddressSpace())
+                == requestedStart.getAddressSpace();
         String comment =
             block.getComment() == null ? "" : block.getComment();
         boolean geometryMatches =
-            block.getStart().getOffset() == requestedStart.getOffset()
+            addressSpaceMatches
+                && block.getStart().getOffset()
+                    == requestedStart.getOffset()
                 && block.getSize() == requested.length()
                 && overlay == requested.overlay();
-        if (overlay
-                && block.getStart().getPhysicalAddress()
-                    .getAddressSpace()
-                    != requestedStart.getAddressSpace()) {
-            geometryMatches = false;
-        }
         if (!geometryMatches
                 || block.isInitialized()
                     != (requested.fill() != null)
