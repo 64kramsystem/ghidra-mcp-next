@@ -91,7 +91,11 @@ public class ListingServiceValidationTest extends TestCase {
     }
 
     public void testListingFilterAxesAndFormatRejectUnknownValues() {
-        ListingService service = serviceFor(emptyProgram());
+        Program program = emptyProgram();
+        ListingService service = serviceFor(program);
+        Memory memory = program.getMemory();
+        Listing programListing = program.getListing();
+        SymbolTable symbols = program.getSymbolTable();
 
         assertErrorContains(
             service.listGlobals(0, 100, "DAT_", "all", 1, true, "", ""),
@@ -107,6 +111,15 @@ public class ListingServiceValidationTest extends TestCase {
             service.listDataItemsByXrefs(
                 0, 100, "text", "all", "typed", 1, true, ""),
             "type_filter", "all", "defined", "undefined");
+        assertErrorContains(
+            service.listDataItemsByXrefs(
+                0, 100, "text", "named", "all", 1, true, ""),
+            "filter", "all", "defined", "undefined");
+
+        verify(memory, never()).getBlocks();
+        verify(symbols, never()).getSymbols(any(Namespace.class));
+        verify(programListing, never()).getDefinedData(
+            any(Address.class), anyBoolean());
     }
 
     @SuppressWarnings("unchecked")
@@ -127,6 +140,7 @@ public class ListingServiceValidationTest extends TestCase {
         assertTrue(dataJson instanceof Response.Ok);
         assertTrue(((List<Map<String, Object>>) ((Response.Ok) dataJson).data())
             .isEmpty());
+        assertEquals("[]", dataJson.toJson());
     }
 
     public void testExhaustedTextPagesUseNoMatchSentinels() {
@@ -142,6 +156,27 @@ public class ListingServiceValidationTest extends TestCase {
             ((Response.Text) globalPage).content());
         assertEquals("No matching data items",
             ((Response.Text) dataPage).content());
+    }
+
+    public void testZeroLimitTextAndJsonPagesUseDefinedEmptyResults() {
+        Response globalText = serviceFor(oneGlobalProgram()).listGlobals(
+            0, 0, "defined", "all", 1, true, "", "");
+        Response dataText = serviceFor(oneDataItemProgram())
+            .listDataItemsByXrefs(
+                0, 0, "text", "defined", "all", 1, true, "");
+        Response exhaustedJson = serviceFor(oneDataItemProgram())
+            .listDataItemsByXrefs(
+                1, 100, "json", "defined", "all", 1, true, "");
+        Response zeroLimitJson = serviceFor(oneDataItemProgram())
+            .listDataItemsByXrefs(
+                0, 0, "json", "defined", "all", 1, true, "");
+
+        assertEquals("No matching globals",
+            ((Response.Text) globalText).content());
+        assertEquals("No matching data items",
+            ((Response.Text) dataText).content());
+        assertEquals("[]", exhaustedJson.toJson());
+        assertEquals("[]", zeroLimitJson.toJson());
     }
 
     public void testListingSchemaPinsAxesDefaultsAndFlatMemoryGuidance() {
@@ -166,11 +201,32 @@ public class ListingServiceValidationTest extends TestCase {
         assertEquals("all", globalParams.get("type_filter").defaultValue());
         assertEquals("defined", dataParams.get("filter").defaultValue());
         assertEquals("all", dataParams.get("type_filter").defaultValue());
+        assertEquals("false",
+            globalParams.get("include_all_sections").defaultValue());
+        assertEquals("false",
+            dataParams.get("include_all_sections").defaultValue());
+        assertEquals("",
+            globalParams.get("name_substring").defaultValue());
+        assertEquals("text", dataParams.get("format").defaultValue());
         assertFalse(globals.description().contains("filter=named"));
-        assertTrue(globalParams.get("include_all_sections").description()
-            .contains("flat executable memory snapshots"));
-        assertTrue(dataParams.get("include_all_sections").description()
-            .contains("flat executable memory snapshots"));
+        assertAxisDescription(globalParams.get("filter"));
+        assertAxisDescription(globalParams.get("type_filter"));
+        assertAxisDescription(dataParams.get("filter"));
+        assertAxisDescription(dataParams.get("type_filter"));
+        assertTrue(globalParams.get("include_all_sections").description(),
+            globalParams.get("include_all_sections").description()
+                .contains("Pass true for flat executable memory snapshots"));
+        assertTrue(dataParams.get("include_all_sections").description(),
+            dataParams.get("include_all_sections").description()
+                .contains("Pass true for flat executable memory snapshots"));
+        String substringDescription =
+            globalParams.get("name_substring").description();
+        assertTrue(substringDescription,
+            substringDescription.contains("Optional substring"));
+        assertTrue(substringDescription,
+            substringDescription.contains("case-insensitive"));
+        String formatDescription = dataParams.get("format").description();
+        assertEquals("Output format (text or json)", formatDescription);
     }
 
     @SuppressWarnings("unchecked")
@@ -210,6 +266,15 @@ public class ListingServiceValidationTest extends TestCase {
             assertTrue(response.toJson(),
                 response.toJson().contains(fragment));
         }
+    }
+
+    private static void assertAxisDescription(
+            AnnotationScanner.ParamDescriptor parameter) {
+        String description = parameter.description();
+        assertTrue(description, description.contains("`all`"));
+        assertTrue(description, description.contains("`defined`"));
+        assertTrue(description, description.contains("`undefined`"));
+        assertFalse(description, description.contains("`named`"));
     }
 
     private static ListingService serviceFor(Program program) {
