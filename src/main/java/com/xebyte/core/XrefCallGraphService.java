@@ -52,15 +52,20 @@ public class XrefCallGraphService {
             ReferenceManager refManager = program.getReferenceManager();
 
             ReferenceIterator refIter = refManager.getReferencesTo(addr);
-
-            List<Reference> references = new ArrayList<>();
-            while (refIter.hasNext()) {
-                references.add(refIter.next());
+            int pageOffset = Math.max(0, offset);
+            int pageLimit = Math.max(0, limit);
+            long requested = (long) pageOffset + pageLimit;
+            int horizon = (int) Math.min(Integer.MAX_VALUE, requested);
+            if (horizon == 0) {
+                return Response.text("");
             }
-            references.sort(ReferenceOrdering.perDestination());
+            List<Reference> references =
+                ReferenceOrdering.takeStored(refIter, horizon);
 
             List<String> refs = new ArrayList<>();
-            for (Reference ref : references) {
+            int pageEnd = Math.min(references.size(), horizon);
+            for (Reference ref :
+                    references.subList(Math.min(pageOffset, references.size()), pageEnd)) {
                 Address fromAddr = ref.getFromAddress();
                 RefType refType = ref.getReferenceType();
 
@@ -71,11 +76,11 @@ public class XrefCallGraphService {
             }
 
             // Return meaningful message if no references found
-            if (refs.isEmpty()) {
+            if (references.isEmpty() && pageOffset == 0) {
                 return Response.text("No references found to address: " + addressStr);
             }
 
-            return Response.text(ServiceUtils.paginateList(refs, offset, limit));
+            return Response.text(String.join("\n", refs));
         } catch (Exception e) {
             return Response.err("Error getting references to address: " + e.getMessage());
         }

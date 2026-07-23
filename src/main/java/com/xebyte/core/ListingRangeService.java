@@ -11,15 +11,11 @@ import java.util.Base64;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.HexFormat;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.NavigableMap;
-import java.util.NavigableSet;
-import java.util.PriorityQueue;
 import java.util.Set;
-import java.util.TreeMap;
-import java.util.TreeSet;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
@@ -32,14 +28,14 @@ import com.google.gson.JsonParser;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressIterator;
 import ghidra.program.model.address.AddressRange;
-import ghidra.program.model.address.AddressRangeIterator;
 import ghidra.program.model.address.AddressSet;
 import ghidra.program.model.address.AddressSetView;
 import ghidra.program.model.listing.CodeUnit;
-import ghidra.program.model.listing.CodeUnitIterator;
 import ghidra.program.model.listing.CommentType;
 import ghidra.program.model.listing.Data;
+import ghidra.program.model.listing.DataIterator;
 import ghidra.program.model.listing.Instruction;
+import ghidra.program.model.listing.InstructionIterator;
 import ghidra.program.model.listing.Listing;
 import ghidra.program.model.listing.Program;
 import ghidra.program.model.mem.Memory;
@@ -72,20 +68,11 @@ public final class ListingRangeService {
 
     private final ProgramProvider programProvider;
     private final ThreadingStrategy threadingStrategy;
-    private final DataMetadataReader dataMetadataReader;
 
     public ListingRangeService(
             ProgramProvider programProvider, ThreadingStrategy threadingStrategy) {
-        this(programProvider, threadingStrategy, ListingRangeService::readDataMetadata);
-    }
-
-    ListingRangeService(
-            ProgramProvider programProvider,
-            ThreadingStrategy threadingStrategy,
-            DataMetadataReader dataMetadataReader) {
         this.programProvider = programProvider;
         this.threadingStrategy = threadingStrategy;
-        this.dataMetadataReader = dataMetadataReader;
     }
 
     @McpTool(
@@ -124,7 +111,7 @@ public final class ListingRangeService {
             Program program = resolved.program();
             return threadingStrategy.executeRead(() -> readAuthoritativeRange(
                 program, startText, endText, maxUnits, maxBytes,
-                maxIncomingRefsPerUnit, cursor, dataMetadataReader));
+                maxIncomingRefsPerUnit, cursor));
         }
         catch (Exception exception) {
             return Response.err("Error reading listing range: " + exception.getMessage());
@@ -138,8 +125,7 @@ public final class ListingRangeService {
             int maxUnits,
             int maxBytes,
             int maxIncomingRefsPerUnit,
-            String cursor,
-            DataMetadataReader dataMetadataReader) throws Exception {
+            String cursor) throws Exception {
         // This snapshot intentionally precedes every model-dependent parse,
         // containment check, unit expansion, index build, and byte read.
         long modificationNumber = program.getModificationNumber();
@@ -184,18 +170,17 @@ public final class ListingRangeService {
             pageStart = validation.nextAddress();
         }
 
-        RangeIndex index = RangeIndex.build(program, effectiveStart, effectiveEnd);
-        CodeUnit containingPageStart = index.codeUnitContaining(pageStart);
+        CodeUnit containingPageStart = definedUnitContaining(listing, pageStart);
         if (containingPageStart != null
                 && !containingPageStart.getMinAddress().equals(pageStart)) {
             return Response.err("Listing cursor is not at a unit boundary.");
         }
+        RangeIndex index = RangeIndex.build(program, pageStart, effectiveEnd);
 
         Page page = readPage(
             program, index, programId, modificationNumber,
             requestedStart, requestedEnd, effectiveStart, effectiveEnd,
-            pageStart, maxUnits, maxBytes, maxIncomingRefsPerUnit,
-            dataMetadataReader);
+            pageStart, maxUnits, maxBytes, maxIncomingRefsPerUnit);
         if (program.getModificationNumber() != modificationNumber) {
             return Response.err(
                 "Program changed while reading listing range; retry from the first page.");
@@ -252,8 +237,7 @@ public final class ListingRangeService {
             Address pageStart,
             int maxUnits,
             int maxBytes,
-            int maxIncomingRefsPerUnit,
-            DataMetadataReader dataMetadataReader) throws Exception {
+            int maxIncomingRefsPerUnit) throws Exception {
         List<Map<String, Object>> units = new ArrayList<>();
         int includedBytes = 0;
         Address current = pageStart;
@@ -266,6 +250,7 @@ public final class ListingRangeService {
             Address unitEnd;
             boolean initialized;
             int length;
+            UnitMetadata metadata;
 
             if (existing != null) {
                 unitEnd = existing.getMaxAddress();
@@ -273,10 +258,11 @@ public final class ListingRangeService {
                 initialized = index.initialized(current, unitEnd);
 
                 if (initialized && length > maxBytes && units.isEmpty()) {
+                    metadata = index.collectMetadata(
+                        current, unitEnd, maxIncomingRefsPerUnit);
                     units.add(renderUnit(
-                        index, programId, modificationNumber, existing,
-                        current, unitEnd, true, null, false, true,
-                        maxIncomingRefsPerUnit, dataMetadataReader));
+                        metadata, programId, modificationNumber, existing,
+                        current, unitEnd, true, null, false, true));
                     returnedEnd = unitEnd;
                     current = next(unitEnd);
                     break;
@@ -284,6 +270,8 @@ public final class ListingRangeService {
                 if (initialized && length > maxBytes - includedBytes) {
                     break;
                 }
+                metadata = index.collectMetadata(
+                    current, unitEnd, maxIncomingRefsPerUnit);
             }
             else {
                 initialized = index.initialized(current);
@@ -292,6 +280,11 @@ public final class ListingRangeService {
                     break;
                 }
                 int undefinedLimit = initialized ? remainingBudget : maxBytes;
+                // Consume only annotations at the current address before
+                // looking ahead. The next peek from each ordered stream is
+                // therefore the first boundary of the following unit.
+                metadata = index.collectMetadata(
+                    current, current, maxIncomingRefsPerUnit);
                 unitEnd = index.undefinedEnd(current, undefinedLimit);
                 length = rangeLength(current, unitEnd);
             }
@@ -305,9 +298,8 @@ public final class ListingRangeService {
             }
 
             units.add(renderUnit(
-                index, programId, modificationNumber, existing,
-                current, unitEnd, initialized, bytes, bytesComplete, false,
-                maxIncomingRefsPerUnit, dataMetadataReader));
+                metadata, programId, modificationNumber, existing,
+                current, unitEnd, initialized, bytes, bytesComplete, false));
             returnedEnd = unitEnd;
             current = next(unitEnd);
         }
@@ -341,7 +333,7 @@ public final class ListingRangeService {
     }
 
     private static Map<String, Object> renderUnit(
-            RangeIndex index,
+            UnitMetadata metadata,
             String programId,
             long modificationNumber,
             CodeUnit existing,
@@ -350,9 +342,7 @@ public final class ListingRangeService {
             boolean initialized,
             byte[] bytes,
             boolean bytesComplete,
-            boolean oversized,
-            int maxIncomingRefsPerUnit,
-            DataMetadataReader dataMetadataReader) {
+            boolean oversized) {
         String kind = existing instanceof Instruction ? "instruction"
             : existing instanceof Data ? "data" : "undefined";
         Map<String, Object> unit = new LinkedHashMap<>();
@@ -381,27 +371,25 @@ public final class ListingRangeService {
                 : Arrays.stream(flows).sorted().map(ListingRangeService::address).toList());
         }
         else if (existing instanceof Data data) {
-            DataMetadata metadata = dataMetadataReader.read(data);
-            unit.put("data_type", metadata.displayName());
-            unit.put("data_type_path", metadata.pathName());
+            DataMetadata dataMetadata = readDataMetadata(data);
+            unit.put("data_type", dataMetadata.displayName());
+            unit.put("data_type_path", dataMetadata.pathName());
             unit.put("representation", data.getDefaultValueRepresentation());
         }
 
-        unit.put("labels", index.labels(start, end).stream()
+        unit.put("labels", metadata.labels().stream()
             .map(ListingRangeService::labelRecord)
             .toList());
-        unit.put("comments", index.comments(start, end).stream()
+        unit.put("comments", metadata.comments().stream()
             .map(ListingRangeService::commentRecord)
             .toList());
 
-        List<Reference> outgoing = index.outgoing(start, end);
-        unit.put("outgoing_references", outgoing.stream()
+        unit.put("outgoing_references", metadata.outgoing().stream()
             .map(reference -> referenceRecord(
                 programId, modificationNumber, reference))
             .toList());
 
-        IncomingPage incoming =
-            index.incoming(start, end, maxIncomingRefsPerUnit);
+        IncomingPage incoming = metadata.incoming();
         unit.put("incoming_references", incoming.included().stream()
             .map(reference -> referenceRecord(
                 programId, modificationNumber, reference))
@@ -601,11 +589,6 @@ public final class ListingRangeService {
     record DataMetadata(String displayName, String pathName) {
     }
 
-    @FunctionalInterface
-    interface DataMetadataReader {
-        DataMetadata read(Data data);
-    }
-
     record IncomingPage(
         List<Reference> included,
         boolean complete,
@@ -613,7 +596,11 @@ public final class ListingRangeService {
         long nextOffset) {
     }
 
-    record SelectedReferences(List<Reference> references, boolean truncated) {
+    record UnitMetadata(
+        List<LabelRecord> labels,
+        List<CommentRecord> comments,
+        List<Reference> outgoing,
+        IncomingPage incoming) {
     }
 
     record Page(Map<String, Object> response) {
@@ -621,37 +608,46 @@ public final class ListingRangeService {
 
     static final class RangeIndex {
         private final Memory memory;
+        private final Address effectiveStart;
         private final Address effectiveEnd;
         private final AddressSetView initialized;
-        private final NavigableMap<Address, CodeUnit> codeUnits;
-        private final NavigableMap<Address, List<LabelRecord>> labels;
-        private final NavigableMap<Address, List<CommentRecord>> comments;
-        private final NavigableSet<Address> outgoingSources;
-        private final NavigableSet<Address> incomingDestinations;
-        private final NavigableSet<Address> boundaries;
+        private final Listing listing;
+        private final SymbolTable symbols;
         private final ReferenceManager references;
+        private final Peekable<Instruction> instructions;
+        private final Peekable<Data> data;
+        private final Peekable<Symbol> labels;
+        private final Peekable<Address> commentAddresses;
+        private final Peekable<Address> outgoingSources;
+        private final Peekable<Address> incomingDestinations;
 
         private RangeIndex(
                 Memory memory,
+                Address effectiveStart,
                 Address effectiveEnd,
                 AddressSetView initialized,
-                NavigableMap<Address, CodeUnit> codeUnits,
-                NavigableMap<Address, List<LabelRecord>> labels,
-                NavigableMap<Address, List<CommentRecord>> comments,
-                NavigableSet<Address> outgoingSources,
-                NavigableSet<Address> incomingDestinations,
-                NavigableSet<Address> boundaries,
-                ReferenceManager references) {
+                Listing listing,
+                SymbolTable symbols,
+                ReferenceManager references,
+                InstructionIterator instructions,
+                DataIterator data,
+                SymbolIterator labels,
+                AddressIterator commentAddresses,
+                AddressIterator outgoingSources,
+                AddressIterator incomingDestinations) {
             this.memory = memory;
+            this.effectiveStart = effectiveStart;
             this.effectiveEnd = effectiveEnd;
             this.initialized = initialized;
-            this.codeUnits = codeUnits;
-            this.labels = labels;
-            this.comments = comments;
-            this.outgoingSources = outgoingSources;
-            this.incomingDestinations = incomingDestinations;
-            this.boundaries = boundaries;
+            this.listing = listing;
+            this.symbols = symbols;
             this.references = references;
+            this.instructions = new Peekable<>(instructions);
+            this.data = new Peekable<>(data);
+            this.labels = new Peekable<>(labels);
+            this.commentAddresses = new Peekable<>(commentAddresses);
+            this.outgoingSources = new Peekable<>(outgoingSources);
+            this.incomingDestinations = new Peekable<>(incomingDestinations);
         }
 
         static RangeIndex build(
@@ -659,105 +655,18 @@ public final class ListingRangeService {
             AddressSet range = new AddressSet(effectiveStart, effectiveEnd);
             Listing listing = program.getListing();
             Memory memory = program.getMemory();
-            AddressSetView initialized = memory.getAllInitializedAddressSet();
-            ReferenceManager referenceManager = program.getReferenceManager();
-            NavigableMap<Address, CodeUnit> codeUnits = new TreeMap<>();
-            NavigableMap<Address, List<LabelRecord>> labels = new TreeMap<>();
-            NavigableMap<Address, List<CommentRecord>> comments = new TreeMap<>();
-            NavigableSet<Address> outgoingSources = new TreeSet<>();
-            NavigableSet<Address> incomingDestinations = new TreeSet<>();
-            NavigableSet<Address> boundaries = new TreeSet<>();
-            boundaries.add(effectiveStart);
-
-            CodeUnitIterator codeIterator = listing.getCodeUnits(range, true);
-            while (codeIterator != null && codeIterator.hasNext()) {
-                CodeUnit unit = codeIterator.next();
-                if (unit == null) {
-                    continue;
-                }
-                codeUnits.put(unit.getMinAddress(), unit);
-                boundaries.add(unit.getMinAddress());
-                Address after = next(unit.getMaxAddress());
-                if (within(after, effectiveStart, effectiveEnd)) {
-                    boundaries.add(after);
-                }
-            }
-
-            addAddresses(
-                referenceManager.getReferenceSourceIterator(range, true),
-                outgoingSources, boundaries);
-            addAddresses(
-                referenceManager.getReferenceDestinationIterator(range, true),
-                incomingDestinations, boundaries);
-
-            SymbolTable symbolTable = program.getSymbolTable();
-            Set<String> labelKeys = new HashSet<>();
-            SymbolIterator symbolIterator =
-                symbolTable.getSymbolIterator(effectiveStart, true);
-            while (symbolIterator != null && symbolIterator.hasNext()) {
-                Symbol symbol = symbolIterator.next();
-                if (symbol == null || symbol.getAddress() == null) {
-                    continue;
-                }
-                Address at = symbol.getAddress();
-                if (!at.getAddressSpace().equals(effectiveStart.getAddressSpace())
-                        || at.compareTo(effectiveEnd) > 0) {
-                    break;
-                }
-                if (at.compareTo(effectiveStart) < 0) {
-                    continue;
-                }
-                addLabel(symbol, symbolTable, labels, boundaries, labelKeys);
-            }
-            // Address-based iteration omits global dynamic labels. Those labels
-            // can only arise at reference destinations, already indexed above,
-            // so supplement them without falling back to a per-byte scan.
-            for (Address destination : incomingDestinations) {
-                Symbol[] at = symbolTable.getSymbols(destination);
-                if (at == null) {
-                    continue;
-                }
-                for (Symbol symbol : at) {
-                    addLabel(symbol, symbolTable, labels, boundaries, labelKeys);
-                }
-            }
-            Comparator<LabelRecord> labelOrder = Comparator
-                .comparing(LabelRecord::address)
-                .thenComparing(LabelRecord::namespace)
-                .thenComparing(LabelRecord::name)
-                .thenComparing(LabelRecord::sourceType)
-                .thenComparing(LabelRecord::primary);
-            labels.values().forEach(values -> values.sort(labelOrder));
-
-            AddressIterator commentAddresses =
-                listing.getCommentAddressIterator(range, true);
-            while (commentAddresses != null && commentAddresses.hasNext()) {
-                Address at = commentAddresses.next();
-                if (at == null) {
-                    continue;
-                }
-                for (CommentType type : CommentType.values()) {
-                    String text = listing.getComment(type, at);
-                    if (text != null) {
-                        comments.computeIfAbsent(at, ignored -> new ArrayList<>())
-                            .add(new CommentRecord(at, type, text));
-                    }
-                }
-                boundaries.add(at);
-            }
-            Comparator<CommentRecord> commentOrder = Comparator
-                .comparing(CommentRecord::address)
-                .thenComparing(comment -> comment.type().name())
-                .thenComparing(CommentRecord::text);
-            comments.values().forEach(values -> values.sort(commentOrder));
-
-            addInitializationBoundaries(
-                initialized, effectiveStart, effectiveEnd, boundaries);
-
             return new RangeIndex(
-                memory, effectiveEnd, initialized,
-                codeUnits, labels, comments, outgoingSources,
-                incomingDestinations, boundaries, referenceManager);
+                memory, effectiveStart, effectiveEnd,
+                memory.getAllInitializedAddressSet(),
+                listing, program.getSymbolTable(), program.getReferenceManager(),
+                listing.getInstructions(range, true),
+                listing.getDefinedData(range, true),
+                program.getSymbolTable().getSymbolIterator(effectiveStart, true),
+                listing.getCommentAddressIterator(range, true),
+                program.getReferenceManager()
+                    .getReferenceSourceIterator(range, true),
+                program.getReferenceManager()
+                    .getReferenceDestinationIterator(range, true));
         }
 
         Memory memory() {
@@ -765,15 +674,20 @@ public final class ListingRangeService {
         }
 
         CodeUnit codeUnitAt(Address address) {
-            return codeUnits.get(address);
-        }
-
-        CodeUnit codeUnitContaining(Address address) {
-            Map.Entry<Address, CodeUnit> floor = codeUnits.floorEntry(address);
-            if (floor == null || floor.getValue().getMaxAddress().compareTo(address) < 0) {
-                return null;
+            discardCodeBefore(address);
+            Instruction instruction = instructions.peek();
+            Data definedData = data.peek();
+            Address instructionAddress = codeUnitAddress(instruction);
+            Address dataAddress = codeUnitAddress(definedData);
+            if (address.equals(instructionAddress)
+                    && (dataAddress == null
+                        || instructionAddress.compareTo(dataAddress) <= 0)) {
+                return instructions.take();
             }
-            return floor.getValue();
+            if (address.equals(dataAddress)) {
+                return data.take();
+            }
+            return null;
         }
 
         boolean initialized(Address address) {
@@ -785,109 +699,115 @@ public final class ListingRangeService {
         }
 
         Address undefinedEnd(Address start, int maxLength) {
-            Address nextBoundary = boundaries.higher(start);
+            Address nextBoundary = nextBoundary(start);
             Address boundaryEnd = nextBoundary == null
                 ? effectiveEnd : nextBoundary.previous();
             return cappedEnd(start, maxLength, boundaryEnd);
         }
 
-        List<LabelRecord> labels(Address start, Address end) {
-            return flatten(labels.subMap(start, true, end, true));
-        }
+        UnitMetadata collectMetadata(Address start, Address end, int incomingCap) {
+            List<LabelRecord> collectedLabels = new ArrayList<>();
+            List<CommentRecord> collectedComments = new ArrayList<>();
+            List<Reference> collectedOutgoing = new ArrayList<>();
+            List<Reference> collectedIncoming =
+                new ArrayList<>(incomingCap + 1);
+            Set<String> labelKeys = new HashSet<>();
 
-        List<CommentRecord> comments(Address start, Address end) {
-            return flatten(comments.subMap(start, true, end, true));
-        }
+            while (atOrBefore(symbolAddress(labels.peek()), end)) {
+                Symbol symbol = labels.take();
+                if (atOrAfter(symbolAddress(symbol), start)) {
+                    addLabel(symbol, collectedLabels, labelKeys);
+                }
+            }
 
-        List<Reference> outgoing(Address start, Address end) {
-            List<Reference> result = new ArrayList<>();
-            for (Address source : outgoingSources.subSet(start, true, end, true)) {
+            while (atOrBefore(commentAddresses.peek(), end)) {
+                Address at = commentAddresses.take();
+                if (!atOrAfter(at, start)) {
+                    continue;
+                }
+                for (CommentType type : CommentType.values()) {
+                    String text = listing.getComment(type, at);
+                    if (text != null) {
+                        collectedComments.add(new CommentRecord(at, type, text));
+                    }
+                }
+            }
+
+            while (atOrBefore(outgoingSources.peek(), end)) {
+                Address source = outgoingSources.take();
+                if (!atOrAfter(source, start)) {
+                    continue;
+                }
                 Reference[] at = references.getReferencesFrom(source);
                 if (at != null) {
-                    result.addAll(Arrays.asList(at));
+                    collectedOutgoing.addAll(Arrays.asList(at));
                 }
             }
-            result.sort(ReferenceOrdering.outgoing());
-            return result;
-        }
 
-        IncomingPage incoming(Address start, Address end, int cap) {
-            List<Reference> collected = new ArrayList<>(cap + 1);
-            for (Address destination :
-                    incomingDestinations.subSet(start, true, end, true)) {
-                int remaining = cap + 1 - collected.size();
-                if (remaining <= 0) {
-                    break;
+            while (atOrBefore(incomingDestinations.peek(), end)) {
+                Address destination = incomingDestinations.take();
+                if (!atOrAfter(destination, start)) {
+                    continue;
                 }
-                SelectedReferences selected = selectFirstReferences(
-                    references.getReferencesTo(destination), remaining);
-                collected.addAll(selected.references());
-                if (selected.truncated() || collected.size() == cap + 1) {
-                    break;
+                addSymbolsAt(destination, collectedLabels, labelKeys);
+                int remaining = incomingCap + 1 - collectedIncoming.size();
+                if (remaining > 0) {
+                    collectedIncoming.addAll(ReferenceOrdering.takeStored(
+                        references.getReferencesTo(destination), remaining));
                 }
             }
-            collected.sort(ReferenceOrdering.incoming());
-            if (collected.size() <= cap) {
-                return new IncomingPage(List.copyOf(collected), true, null, 0);
+
+            collectedLabels.sort(Comparator
+                .comparing(LabelRecord::address)
+                .thenComparing(LabelRecord::namespace)
+                .thenComparing(LabelRecord::name)
+                .thenComparing(LabelRecord::sourceType)
+                .thenComparing(LabelRecord::primary));
+            collectedComments.sort(Comparator
+                .comparing(CommentRecord::address)
+                .thenComparing(comment -> comment.type().name())
+                .thenComparing(CommentRecord::text));
+            collectedOutgoing.sort(ReferenceOrdering.outgoing());
+
+            IncomingPage incoming;
+            if (collectedIncoming.size() <= incomingCap) {
+                incoming = new IncomingPage(
+                    List.copyOf(collectedIncoming), true, null, 0);
             }
-            List<Reference> included = List.copyOf(collected.subList(0, cap));
-            Reference next = collected.get(cap);
-            long offset = included.stream()
-                .filter(reference ->
-                    reference.getToAddress().equals(next.getToAddress()))
-                .count();
-            return new IncomingPage(
-                included, false, next.getToAddress(), offset);
-        }
-
-        private static SelectedReferences selectFirstReferences(
-                ReferenceIterator iterator, int limit) {
-            Comparator<Reference> order = ReferenceOrdering.perDestination();
-            PriorityQueue<Reference> selected =
-                new PriorityQueue<>(limit, order.reversed());
-            int count = 0;
-            while (iterator != null && iterator.hasNext()) {
-                Reference reference = iterator.next();
-                count++;
-                if (selected.size() < limit) {
-                    selected.add(reference);
-                }
-                else if (order.compare(reference, selected.peek()) < 0) {
-                    selected.poll();
-                    selected.add(reference);
-                }
+            else {
+                List<Reference> included =
+                    List.copyOf(collectedIncoming.subList(0, incomingCap));
+                Reference nextReference = collectedIncoming.get(incomingCap);
+                long offset = included.stream()
+                    .filter(reference -> reference.getToAddress().equals(
+                        nextReference.getToAddress()))
+                    .count();
+                incoming = new IncomingPage(
+                    included, false, nextReference.getToAddress(), offset);
             }
-            List<Reference> ordered = new ArrayList<>(selected);
-            ordered.sort(order);
-            return new SelectedReferences(
-                ordered, count > limit);
+            return new UnitMetadata(
+                List.copyOf(collectedLabels),
+                List.copyOf(collectedComments),
+                List.copyOf(collectedOutgoing),
+                incoming);
         }
 
-        private static <T> List<T> flatten(
-                NavigableMap<Address, List<T>> byAddress) {
-            List<T> result = new ArrayList<>();
-            byAddress.values().forEach(result::addAll);
-            return result;
-        }
-
-        private static void addAddresses(
-                AddressIterator iterator,
-                NavigableSet<Address> addresses,
-                NavigableSet<Address> boundaries) {
-            while (iterator != null && iterator.hasNext()) {
-                Address address = iterator.next();
-                if (address != null) {
-                    addresses.add(address);
-                    boundaries.add(address);
-                }
+        private void addSymbolsAt(
+                Address destination,
+                List<LabelRecord> collected,
+                Set<String> labelKeys) {
+            Symbol[] at = symbols.getSymbols(destination);
+            if (at == null) {
+                return;
+            }
+            for (Symbol symbol : at) {
+                addLabel(symbol, collected, labelKeys);
             }
         }
 
-        private static void addLabel(
+        private void addLabel(
                 Symbol symbol,
-                SymbolTable symbolTable,
-                NavigableMap<Address, List<LabelRecord>> labels,
-                NavigableSet<Address> boundaries,
+                List<LabelRecord> collected,
                 Set<String> labelKeys) {
             if (symbol == null || symbol.getAddress() == null) {
                 return;
@@ -896,48 +816,118 @@ public final class ListingRangeService {
             LabelRecord label = new LabelRecord(
                 at, symbol.getName(), namespace(symbol),
                 ReferenceOrdering.sourceKind(symbol.getSource()),
-                symbol.isPrimary(), symbolTable.isExternalEntryPoint(at));
+                symbol.isPrimary(), symbols.isExternalEntryPoint(at));
             String key = String.join("\u001f",
                 address(label.address()), label.namespace(), label.name(),
                 label.sourceType(), Boolean.toString(label.primary()),
                 Boolean.toString(label.entryPoint()));
             if (labelKeys.add(key)) {
-                labels.computeIfAbsent(at, ignored -> new ArrayList<>()).add(label);
-                boundaries.add(at);
+                collected.add(label);
             }
         }
 
-        private static void addInitializationBoundaries(
-                AddressSetView initialized,
-                Address effectiveStart,
-                Address effectiveEnd,
-                NavigableSet<Address> boundaries) {
-            AddressRangeIterator ranges =
-                initialized.getAddressRanges(effectiveStart, true);
-            while (ranges != null && ranges.hasNext()) {
-                AddressRange range = ranges.next();
-                if (range.getMinAddress().compareTo(effectiveEnd) > 0) {
-                    break;
+        private Address nextBoundary(Address start) {
+            Address boundary = null;
+            boundary = earlierAfter(boundary, codeUnitAddress(instructions.peek()), start);
+            boundary = earlierAfter(boundary, codeUnitAddress(data.peek()), start);
+            boundary = earlierAfter(boundary, symbolAddress(labels.peek()), start);
+            boundary = earlierAfter(boundary, commentAddresses.peek(), start);
+            boundary = earlierAfter(boundary, outgoingSources.peek(), start);
+            boundary = earlierAfter(boundary, incomingDestinations.peek(), start);
+            boundary = earlierAfter(
+                boundary, initializationBoundaryAfter(start), start);
+            return boundary;
+        }
+
+        private Address initializationBoundaryAfter(Address start) {
+            if (initialized.contains(start)) {
+                AddressRange range = initialized.getRangeContaining(start);
+                if (range == null) {
+                    return null;
                 }
-                if (range.getMaxAddress().compareTo(effectiveStart) < 0) {
-                    continue;
-                }
-                Address first = range.getMinAddress().compareTo(effectiveStart) < 0
-                    ? effectiveStart : range.getMinAddress();
-                boundaries.add(first);
                 Address after = next(range.getMaxAddress());
-                if (within(after, effectiveStart, effectiveEnd)) {
-                    boundaries.add(after);
-                }
+                return within(after) ? after : null;
+            }
+            Address nextInitialized = initialized.findFirstAddressInCommon(
+                new AddressSet(start, effectiveEnd));
+            return within(nextInitialized) ? nextInitialized : null;
+        }
+
+        private void discardCodeBefore(Address address) {
+            while (before(codeUnitAddress(instructions.peek()), address)) {
+                instructions.take();
+            }
+            while (before(codeUnitAddress(data.peek()), address)) {
+                data.take();
             }
         }
 
-        private static boolean within(
-                Address address, Address start, Address end) {
+        private boolean within(Address address) {
             return address != null
-                && address.getAddressSpace().equals(start.getAddressSpace())
-                && address.compareTo(start) >= 0
-                && address.compareTo(end) <= 0;
+                && address.getAddressSpace().equals(
+                    effectiveStart.getAddressSpace())
+                && address.compareTo(effectiveStart) >= 0
+                && address.compareTo(effectiveEnd) <= 0;
+        }
+
+        private static Address codeUnitAddress(CodeUnit unit) {
+            return unit == null ? null : unit.getMinAddress();
+        }
+
+        private Address symbolAddress(Symbol symbol) {
+            if (symbol == null || !within(symbol.getAddress())) {
+                return null;
+            }
+            return symbol.getAddress();
+        }
+
+        private static boolean before(Address candidate, Address address) {
+            return candidate != null && candidate.compareTo(address) < 0;
+        }
+
+        private static boolean atOrBefore(Address candidate, Address address) {
+            return candidate != null && candidate.compareTo(address) <= 0;
+        }
+
+        private static boolean atOrAfter(Address candidate, Address address) {
+            return candidate != null && candidate.compareTo(address) >= 0;
+        }
+
+        private static Address earlierAfter(
+                Address current, Address candidate, Address start) {
+            if (candidate == null || candidate.compareTo(start) <= 0) {
+                return current;
+            }
+            return current == null || candidate.compareTo(current) < 0
+                ? candidate : current;
+        }
+    }
+
+    static final class Peekable<T> {
+        private final Iterator<T> iterator;
+        private T next;
+        private boolean loaded;
+
+        Peekable(Iterator<T> iterator) {
+            this.iterator = iterator;
+        }
+
+        T peek() {
+            if (!loaded) {
+                next = null;
+                while (iterator != null && iterator.hasNext() && next == null) {
+                    next = iterator.next();
+                }
+                loaded = true;
+            }
+            return next;
+        }
+
+        T take() {
+            T value = peek();
+            next = null;
+            loaded = false;
+            return value;
         }
     }
 
