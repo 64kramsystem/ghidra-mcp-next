@@ -668,7 +668,7 @@ public class EndpointRegistry {
             params(qStr("address", "Function address"), pProg()),
             (q, b) -> commentService.getPlateComment(str(q, "address"), str(q, "program")));
 
-        post("/set_plate_comment", "Set function header/plate comment",
+        post("/set_plate_comment", "Set a plate comment at any valid program address.",
             params(bStr("address"), bStr("comment"), pProg()),
             (q, b) -> commentService.setPlateComment(bodyStr(b, "address"), bodyStr(b, "comment"), str(q, "program")));
 
