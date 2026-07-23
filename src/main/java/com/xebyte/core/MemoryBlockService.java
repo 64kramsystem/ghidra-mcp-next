@@ -31,6 +31,7 @@ public final class MemoryBlockService {
     private final MemoryBlockCore.FileReader fileReader;
     private final MemoryBlockCore core;
     private final MemoryBlockLifecycleCore lifecycle;
+    private final PatchBytesCore patchCore;
     private final TaskMonitor monitor;
 
     public MemoryBlockService(
@@ -89,6 +90,7 @@ public final class MemoryBlockService {
         this.fileReader = Objects.requireNonNull(fileReader, "fileReader");
         this.core = Objects.requireNonNull(core, "core");
         this.lifecycle = Objects.requireNonNull(lifecycle, "lifecycle");
+        this.patchCore = new PatchBytesCore();
         this.monitor = Objects.requireNonNull(monitor, "monitor");
     }
 
@@ -704,6 +706,112 @@ public final class MemoryBlockService {
         }
     }
 
+    @McpTool(
+        path = "/patch_bytes",
+        method = "POST",
+        description =
+            "Preview or atomically patch hexadecimal bytes in one initialized "
+                + "ordinary or overlay block while preserving annotations",
+        category = "memory",
+        supportsSyntheticDryRun = false)
+    public Response patchBytes(
+            @Param(
+                value = "address",
+                source = ParamSource.BODY,
+                paramType = "address")
+                String address,
+            @Param(
+                value = "bytes",
+                source = ParamSource.BODY,
+                description =
+                    "Nonempty hexadecimal bytes; whitespace and one leading "
+                        + "0x are accepted; maximum 1048576 bytes")
+                String bytes,
+            @Param(
+                value = "block",
+                source = ParamSource.BODY,
+                optional = true,
+                description =
+                    "Exact memory-block name; bare address offsets are "
+                        + "interpreted in this block's address space")
+                String block,
+            @Param(
+                value = "clear_code_units",
+                source = ParamSource.BODY,
+                defaultValue = "true",
+                strictBoolean = true,
+                description =
+                    "Clear complete intersecting code/data units while "
+                        + "preserving labels, comments, bookmarks, and "
+                        + "user/imported outgoing references")
+                boolean clearCodeUnits,
+            @Param(
+                value = "expected_current",
+                source = ParamSource.BODY,
+                optional = true,
+                description =
+                    "Optional hexadecimal compare-and-swap guard with the "
+                        + "same decoded length as bytes")
+                String expectedCurrent,
+            @Param(
+                value = "allow_readonly",
+                source = ParamSource.BODY,
+                defaultValue = "false",
+                strictBoolean = true,
+                description =
+                    "Temporarily enable and then restore write permission")
+                boolean allowReadonly,
+            @Param(
+                value = "dry_run",
+                source = ParamSource.BODY,
+                defaultValue = "true",
+                strictBoolean = true)
+                boolean dryRun,
+            @Param(
+                value = "program",
+                defaultValue = "",
+                description = "Target program name")
+                String programName) {
+        try {
+            Program program = requireProgram(programName);
+            if (dryRun) {
+                PatchBytesCore.Plan plan =
+                    threading.executeRead(() -> patchCore.plan(
+                        program,
+                        patchRequest(
+                            address, bytes, block,
+                            clearCodeUnits, expectedCurrent,
+                            allowReadonly),
+                        monitor));
+                return Response.ok(
+                    patchResult(plan, true, false));
+            }
+            return threading.executeWrite(
+                program,
+                "Patch program bytes",
+                () -> {
+                    PatchBytesCore.Plan plan = patchCore.plan(
+                        program,
+                        patchRequest(
+                            address, bytes, block,
+                            clearCodeUnits, expectedCurrent,
+                            allowReadonly),
+                        monitor);
+                    patchCore.apply(program, plan, monitor);
+                    return Response.ok(
+                        patchResult(plan, false, true));
+                });
+        }
+        catch (Exception error) {
+            if (error.getMessage() != null
+                    && error.getMessage().startsWith(
+                        "expected_current mismatch at offset ")) {
+                return Response.err(error.getMessage());
+            }
+            return error("patch bytes", error);
+        }
+    }
+
     static byte[] readFileRange(
             Path path, long offset, int length) throws IOException {
         if (!java.nio.file.Files.isRegularFile(path)
@@ -881,6 +989,125 @@ public final class MemoryBlockService {
         result.addProperty("conflict_policy", plan.conflictPolicy());
         result.addProperty("length", plan.requested().length);
         return result;
+    }
+
+    private static PatchBytesCore.Request patchRequest(
+            String address,
+            String bytes,
+            String block,
+            boolean clearCodeUnits,
+            String expectedCurrent,
+            boolean allowReadonly) {
+        byte[] payload =
+            PatchBytesCore.decodeHex(bytes, "bytes");
+        byte[] expected = expectedCurrent == null
+            ? null
+            : PatchBytesCore.decodeHex(
+                expectedCurrent, "expected_current");
+        return new PatchBytesCore.Request(
+            address,
+            block,
+            payload,
+            expected,
+            clearCodeUnits,
+            allowReadonly);
+    }
+
+    private static JsonObject patchResult(
+            PatchBytesCore.Plan plan,
+            boolean dryRun,
+            boolean committed) {
+        JsonObject result = new JsonObject();
+        result.addProperty("success", true);
+        result.addProperty("address", plan.start().toString());
+        result.addProperty(
+            "address_space",
+            plan.start().getAddressSpace().getName());
+        result.addProperty("length", plan.payload().length);
+        result.addProperty("block", plan.block().getName());
+        result.add(
+            "cleared_code_units",
+            codeUnitsJson(plan.clearPlan().units()));
+        result.add(
+            "removed_functions",
+            functionsJson(plan.clearPlan().functions()));
+        result.addProperty(
+            "original_write", plan.originalWrite());
+        result.addProperty(
+            "temporary_write_enabled",
+            plan.temporaryWriteEnabled());
+        result.addProperty("dry_run", dryRun);
+        result.addProperty("committed", committed);
+
+        PatchBytesCore.PayloadSummary summary =
+            PatchBytesCore.summarize(
+                plan.previous(), plan.payload(), dryRun);
+        addOptional(result, "previous", summary.previous());
+        addOptional(result, "written", summary.written());
+        addOptional(
+            result, "previous_sha256",
+            summary.previousSha256());
+        addOptional(
+            result, "written_sha256",
+            summary.writtenSha256());
+        addOptional(
+            result, "previous_first",
+            summary.previousFirst());
+        addOptional(
+            result, "previous_last",
+            summary.previousLast());
+        addOptional(
+            result, "written_first",
+            summary.writtenFirst());
+        addOptional(
+            result, "written_last",
+            summary.writtenLast());
+        return result;
+    }
+
+    private static JsonArray codeUnitsJson(
+            List<ListingClearCore.CodeUnitSnapshot> units) {
+        JsonArray result = new JsonArray();
+        for (ListingClearCore.CodeUnitSnapshot unit : units) {
+            JsonObject item = new JsonObject();
+            item.addProperty(
+                "kind",
+                unit.kind() == ListingClearCore.UnitKind.INSTRUCTION
+                    ? "instruction" : "data");
+            item.addProperty("start", unit.start().toString());
+            item.addProperty("end", unit.end().toString());
+            item.addProperty(
+                "length",
+                unit.end().subtract(unit.start()) + 1L);
+            result.add(item);
+        }
+        return result;
+    }
+
+    private static JsonArray functionsJson(
+            List<ListingClearCore.FunctionSnapshot> functions) {
+        JsonArray result = new JsonArray();
+        List<ListingClearCore.FunctionSnapshot> ordered =
+            functions.stream()
+                .sorted(java.util.Comparator.comparing(
+                    ListingClearCore.FunctionSnapshot::entry)
+                    .thenComparing(
+                        ListingClearCore.FunctionSnapshot::name))
+                .toList();
+        for (ListingClearCore.FunctionSnapshot function : ordered) {
+            JsonObject item = new JsonObject();
+            item.addProperty("entry", function.entry().toString());
+            item.addProperty("name", function.name());
+            result.add(item);
+        }
+        return result;
+    }
+
+    private static void addOptional(
+            JsonObject target, String name, String value) {
+        if (value != null) {
+            target.addProperty(name, value);
+        }
     }
 
     private static JsonObject deleteResult(

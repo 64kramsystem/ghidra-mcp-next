@@ -54,6 +54,31 @@ import ghidra.util.task.TaskMonitor;
  */
 final class ListingClearCore {
 
+    static final int MAX_PLAN_ENTRIES = 65_536;
+
+    static final class PlanLimitException extends IllegalArgumentException {
+        private static final long serialVersionUID = 1L;
+
+        private final String category;
+        private final int countAtLeast;
+
+        PlanLimitException(String category, int countAtLeast) {
+            super("listing clear category '" + category
+                + "' exceeds maximum of " + MAX_PLAN_ENTRIES
+                + " entries (count at least " + countAtLeast + ")");
+            this.category = category;
+            this.countAtLeast = countAtLeast;
+        }
+
+        String category() {
+            return category;
+        }
+
+        int countAtLeast() {
+            return countAtLeast;
+        }
+    }
+
     @FunctionalInterface
     interface AnnotationRestorer {
         void restore(
@@ -198,6 +223,37 @@ final class ListingClearCore {
             AddressSetView requested,
             Selection selection,
             Preservation preservation) {
+        try {
+            return planInternal(
+                program, requested, selection, preservation,
+                TaskMonitor.DUMMY, false);
+        }
+        catch (RuntimeException error) {
+            throw error;
+        }
+        catch (Exception impossible) {
+            throw new IllegalStateException(impossible);
+        }
+    }
+
+    Plan plan(
+            Program program,
+            AddressSetView requested,
+            Selection selection,
+            Preservation preservation,
+            TaskMonitor monitor) throws Exception {
+        return planInternal(
+            program, requested, selection, preservation,
+            monitor, true);
+    }
+
+    private Plan planInternal(
+            Program program,
+            AddressSetView requested,
+            Selection selection,
+            Preservation preservation,
+            TaskMonitor monitor,
+            boolean bounded) throws Exception {
         if (program == null) {
             throw new IllegalArgumentException("program is required");
         }
@@ -210,38 +266,76 @@ final class ListingClearCore {
         if (preservation == null) {
             throw new IllegalArgumentException("preservation is required");
         }
+        TaskMonitor taskMonitor =
+            monitor == null ? TaskMonitor.DUMMY : monitor;
+        taskMonitor.checkCancelled();
 
         Listing listing = program.getListing();
         Map<Address, CodeUnit> intersecting = new LinkedHashMap<>();
+        Set<Address> selectedUnitStarts = new LinkedHashSet<>();
         for (AddressRange range : requested) {
-            addUnit(intersecting, definedUnitContaining(
-                listing, range.getMinAddress()));
-            AddressSet bounded =
+            taskMonitor.checkCancelled();
+            addUnit(
+                intersecting,
+                selectedUnitStarts,
+                definedUnitContaining(
+                    listing, range.getMinAddress()),
+                selection,
+                bounded);
+            AddressSet requestedRange =
                 new AddressSet(range.getMinAddress(), range.getMaxAddress());
-            InstructionIterator instructions = listing.getInstructions(bounded, true);
+            InstructionIterator instructions =
+                listing.getInstructions(requestedRange, true);
             while (instructions.hasNext()) {
-                addUnit(intersecting, instructions.next());
+                taskMonitor.checkCancelled();
+                addUnit(
+                    intersecting,
+                    selectedUnitStarts,
+                    instructions.next(),
+                    selection,
+                    bounded);
             }
-            DataIterator data = listing.getDefinedData(bounded, true);
+            DataIterator data =
+                listing.getDefinedData(requestedRange, true);
             while (data.hasNext()) {
-                addUnit(intersecting, data.next());
+                taskMonitor.checkCancelled();
+                addUnit(
+                    intersecting,
+                    selectedUnitStarts,
+                    data.next(),
+                    selection,
+                    bounded);
             }
-            addUnit(intersecting, definedUnitContaining(
-                listing, range.getMaxAddress()));
+            addUnit(
+                intersecting,
+                selectedUnitStarts,
+                definedUnitContaining(
+                    listing, range.getMaxAddress()),
+                selection,
+                bounded);
         }
         if (selection.clearInstructions()) {
-            expandDelaySlotGroups(listing, intersecting);
+            expandDelaySlotGroups(
+                listing, intersecting, selectedUnitStarts,
+                selection, bounded, taskMonitor);
         }
 
-        List<CodeUnitSnapshot> units = intersecting.values()
-            .stream()
-            .filter(unit -> isSelected(unit, selection))
-            .map(ListingClearCore::snapshot)
-            .sorted(Comparator.comparing(CodeUnitSnapshot::start))
-            .toList();
+        List<CodeUnitSnapshot> units = new ArrayList<>();
+        for (CodeUnit unit : intersecting.values()) {
+            taskMonitor.checkCancelled();
+            if (isSelected(unit, selection)) {
+                addPlanned(
+                    units, snapshot(unit), "cleared_code_units",
+                    bounded);
+            }
+        }
+        units.sort(Comparator.comparing(CodeUnitSnapshot::start)
+            .thenComparing(CodeUnitSnapshot::end)
+            .thenComparing(unit -> unit.kind().name()));
 
         AddressSet expanded = new AddressSet();
         for (CodeUnitSnapshot unit : units) {
+            taskMonitor.checkCancelled();
             expanded.add(unit.start(), unit.end());
         }
 
@@ -250,6 +344,7 @@ final class ListingClearCore {
         List<String> conflicts = new ArrayList<>();
         AddressSet selectedInstructions = new AddressSet();
         for (CodeUnitSnapshot unit : units) {
+            taskMonitor.checkCancelled();
             if (unit.kind() == UnitKind.INSTRUCTION) {
                 selectedInstructions.add(unit.start(), unit.end());
             }
@@ -258,10 +353,13 @@ final class ListingClearCore {
             Iterator<Function> iterator =
                 program.getFunctionManager().getFunctionsOverlapping(selectedInstructions);
             while (iterator.hasNext()) {
+                taskMonitor.checkCancelled();
                 Function function = iterator.next();
                 FunctionSnapshot snapshot =
                     new FunctionSnapshot(function.getEntryPoint(), function.getName());
-                functions.add(snapshot);
+                addPlanned(
+                    functions, snapshot, "removed_functions",
+                    bounded);
                 intersectingFunctions.add(function);
                 if (!selection.removeIntersectingFunctions()) {
                     conflicts.add("instruction intersects function " + function.getName() +
@@ -274,7 +372,8 @@ final class ListingClearCore {
         }
         else {
             FunctionRemovalOrder removalOrder =
-                orderFunctionRemovals(intersectingFunctions);
+                orderFunctionRemovals(
+                    intersectingFunctions, taskMonitor);
             functions = removalOrder.functions();
             conflicts.addAll(removalOrder.conflicts());
             conflicts.addAll(preflightFunctionRemoval(
@@ -284,12 +383,15 @@ final class ListingClearCore {
                     .map(FunctionSnapshot::entry)
                     .collect(java.util.stream.Collectors.toSet()),
                 expanded,
-                preservation));
+                preservation,
+                taskMonitor));
         }
         conflicts.sort(String::compareTo);
 
         AnnotationPartition annotationPartition =
-            partitionAnnotations(program, expanded, preservation);
+            partitionAnnotations(
+                program, expanded, preservation, taskMonitor,
+                bounded);
         int instructionCount =
             (int) units.stream().filter(unit -> unit.kind() == UnitKind.INSTRUCTION).count();
         int dataCount =
@@ -307,10 +409,41 @@ final class ListingClearCore {
             conflicts);
     }
 
-    private static void addUnit(Map<Address, CodeUnit> units, CodeUnit unit) {
-        if (unit != null) {
-            units.putIfAbsent(unit.getMinAddress(), unit);
+    static Plan emptyPlan() {
+        AnnotationSnapshot empty =
+            new AnnotationSnapshot(List.of(), List.of(), List.of(), List.of());
+        return new Plan(
+            new AddressSet(),
+            List.of(),
+            List.of(),
+            empty,
+            empty,
+            Map.of(),
+            new RemovalCounts(0, 0, 0),
+            List.of());
+    }
+
+    private static void addUnit(
+            Map<Address, CodeUnit> units,
+            Set<Address> selectedStarts,
+            CodeUnit unit,
+            Selection selection,
+            boolean bounded) {
+        if (unit == null
+                || units.containsKey(unit.getMinAddress())) {
+            return;
         }
+        if (isSelected(unit, selection)) {
+            if (bounded
+                    && selectedStarts.size()
+                        >= MAX_PLAN_ENTRIES) {
+                throw new PlanLimitException(
+                    "cleared_code_units",
+                    MAX_PLAN_ENTRIES + 1);
+            }
+            selectedStarts.add(unit.getMinAddress());
+        }
+        units.put(unit.getMinAddress(), unit);
     }
 
     private static CodeUnit definedUnitContaining(
@@ -328,34 +461,45 @@ final class ListingClearCore {
 
     private static void expandDelaySlotGroups(
             Listing listing,
-            Map<Address, CodeUnit> intersecting) {
+            Map<Address, CodeUnit> intersecting,
+            Set<Address> selectedStarts,
+            Selection selection,
+            boolean bounded,
+            TaskMonitor monitor) throws Exception {
         List<Instruction> selectedInstructions = intersecting.values()
             .stream()
             .filter(Instruction.class::isInstance)
             .map(Instruction.class::cast)
             .toList();
         for (Instruction selected : selectedInstructions) {
+            monitor.checkCancelled();
             Instruction root = selected;
             while (root.isInDelaySlot()) {
+                monitor.checkCancelled();
                 Instruction instruction =
                     listing.getInstructionBefore(root.getMinAddress());
                 if (instruction == null) {
                     break;
                 }
                 root = instruction;
-                addUnit(intersecting, root);
+                addUnit(
+                    intersecting, selectedStarts, root,
+                    selection, bounded);
             }
 
             boolean followDelaySlots =
                 root.getPrototype() != null && root.getPrototype().hasDelaySlots();
             Instruction current = root;
             while (followDelaySlots || current.isInDelaySlot()) {
+                monitor.checkCancelled();
                 Instruction instruction =
                     listing.getInstructionAfter(current.getMaxAddress());
                 if (instruction == null || !instruction.isInDelaySlot()) {
                     break;
                 }
-                addUnit(intersecting, instruction);
+                addUnit(
+                    intersecting, selectedStarts, instruction,
+                    selection, bounded);
                 current = instruction;
                 followDelaySlots = false;
             }
@@ -412,6 +556,72 @@ final class ListingClearCore {
             program, plan.annotations(), taskMonitor);
     }
 
+    /**
+     * Verifies the exact postconditions promised by a clear plan. The caller
+     * owns the transaction, so any failure can roll the complete composite
+     * mutation back.
+     */
+    void verify(
+            Program program, Plan plan, TaskMonitor monitor)
+            throws Exception {
+        if (program == null) {
+            throw new IllegalArgumentException("program is required");
+        }
+        if (plan == null) {
+            throw new IllegalArgumentException("plan is required");
+        }
+        TaskMonitor taskMonitor =
+            monitor == null ? TaskMonitor.DUMMY : monitor;
+        Listing listing = program.getListing();
+        for (CodeUnitSnapshot unit : plan.units()) {
+            taskMonitor.checkCancelled();
+            AddressSet range =
+                new AddressSet(unit.start(), unit.end());
+            if (definedUnitContaining(listing, unit.start()) != null
+                    || definedUnitContaining(listing, unit.end()) != null
+                    || listing.getInstructions(range, true).hasNext()
+                    || listing.getDefinedData(range, true).hasNext()) {
+                throw new IllegalStateException(
+                    "listing clear verification found a defined code unit in "
+                        + unit.start() + ".." + unit.end());
+            }
+        }
+        for (FunctionSnapshot function : plan.functions()) {
+            taskMonitor.checkCancelled();
+            if (program.getFunctionManager().getFunctionAt(
+                    function.entry()) != null) {
+                throw new IllegalStateException(
+                    "listing clear verification found function "
+                        + function.name() + " at " + function.entry());
+            }
+        }
+        verifyLabels(
+            program, plan.annotations().labels(), true, taskMonitor);
+        verifyComments(
+            program, plan.annotations().comments(), true, taskMonitor);
+        verifyBookmarks(
+            program, plan.annotations().bookmarks(), true, taskMonitor);
+        verifyReferences(
+            program, plan.annotations().references(), true, taskMonitor);
+        verifyLabels(
+            program, plan.removedAnnotations().labels(), false,
+            taskMonitor);
+        verifyComments(
+            program, plan.removedAnnotations().comments(), false,
+            taskMonitor);
+        verifyBookmarks(
+            program, plan.removedAnnotations().bookmarks(), false,
+            taskMonitor);
+        verifyReferences(
+            program, plan.removedAnnotations().references(), false,
+            taskMonitor);
+        taskMonitor.checkCancelled();
+    }
+
+    void verify(Program program, Plan plan) throws Exception {
+        verify(program, plan, TaskMonitor.DUMMY);
+    }
+
     private record AnnotationPartition(
             AnnotationSnapshot preserved,
             AnnotationSnapshot removed) {
@@ -422,8 +632,25 @@ final class ListingClearCore {
             List<String> conflicts) {
     }
 
+    static <T> void addBounded(
+            List<T> destination, T value, String category) {
+        addPlanned(destination, value, category, true);
+    }
+
+    private static <T> void addPlanned(
+            List<T> destination, T value, String category,
+            boolean bounded) {
+        if (bounded
+                && destination.size() >= MAX_PLAN_ENTRIES) {
+            throw new PlanLimitException(
+                category, MAX_PLAN_ENTRIES + 1);
+        }
+        destination.add(value);
+    }
+
     private static FunctionRemovalOrder orderFunctionRemovals(
-            List<Function> functions) {
+            List<Function> functions,
+            TaskMonitor monitor) throws Exception {
         Map<Address, Function> selectedByEntry = new LinkedHashMap<>();
         functions.stream()
             .sorted(Comparator.comparing(Function::getEntryPoint))
@@ -433,8 +660,10 @@ final class ListingClearCore {
         List<FunctionSnapshot> ordered = new ArrayList<>();
         Set<String> conflicts = new LinkedHashSet<>();
         for (Function function : selectedByEntry.values()) {
+            monitor.checkCancelled();
             visitFunctionForRemoval(
-                function, selectedByEntry, states, ordered, conflicts);
+                function, selectedByEntry, states, ordered, conflicts,
+                monitor);
         }
         return new FunctionRemovalOrder(
             List.copyOf(ordered), List.copyOf(conflicts));
@@ -445,7 +674,9 @@ final class ListingClearCore {
             Map<Address, Function> selectedByEntry,
             Map<Address, VisitState> states,
             List<FunctionSnapshot> ordered,
-            Set<String> conflicts) {
+            Set<String> conflicts,
+            TaskMonitor monitor) throws Exception {
+        monitor.checkCancelled();
         Address entry = function.getEntryPoint();
         VisitState state = states.get(entry);
         if (state == VisitState.VISITED) {
@@ -472,7 +703,8 @@ final class ListingClearCore {
                         selectedByEntry,
                         states,
                         ordered,
-                        conflicts);
+                        conflicts,
+                        monitor);
                 }
             }
         }
@@ -485,16 +717,19 @@ final class ListingClearCore {
             List<Function> functions,
             Set<Address> selectedFunctionEntries,
             AddressSetView expanded,
-            Preservation preservation) {
+            Preservation preservation,
+            TaskMonitor monitor) throws Exception {
         SymbolTable symbolTable = program.getSymbolTable();
         ReferenceManager referenceManager = program.getReferenceManager();
         Set<String> conflicts = new LinkedHashSet<>();
 
         for (Function function : functions) {
+            monitor.checkCancelled();
             Address[] directThunkAddresses =
                 function.getFunctionThunkAddresses(false);
             if (directThunkAddresses != null) {
                 for (Address thunkAddress : directThunkAddresses) {
+                    monitor.checkCancelled();
                     if (!selectedFunctionEntries.contains(thunkAddress)) {
                         conflicts.add(
                             "removing function " + function.getName() + " at "
@@ -509,7 +744,9 @@ final class ListingClearCore {
             Symbol functionSymbol = function.getSymbol();
             if (functionSymbol != null) {
                 for (Symbol child :
-                        descendantSymbols(symbolTable, functionSymbol)) {
+                        descendantSymbols(
+                            symbolTable, functionSymbol, monitor)) {
+                    monitor.checkCancelled();
                     if (child.isDynamic()
                             || child.getSymbolType() != SymbolType.LABEL) {
                         continue;
@@ -542,12 +779,14 @@ final class ListingClearCore {
                 continue;
             }
             while (sources.hasNext()) {
+                monitor.checkCancelled();
                 Address from = sources.next();
                 Reference[] references = referenceManager.getReferencesFrom(from);
                 if (references == null) {
                     continue;
                 }
                 for (Reference reference : references) {
+                    monitor.checkCancelled();
                     boolean outside = !expanded.contains(from);
                     boolean preservationRequired = outside
                         || preservation.userReferences()
@@ -587,7 +826,8 @@ final class ListingClearCore {
     }
 
     private static List<Symbol> descendantSymbols(
-            SymbolTable symbolTable, Symbol root) {
+            SymbolTable symbolTable, Symbol root,
+            TaskMonitor monitor) throws Exception {
         List<Symbol> descendants = new ArrayList<>();
         Deque<Symbol> pending = new ArrayDeque<>();
         Set<Symbol> visited =
@@ -595,11 +835,13 @@ final class ListingClearCore {
         pending.add(root);
         visited.add(root);
         while (!pending.isEmpty()) {
+            monitor.checkCancelled();
             var children = symbolTable.getChildren(pending.removeFirst());
             if (children == null) {
                 continue;
             }
             while (children.hasNext()) {
+                monitor.checkCancelled();
                 Symbol child = children.next();
                 if (child != null && visited.add(child)) {
                     descendants.add(child);
@@ -622,7 +864,9 @@ final class ListingClearCore {
     private static AnnotationPartition partitionAnnotations(
             Program program,
             AddressSetView expanded,
-            Preservation preservation) {
+            Preservation preservation,
+            TaskMonitor monitor,
+            boolean bounded) throws Exception {
         List<LabelSnapshot> preservedLabels = new ArrayList<>();
         List<CommentSnapshot> preservedComments = new ArrayList<>();
         List<BookmarkSnapshot> preservedBookmarks = new ArrayList<>();
@@ -646,6 +890,7 @@ final class ListingClearCore {
             expanded, SymbolType.LABEL, true);
         if (symbols != null) {
             while (symbols.hasNext()) {
+                monitor.checkCancelled();
                 Symbol symbol = symbols.next();
                 // Dynamic symbols are projections of surviving references, not
                 // owned annotations. They may disappear and reappear as Ghidra
@@ -664,10 +909,14 @@ final class ListingClearCore {
                     symbol.isPinned());
                 if (preservation.labels()
                         && isPreservedSource(symbol.getSource())) {
-                    preservedLabels.add(snapshot);
+                    addPlanned(
+                        preservedLabels, snapshot,
+                        "preserved_labels", bounded);
                 }
                 else {
-                    removedLabels.add(snapshot);
+                    addPlanned(
+                        removedLabels, snapshot,
+                        "removed_labels", bounded);
                 }
             }
         }
@@ -676,14 +925,21 @@ final class ListingClearCore {
             listing.getCommentAddressIterator(expanded, true);
         if (commentAddresses != null) {
             while (commentAddresses.hasNext()) {
+                monitor.checkCancelled();
                 Address address = commentAddresses.next();
                 for (CommentType type : CommentType.values()) {
+                    monitor.checkCancelled();
                     String text = listing.getComment(type, address);
                     if (text != null) {
-                        (preservation.comments()
-                            ? preservedComments
-                            : removedComments).add(
-                                new CommentSnapshot(address, type, text));
+                        addPlanned(
+                            preservation.comments()
+                                ? preservedComments
+                                : removedComments,
+                            new CommentSnapshot(address, type, text),
+                            preservation.comments()
+                                ? "preserved_comments"
+                                : "removed_comments",
+                            bounded);
                     }
                 }
             }
@@ -694,19 +950,26 @@ final class ListingClearCore {
                 expanded.getMinAddress(), true);
         if (bookmarkIterator != null) {
             while (bookmarkIterator.hasNext()) {
+                monitor.checkCancelled();
                 Bookmark bookmark = bookmarkIterator.next();
                 Address address = bookmark.getAddress();
                 if (address.compareTo(expanded.getMaxAddress()) > 0) {
                     break;
                 }
                 if (expanded.contains(address)) {
-                    (preservation.bookmarks()
-                        ? preservedBookmarks
-                        : removedBookmarks).add(new BookmarkSnapshot(
+                    addPlanned(
+                        preservation.bookmarks()
+                            ? preservedBookmarks
+                            : removedBookmarks,
+                        new BookmarkSnapshot(
                             address,
                             bookmark.getTypeString(),
                             bookmark.getCategory(),
-                            bookmark.getComment()));
+                            bookmark.getComment()),
+                        preservation.bookmarks()
+                            ? "preserved_bookmarks"
+                            : "removed_bookmarks",
+                        bounded);
                 }
             }
         }
@@ -715,6 +978,7 @@ final class ListingClearCore {
             referenceManager.getReferenceSourceIterator(expanded, true);
         if (referenceSources != null) {
             while (referenceSources.hasNext()) {
+                monitor.checkCancelled();
                 Address address = referenceSources.next();
                 Reference[] fromAddress =
                     referenceManager.getReferencesFrom(address);
@@ -722,13 +986,20 @@ final class ListingClearCore {
                     continue;
                 }
                 for (Reference reference : fromAddress) {
+                    monitor.checkCancelled();
                     ReferenceSnapshot snapshot = snapshot(reference);
                     if (preservation.userReferences()
                             && isPreservedSource(reference.getSource())) {
-                        preservedReferences.add(snapshot);
+                        addPlanned(
+                            preservedReferences, snapshot,
+                            "preserved_outgoing_references",
+                            bounded);
                     }
                     else {
-                        removedReferences.add(snapshot);
+                        addPlanned(
+                            removedReferences, snapshot,
+                            "removed_outgoing_references",
+                            bounded);
                     }
                 }
             }
@@ -904,6 +1175,135 @@ final class ListingClearCore {
             offset,
             shift,
             externalLocation);
+    }
+
+    private static void verifyLabels(
+            Program program, List<LabelSnapshot> snapshots,
+            boolean expectedPresent, TaskMonitor monitor)
+            throws Exception {
+        SymbolTable table = program.getSymbolTable();
+        for (LabelSnapshot snapshot : snapshots) {
+            monitor.checkCancelled();
+            boolean present = false;
+            Symbol[] symbols = table.getSymbols(snapshot.address());
+            if (symbols != null) {
+                for (Symbol symbol : symbols) {
+                    monitor.checkCancelled();
+                    if (!symbol.isDynamic()
+                            && symbol.getSymbolType()
+                                == snapshot.symbolType()
+                            && snapshot.name().equals(symbol.getName())
+                            && snapshot.source() == symbol.getSource()
+                            && Objects.equals(
+                                snapshot.namespace(),
+                                symbol.getParentNamespace())
+                            && snapshot.primary() == symbol.isPrimary()
+                            && snapshot.pinned() == symbol.isPinned()) {
+                        present = true;
+                        break;
+                    }
+                }
+            }
+            requirePresence(
+                "label " + snapshot.name() + " at "
+                    + snapshot.address(),
+                expectedPresent,
+                present);
+        }
+    }
+
+    private static void verifyComments(
+            Program program, List<CommentSnapshot> snapshots,
+            boolean expectedPresent, TaskMonitor monitor)
+            throws Exception {
+        Listing listing = program.getListing();
+        for (CommentSnapshot snapshot : snapshots) {
+            monitor.checkCancelled();
+            boolean present = Objects.equals(
+                snapshot.text(),
+                listing.getComment(
+                    snapshot.type(), snapshot.address()));
+            requirePresence(
+                snapshot.type() + " comment at "
+                    + snapshot.address(),
+                expectedPresent,
+                present);
+        }
+    }
+
+    private static void verifyBookmarks(
+            Program program, List<BookmarkSnapshot> snapshots,
+            boolean expectedPresent, TaskMonitor monitor)
+            throws Exception {
+        BookmarkManager manager = program.getBookmarkManager();
+        for (BookmarkSnapshot snapshot : snapshots) {
+            monitor.checkCancelled();
+            boolean present = false;
+            Bookmark[] bookmarks =
+                manager.getBookmarks(snapshot.address());
+            if (bookmarks != null) {
+                for (Bookmark bookmark : bookmarks) {
+                    monitor.checkCancelled();
+                    if (Objects.equals(
+                            snapshot.type(),
+                            bookmark.getTypeString())
+                            && Objects.equals(
+                                snapshot.category(),
+                                bookmark.getCategory())
+                            && Objects.equals(
+                                snapshot.comment(),
+                                bookmark.getComment())) {
+                        present = true;
+                        break;
+                    }
+                }
+            }
+            requirePresence(
+                "bookmark at " + snapshot.address(),
+                expectedPresent,
+                present);
+        }
+    }
+
+    private static void verifyReferences(
+            Program program, List<ReferenceSnapshot> snapshots,
+            boolean expectedPresent, TaskMonitor monitor)
+            throws Exception {
+        ReferenceManager manager =
+            program.getReferenceManager();
+        for (ReferenceSnapshot expected : snapshots) {
+            monitor.checkCancelled();
+            boolean present = false;
+            Reference[] references =
+                manager.getReferencesFrom(expected.from());
+            if (references != null) {
+                for (Reference reference : references) {
+                    monitor.checkCancelled();
+                    if (expected.equals(snapshot(reference))) {
+                        present = true;
+                        break;
+                    }
+                }
+            }
+            requirePresence(
+                "reference from " + expected.from()
+                    + " operand " + expected.operandIndex()
+                    + " to " + expected.to(),
+                expectedPresent,
+                present);
+        }
+    }
+
+    private static void requirePresence(
+            String identity, boolean expectedPresent,
+            boolean present) {
+        if (present != expectedPresent) {
+            throw new IllegalStateException(
+                "listing clear verification "
+                    + (expectedPresent
+                        ? "did not preserve " : "did not remove ")
+                    + identity);
+        }
     }
 
     private static void restoreAnnotations(

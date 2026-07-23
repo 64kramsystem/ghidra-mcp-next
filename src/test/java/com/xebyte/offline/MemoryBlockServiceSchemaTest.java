@@ -95,6 +95,24 @@ public class MemoryBlockServiceSchemaTest {
             .getAsBoolean());
         assertEquals("error", deleteParameters.get("on_inbound_refs")
             .get("default").getAsString());
+
+        JsonObject patch = schema.getAsJsonArray("tools").asList().stream()
+            .map(element -> element.getAsJsonObject())
+            .filter(tool -> tool.get("path").getAsString()
+                .equals("/patch_bytes"))
+            .findFirst().orElseThrow();
+        Map<String, JsonObject> patchParameters =
+            patch.getAsJsonArray("params").asList().stream()
+                .map(element -> element.getAsJsonObject())
+                .collect(Collectors.toMap(
+                    parameter -> parameter.get("name").getAsString(),
+                    Function.identity()));
+        assertTrue(patchParameters.get("clear_code_units")
+            .get("default").getAsBoolean());
+        assertFalse(patchParameters.get("allow_readonly")
+            .get("default").getAsBoolean());
+        assertTrue(patchParameters.get("dry_run")
+            .get("default").getAsBoolean());
     }
 
     @Test
@@ -114,7 +132,8 @@ public class MemoryBlockServiceSchemaTest {
                 "/move_memory_block",
                 "/write_memory_bytes",
                 "/delete_memory_block",
-                "/resize_memory_block")) {
+                "/resize_memory_block",
+                "/patch_bytes")) {
             assertEquals(path, "memory", tools.get(path).category());
         }
         assertEquals(
@@ -154,6 +173,25 @@ public class MemoryBlockServiceSchemaTest {
                 "source_length", "dry_run", "program"),
             tools.get("/resize_memory_block").params().stream()
                 .map(AnnotationScanner.ParamDescriptor::name).toList());
+        assertEquals(
+            List.of(
+                "address", "bytes", "block", "clear_code_units",
+                "expected_current", "allow_readonly", "dry_run",
+                "program"),
+            tools.get("/patch_bytes").params().stream()
+                .map(AnnotationScanner.ParamDescriptor::name).toList());
+        assertEquals("address",
+            tools.get("/patch_bytes").params().get(0).paramType());
+        assertEquals("true",
+            tools.get("/patch_bytes").params().stream()
+                .filter(parameter ->
+                    parameter.name().equals("clear_code_units"))
+                .findFirst().orElseThrow().defaultValue());
+        assertEquals("false",
+            tools.get("/patch_bytes").params().stream()
+                .filter(parameter ->
+                    parameter.name().equals("allow_readonly"))
+                .findFirst().orElseThrow().defaultValue());
         assertTrue(tools.get("/create_memory_block").description()
             .contains("initialized"));
         assertTrue(tools.get("/write_memory_bytes").description()
@@ -172,7 +210,8 @@ public class MemoryBlockServiceSchemaTest {
                 "/move_memory_block",
                 "/write_memory_bytes",
                 "/delete_memory_block",
-                "/resize_memory_block")) {
+                "/resize_memory_block",
+                "/patch_bytes")) {
             assertTrue(path, tools.get(path).supportsDryRun());
         }
     }
@@ -334,7 +373,8 @@ public class MemoryBlockServiceSchemaTest {
                 "/move_memory_block",
                 "/write_memory_bytes",
                 "/delete_memory_block",
-                "/resize_memory_block")) {
+                "/resize_memory_block",
+                "/patch_bytes")) {
             var entry = catalog.getAsJsonArray("endpoints").asList()
                 .stream()
                 .map(element -> element.getAsJsonObject())

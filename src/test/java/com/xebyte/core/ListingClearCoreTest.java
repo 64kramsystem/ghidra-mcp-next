@@ -47,8 +47,57 @@ import ghidra.program.model.symbol.SourceType;
 import ghidra.program.model.symbol.Symbol;
 import ghidra.program.model.symbol.SymbolTable;
 import ghidra.program.model.symbol.SymbolType;
+import ghidra.util.exception.CancelledException;
+import ghidra.util.task.TaskMonitorAdapter;
 
 public class ListingClearCoreTest {
+
+    @Test
+    public void everyPlanCategorySharesTheExactEntryBound() {
+        List<Integer> entries =
+            new ArrayList<>(ListingClearCore.MAX_PLAN_ENTRIES);
+        for (int index = 0;
+                index < ListingClearCore.MAX_PLAN_ENTRIES;
+                index++) {
+            ListingClearCore.addBounded(
+                entries, index, "preserved_comments");
+        }
+        assertEquals(ListingClearCore.MAX_PLAN_ENTRIES, entries.size());
+
+        ListingClearCore.PlanLimitException error = assertThrows(
+            ListingClearCore.PlanLimitException.class,
+            () -> ListingClearCore.addBounded(
+                entries, -1, "preserved_comments"));
+        assertEquals("preserved_comments", error.category());
+        assertEquals(
+            ListingClearCore.MAX_PLAN_ENTRIES + 1,
+            error.countAtLeast());
+        assertEquals(ListingClearCore.MAX_PLAN_ENTRIES, entries.size());
+    }
+
+    @Test
+    public void monitoredPlanningChecksCancellationBeforeEnumeration() {
+        Fixture fixture = fixture(List.of(
+            unit(
+                Data.class,
+                RAM.getAddress(0x1000),
+                RAM.getAddress(0x1000))));
+        TaskMonitorAdapter monitor = new TaskMonitorAdapter();
+        monitor.setCancelEnabled(true);
+        monitor.cancel();
+
+        assertThrows(CancelledException.class, () ->
+            new ListingClearCore().plan(
+                fixture.program(),
+                new AddressSet(
+                    RAM.getAddress(0x1000),
+                    RAM.getAddress(0x1000)),
+                new ListingClearCore.Selection(false, true, false),
+                ListingClearCore.Preservation.defaults(),
+                monitor));
+        verify(fixture.listing(), never()).getDefinedData(
+            any(AddressSetView.class), eq(true));
+    }
 
     private static final GenericAddressSpace RAM =
         new GenericAddressSpace("ram", 16, AddressSpace.TYPE_RAM, 0);
