@@ -11,6 +11,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atMost;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -41,12 +42,15 @@ import ghidra.program.model.address.AddressSet;
 import ghidra.program.model.address.AddressSetView;
 import ghidra.program.model.address.AddressSpace;
 import ghidra.program.model.address.GenericAddressSpace;
+import ghidra.program.model.data.DataType;
 import ghidra.program.model.listing.CodeUnit;
 import ghidra.program.model.listing.CodeUnitIterator;
 import ghidra.program.model.listing.CommentType;
 import ghidra.program.model.listing.Data;
+import ghidra.program.model.listing.DataIterator;
 import ghidra.program.model.listing.FunctionManager;
 import ghidra.program.model.listing.Instruction;
+import ghidra.program.model.listing.InstructionIterator;
 import ghidra.program.model.listing.Listing;
 import ghidra.program.model.listing.Program;
 import ghidra.program.model.mem.Memory;
@@ -60,8 +64,13 @@ import ghidra.program.model.symbol.SourceType;
 import ghidra.program.model.symbol.Symbol;
 import ghidra.program.model.symbol.SymbolIterator;
 import ghidra.program.model.symbol.SymbolTable;
+import ghidra.util.UniversalIdGenerator;
 
 public class ListingRangeServiceTest {
+
+    static {
+        UniversalIdGenerator.initialize();
+    }
 
     private static final GenericAddressSpace RAM =
         new GenericAddressSpace("ram", 16, AddressSpace.TYPE_RAM, 0);
@@ -91,6 +100,22 @@ public class ListingRangeServiceTest {
             units.get(1).getAsJsonObject().get("data_type").getAsString());
         assertEquals("/word[3]",
             units.get(1).getAsJsonObject().get("data_type_path").getAsString());
+    }
+
+    @Test
+    public void dataMetadataComesFromMockedDataTypeThroughPublicConstructor()
+            throws Exception {
+        Fixture fixture = fixture(0x1030, 0x1031);
+        fixture.data(0x1030, 2, "direct-word", "/types/direct-word", "1234h");
+
+        JsonObject data = ok(fixture.query(
+            "1030", "1031", 10, 256, 10, null))
+            .getAsJsonArray("units").get(0).getAsJsonObject();
+
+        assertEquals("direct-word", data.get("data_type").getAsString());
+        assertEquals(
+            "/types/direct-word", data.get("data_type_path").getAsString());
+        verify(fixture.data.get(0x1030)).getDataType();
     }
 
     @Test
@@ -264,12 +289,12 @@ public class ListingRangeServiceTest {
         assertFalse(unit.get("incoming_references_complete").getAsBoolean());
         assertEquals("6001", unit.get("incoming_references_next_address").getAsString());
         assertEquals(1, unit.get("incoming_references_next_offset").getAsInt());
-        assertEquals("6200", unit.getAsJsonArray("incoming_references").get(0)
+        assertEquals("6201", unit.getAsJsonArray("incoming_references").get(0)
             .getAsJsonObject().get("source").getAsString());
         Response handoff = fixture.xrefs.getXrefsTo(
             "6001", unit.get("incoming_references_next_offset").getAsInt(),
             1, "fixture");
-        assertTrue(handoff.toJson(), handoff.toJson().contains("6201"));
+        assertTrue(handoff.toJson(), handoff.toJson().contains("6200"));
         assertNotNull(unit.getAsJsonArray("incoming_references").get(0)
             .getAsJsonObject().get("id").getAsString());
 
@@ -304,7 +329,7 @@ public class ListingRangeServiceTest {
 
         assertEquals(List.of("a001", "a001", "a002"),
             strings(listed, "destination"));
-        assertEquals(List.of("b001", "b003", "b000"),
+        assertEquals(List.of("b003", "b001", "b004"),
             strings(listed, "source"));
         assertEquals("a002",
             unit.get("incoming_references_next_address").getAsString());
@@ -312,9 +337,9 @@ public class ListingRangeServiceTest {
 
         Response handoff = fixture.xrefs.getXrefsTo("a002", 1, 10, "fixture");
         String continuation = handoff.toJson();
-        assertFalse(continuation, continuation.contains("b000"));
+        assertFalse(continuation, continuation.contains("b004"));
+        assertTrue(continuation, continuation.contains("b000"));
         assertTrue(continuation, continuation.contains("b002"));
-        assertTrue(continuation, continuation.contains("b004"));
     }
 
     @Test
@@ -430,6 +455,10 @@ public class ListingRangeServiceTest {
 
         assertTrue(page.get("complete").getAsBoolean());
         assertEquals(1, page.getAsJsonArray("units").size());
+        assertEquals("undefined", page.getAsJsonArray("units").get(0)
+            .getAsJsonObject().get("kind").getAsString());
+        verify(fixture.listing, never())
+            .getCodeUnits(any(AddressSetView.class), eq(true));
         verify(fixture.listing, atMost(10)).getInstructionContaining(any(Address.class));
         verify(fixture.listing, atMost(10)).getDefinedDataContaining(any(Address.class));
         verify(fixture.symbols, atMost(10)).getSymbols(any(Address.class));
@@ -439,6 +468,92 @@ public class ListingRangeServiceTest {
         }
         verify(fixture.references, atMost(10)).hasReferencesFrom(any(Address.class));
         verify(fixture.references, atMost(10)).hasReferencesTo(any(Address.class));
+    }
+
+    @Test
+    public void syntheticUndefinedDataFromGetCodeUnitsIsNeverTreatedAsDefined()
+            throws Exception {
+        Fixture fixture = fixture(0x9500, 0x950f);
+        fixture.synthesizeUndefinedCodeUnits = true;
+
+        JsonObject page =
+            ok(fixture.query("9500", "950f", 100, 256, 100, null));
+
+        assertEquals(1, page.getAsJsonArray("units").size());
+        assertEquals("undefined", page.getAsJsonArray("units").get(0)
+            .getAsJsonObject().get("kind").getAsString());
+        assertRange(page.getAsJsonObject("returned_range"), "9500", "950f");
+        verify(fixture.listing, never())
+            .getCodeUnits(any(AddressSetView.class), eq(true));
+    }
+
+    @Test
+    public void firstPageDoesNotConsumeEntriesBeyondItsBudgetHorizon()
+            throws Exception {
+        Fixture fixture = fixture(0x1000, 0x3fff);
+        for (int index = 0; index < 32; index++) {
+            int base = 0x1200 + index * 0x20;
+            fixture.instruction(base, 1, "nop", "");
+            fixture.data(base + 2, 1, "byte", "/byte", "0");
+            fixture.label(
+                base + 4, "label_" + index, "Global",
+                SourceType.USER_DEFINED, true, false);
+            fixture.comment(base + 6, CommentType.EOL, "comment " + index);
+            fixture.outgoing(
+                base + 8, 0x4000 + index, RefType.DATA, SourceType.ANALYSIS, 0);
+            fixture.incoming(
+                0x5000 + index, base + 10,
+                RefType.READ, SourceType.ANALYSIS, 0);
+        }
+
+        JsonObject page =
+            ok(fixture.query("1000", "3fff", 1, 256, 3, null));
+
+        assertRange(page.getAsJsonObject("returned_range"), "1000", "10ff");
+        assertTrue(fixture.instructionIteratorNextCalls.get() <= 1);
+        assertTrue(fixture.dataIteratorNextCalls.get() <= 1);
+        assertTrue(fixture.symbolIteratorNextCalls.get() <= 1);
+        assertTrue(fixture.commentIteratorNextCalls.get() <= 1);
+        assertTrue(fixture.sourceIteratorNextCalls.get() <= 1);
+        assertTrue(fixture.destinationIteratorNextCalls.get() <= 1);
+    }
+
+    @Test
+    public void highFanInConsumesOnlyCapPlusOneStoredReferences()
+            throws Exception {
+        Fixture fixture = fixture(0x9600, 0x9600);
+        for (int index = 0; index < 100; index++) {
+            fixture.incoming(
+                0xa000 + index, 0x9600,
+                RefType.READ, SourceType.ANALYSIS, index);
+        }
+
+        JsonObject unit = ok(fixture.query("9600", "9600", 10, 256, 3, null))
+            .getAsJsonArray("units").get(0).getAsJsonObject();
+
+        assertFalse(unit.get("incoming_references_complete").getAsBoolean());
+        assertEquals(3, unit.getAsJsonArray("incoming_references").size());
+        assertEquals(4, fixture.incomingReferenceNextCalls.get());
+    }
+
+    @Test
+    public void xrefsToConsumesOnlyOffsetPlusLimitInSharedStoredOrder()
+            throws Exception {
+        Fixture fixture = fixture(0x9700, 0x9700);
+        for (int index = 0; index < 100; index++) {
+            fixture.incoming(
+                0xa000 + index, 0x9700,
+                RefType.READ, SourceType.ANALYSIS, index);
+        }
+
+        Response response = fixture.xrefs.getXrefsTo(
+            "9700", 5, 3, "fixture");
+
+        assertTrue(response.toJson(), response.toJson().contains("a005"));
+        assertTrue(response.toJson(), response.toJson().contains("a007"));
+        assertFalse(response.toJson(), response.toJson().contains("a004"));
+        assertFalse(response.toJson(), response.toJson().contains("a008"));
+        assertEquals(8, fixture.incomingReferenceNextCalls.get());
     }
 
     private static Fixture fixture(int start, int end) throws Exception {
@@ -539,8 +654,6 @@ public class ListingRangeServiceTest {
         final AddressFactory addresses = mock(AddressFactory.class);
         final Map<Integer, Instruction> instructions = new HashMap<>();
         final Map<Integer, Data> data = new HashMap<>();
-        final Map<Data, ListingRangeService.DataMetadata> dataMetadata =
-            new HashMap<>();
         final Map<Integer, List<Symbol>> labels = new HashMap<>();
         final Map<Integer, List<Symbol>> dynamicLabels = new HashMap<>();
         final Map<Integer, Map<CommentType, String>> comments = new HashMap<>();
@@ -558,6 +671,14 @@ public class ListingRangeServiceTest {
         boolean mutateAfterMemoryRead;
         final AtomicInteger modelAccesses = new AtomicInteger();
         final AtomicBoolean modificationReadWasFirst = new AtomicBoolean();
+        final AtomicInteger instructionIteratorNextCalls = new AtomicInteger();
+        final AtomicInteger dataIteratorNextCalls = new AtomicInteger();
+        final AtomicInteger symbolIteratorNextCalls = new AtomicInteger();
+        final AtomicInteger commentIteratorNextCalls = new AtomicInteger();
+        final AtomicInteger sourceIteratorNextCalls = new AtomicInteger();
+        final AtomicInteger destinationIteratorNextCalls = new AtomicInteger();
+        final AtomicInteger incomingReferenceNextCalls = new AtomicInteger();
+        boolean synthesizeUndefinedCodeUnits;
 
         Fixture(int start, int end) throws Exception {
             this(start, end, new RecordingThreadingStrategy());
@@ -635,8 +756,41 @@ public class ListingRangeServiceTest {
                     data.values().stream()
                         .filter(unit -> requested.contains(unit.getMinAddress()))
                         .forEach(units::add);
+                    if (synthesizeUndefinedCodeUnits) {
+                        var addresses = requested.getAddresses(true);
+                        while (addresses.hasNext()) {
+                            Address at = addresses.next();
+                            Data undefined = mock(Data.class);
+                            when(undefined.getMinAddress()).thenReturn(at);
+                            when(undefined.getMaxAddress()).thenReturn(at);
+                            when(undefined.getLength()).thenReturn(1);
+                            units.add(undefined);
+                        }
+                    }
                     units.sort(java.util.Comparator.comparing(CodeUnit::getMinAddress));
                     return codeUnitIterator(units);
+                });
+            when(listing.getInstructions(any(AddressSetView.class), eq(true)))
+                .thenAnswer(invocation -> {
+                    assertModelAccess();
+                    AddressSetView requested = invocation.getArgument(0);
+                    List<Instruction> ordered = instructions.values().stream()
+                        .filter(unit -> requested.contains(unit.getMinAddress()))
+                        .sorted(java.util.Comparator
+                            .comparing(Instruction::getMinAddress))
+                        .toList();
+                    return instructionIterator(
+                        ordered, instructionIteratorNextCalls);
+                });
+            when(listing.getDefinedData(any(AddressSetView.class), eq(true)))
+                .thenAnswer(invocation -> {
+                    assertModelAccess();
+                    AddressSetView requested = invocation.getArgument(0);
+                    List<Data> ordered = data.values().stream()
+                        .filter(unit -> requested.contains(unit.getMinAddress()))
+                        .sorted(java.util.Comparator.comparing(Data::getMinAddress))
+                        .toList();
+                    return dataIterator(ordered, dataIteratorNextCalls);
                 });
             when(symbols.getSymbols(any(Address.class))).thenAnswer(invocation -> {
                 assertModelAccess();
@@ -658,7 +812,7 @@ public class ListingRangeServiceTest {
                             .comparing(Symbol::getAddress)
                             .thenComparing(symbol -> symbol.getName()))
                         .toList();
-                    return symbolIterator(ordered);
+                    return symbolIterator(ordered, symbolIteratorNextCalls);
                 });
             when(symbols.hasSymbol(any(Address.class))).thenAnswer(invocation ->
                 !allLabelsAt(offset(invocation.getArgument(0))).isEmpty());
@@ -684,7 +838,7 @@ public class ListingRangeServiceTest {
                         .filter(requested::contains)
                         .sorted()
                         .toList();
-                    return addressIterator(ordered);
+                    return addressIterator(ordered, commentIteratorNextCalls);
                 });
             when(references.getReferencesFrom(any(Address.class))).thenAnswer(invocation -> {
                 assertModelAccess();
@@ -698,7 +852,8 @@ public class ListingRangeServiceTest {
             when(references.getReferencesTo(any(Address.class))).thenAnswer(invocation -> {
                 assertModelAccess();
                 return iterator(
-                    incoming.getOrDefault(offset(invocation.getArgument(0)), List.of()));
+                    incoming.getOrDefault(offset(invocation.getArgument(0)), List.of()),
+                    incomingReferenceNextCalls);
             });
             when(references.getReferenceSourceIterator(
                     any(AddressSetView.class), eq(true)))
@@ -709,7 +864,7 @@ public class ListingRangeServiceTest {
                         .map(ListingRangeServiceTest::addr)
                         .filter(requested::contains)
                         .sorted()
-                        .toList());
+                        .toList(), sourceIteratorNextCalls);
                 });
             when(references.getReferenceDestinationIterator(
                     any(AddressSetView.class), eq(true)))
@@ -720,15 +875,12 @@ public class ListingRangeServiceTest {
                         .map(ListingRangeServiceTest::addr)
                         .filter(requested::contains)
                         .sorted()
-                        .toList());
+                        .toList(), destinationIteratorNextCalls);
                 });
             when(provider.getCurrentProgram()).thenReturn(program);
             when(provider.getProgram("fixture")).thenReturn(program);
             when(provider.getAllOpenPrograms()).thenReturn(new Program[] { program });
-            service = new ListingRangeService(
-                provider, threading,
-                unit -> dataMetadata.getOrDefault(
-                    unit, new ListingRangeService.DataMetadata(null, null)));
+            service = new ListingRangeService(provider, threading);
             xrefs = new XrefCallGraphService(
                 provider, new com.xebyte.headless.DirectThreadingStrategy());
 
@@ -803,9 +955,15 @@ public class ListingRangeServiceTest {
             when(unit.getMaxAddress()).thenReturn(addr(start + length - 1));
             when(unit.getLength()).thenReturn(length);
             when(unit.getDefaultValueRepresentation()).thenReturn(representation);
+            DataType dataType = mock(
+                DataType.class,
+                invocation -> switch (invocation.getMethod().getName()) {
+                    case "getDisplayName" -> name;
+                    case "getPathName" -> path;
+                    default -> null;
+                });
+            when(unit.getDataType()).thenReturn(dataType);
             data.put(start, unit);
-            dataMetadata.put(
-                unit, new ListingRangeService.DataMetadata(name, path));
         }
 
         void label(int at, String name, String namespace, SourceType source,
@@ -889,11 +1047,15 @@ public class ListingRangeServiceTest {
             return (int) address.getOffset();
         }
 
-        private static ReferenceIterator iterator(List<Reference> refs) {
+        private static ReferenceIterator iterator(
+                List<Reference> refs, AtomicInteger nextCalls) {
             Iterator<Reference> delegate = refs.iterator();
             return new ReferenceIterator() {
                 @Override public boolean hasNext() { return delegate.hasNext(); }
-                @Override public Reference next() { return delegate.next(); }
+                @Override public Reference next() {
+                    nextCalls.incrementAndGet();
+                    return delegate.next();
+                }
                 @Override public Iterator<Reference> iterator() { return this; }
             };
         }
@@ -907,20 +1069,54 @@ public class ListingRangeServiceTest {
             };
         }
 
-        private static SymbolIterator symbolIterator(List<Symbol> symbols) {
+        private static InstructionIterator instructionIterator(
+                List<Instruction> instructions, AtomicInteger nextCalls) {
+            Iterator<Instruction> delegate = instructions.iterator();
+            return new InstructionIterator() {
+                @Override public boolean hasNext() { return delegate.hasNext(); }
+                @Override public Instruction next() {
+                    nextCalls.incrementAndGet();
+                    return delegate.next();
+                }
+                @Override public Iterator<Instruction> iterator() { return this; }
+            };
+        }
+
+        private static DataIterator dataIterator(
+                List<Data> data, AtomicInteger nextCalls) {
+            Iterator<Data> delegate = data.iterator();
+            return new DataIterator() {
+                @Override public boolean hasNext() { return delegate.hasNext(); }
+                @Override public Data next() {
+                    nextCalls.incrementAndGet();
+                    return delegate.next();
+                }
+                @Override public Iterator<Data> iterator() { return this; }
+            };
+        }
+
+        private static SymbolIterator symbolIterator(
+                List<Symbol> symbols, AtomicInteger nextCalls) {
             Iterator<Symbol> delegate = symbols.iterator();
             return new SymbolIterator() {
                 @Override public boolean hasNext() { return delegate.hasNext(); }
-                @Override public Symbol next() { return delegate.next(); }
+                @Override public Symbol next() {
+                    nextCalls.incrementAndGet();
+                    return delegate.next();
+                }
                 @Override public Iterator<Symbol> iterator() { return this; }
             };
         }
 
-        private static AddressIterator addressIterator(List<Address> addresses) {
+        private static AddressIterator addressIterator(
+                List<Address> addresses, AtomicInteger nextCalls) {
             Iterator<Address> delegate = addresses.iterator();
             return new AddressIterator() {
                 @Override public boolean hasNext() { return delegate.hasNext(); }
-                @Override public Address next() { return delegate.next(); }
+                @Override public Address next() {
+                    nextCalls.incrementAndGet();
+                    return delegate.next();
+                }
             };
         }
     }
