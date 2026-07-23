@@ -1606,6 +1606,11 @@ public class MemoryBlockServiceGhidraTest {
     @Test
     public void patchRejectsUnsupportedRangesAndBlockKindsBeforeMutation()
             throws Exception {
+        assertError(memory.patchBytes(
+            "0x4000", "22", null, true, null,
+            false, true, ""), "outside mapped program memory");
+        assertEquals(0, program.getMemory().getBlocks().length);
+
         var oneByte = builder.createMemory("one_byte", "0xffff", 1);
         builder.setBytes("0xffff", "11");
         builder.setWrite(oneByte, true);
