@@ -393,6 +393,18 @@ final class ListingClearCore {
         Set<String> conflicts = new LinkedHashSet<>();
 
         for (Function function : functions) {
+            Address[] directThunkAddresses =
+                function.getFunctionThunkAddresses(false);
+            if (directThunkAddresses != null) {
+                for (Address thunkAddress : directThunkAddresses) {
+                    conflicts.add(
+                        "removing function " + function.getName() + " at "
+                            + function.getEntryPoint()
+                            + " would also remove direct thunk at "
+                            + thunkAddress);
+                }
+            }
+
             Symbol functionSymbol = function.getSymbol();
             if (functionSymbol != null) {
                 for (Symbol child :

@@ -224,8 +224,13 @@ public final class ListingMutationService {
                     });
             }
             if (!dryRun && !execution.planned().plan().conflicts().isEmpty()) {
+                String conflictPrefix =
+                    request.effectiveFlags().remove_intersecting_functions()
+                        ? "Undefine range commit blocked by preflight conflicts: "
+                        : "Cannot clear instructions in functions unless "
+                            + "remove_intersecting_functions=true: ";
                 return Response.err(
-                    "Undefine range commit blocked by preflight conflicts: "
+                    conflictPrefix
                         + String.join("; ",
                             execution.planned().plan().conflicts()));
             }
