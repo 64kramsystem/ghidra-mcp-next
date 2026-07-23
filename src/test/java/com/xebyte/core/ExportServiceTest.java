@@ -20,6 +20,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.Before;
 import org.junit.Rule;
@@ -302,6 +303,32 @@ public class ExportServiceTest {
 
         assertEquals("old\n", Files.readString(destination));
         assertEquals("new\n", Files.readString(temporary));
+    }
+
+    @Test
+    public void noOverwritePublicationRetriesTempUnlinkAfterFirstFailure()
+            throws Exception {
+        Path outputDir = temporaryFolder.newFolder("unlink-retry").toPath();
+        Path temporary = Files.writeString(
+            outputDir.resolve(".listing.asm.tmp-fixed"), "complete\n");
+        Path destination = outputDir.resolve("listing.asm");
+        AtomicInteger attempts = new AtomicInteger();
+        ExportService.TempUnlink flakyUnlink = path -> {
+            if (attempts.incrementAndGet() == 1) {
+                throw new IOException("simulated first unlink failure");
+            }
+            Files.deleteIfExists(path);
+        };
+
+        ExportService.publish(temporary, destination, false,
+            (source, target) -> {
+                throw new AssertionError("atomic replace must not run");
+            },
+            flakyUnlink);
+
+        assertEquals(2, attempts.get());
+        assertEquals("complete\n", Files.readString(destination));
+        assertFalse(Files.exists(temporary));
     }
 
     @Test

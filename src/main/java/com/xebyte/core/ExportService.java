@@ -50,6 +50,11 @@ public final class ExportService {
     }
 
     @FunctionalInterface
+    interface TempUnlink {
+        void deleteIfExists(Path path) throws IOException;
+    }
+
+    @FunctionalInterface
     interface ResultFactory {
         Response.Ok build(Program program, Path destination, String requestedStart,
                 String requestedEnd, AddressSetView selection, long bytesWritten,
@@ -263,11 +268,18 @@ public final class ExportService {
             throws IOException {
         publish(temporary, destination, overwrite, (source, target) ->
             Files.move(source, target, StandardCopyOption.ATOMIC_MOVE,
-                StandardCopyOption.REPLACE_EXISTING));
+                StandardCopyOption.REPLACE_EXISTING),
+            path -> Files.deleteIfExists(path));
     }
 
     static void publish(Path temporary, Path destination, boolean overwrite,
             AtomicReplace atomicReplace) throws IOException {
+        publish(temporary, destination, overwrite, atomicReplace,
+            path -> Files.deleteIfExists(path));
+    }
+
+    static void publish(Path temporary, Path destination, boolean overwrite,
+            AtomicReplace atomicReplace, TempUnlink tempUnlink) throws IOException {
         if (!overwrite) {
             try {
                 // createLink is an atomic fail-if-present publication primitive:
@@ -280,11 +292,16 @@ public final class ExportService {
                     "safe no-overwrite publication is not supported by this filesystem", e);
             }
             try {
-                Files.deleteIfExists(temporary);
+                tempUnlink.deleteIfExists(temporary);
             }
-            catch (IOException ignored) {
-                // Destination already names the complete file. The outer finally
-                // makes one more best-effort attempt to unlink the temp name.
+            catch (IOException firstFailure) {
+                try {
+                    tempUnlink.deleteIfExists(temporary);
+                }
+                catch (IOException ignored) {
+                    // Destination already names the complete file. Cleanup is
+                    // best-effort and has now been attempted twice.
+                }
             }
             return;
         }
