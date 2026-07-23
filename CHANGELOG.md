@@ -8,6 +8,9 @@ Complete version history for the Ghidra MCP Server project.
 
 ### Added
 
+- Added `apply_data_regions` for atomic fixed data ranges, interleaved
+  records, and generic contiguous or split pointer tables with dry-run
+  previews, conflict preservation, validated references, and target labels.
 - Added canonical initialized memory management through
   `create_memory_block`, `update_memory_block`, `split_memory_block`,
   `move_memory_block`, and `write_memory_bytes`. The new contract supports

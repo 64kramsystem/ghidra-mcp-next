@@ -71,6 +71,8 @@ public class ServerManager {
             ProgramScriptService programScriptService = new ProgramScriptService(programProvider, ts);
             MemoryBlockService memoryBlockService =
                 new MemoryBlockService(programProvider, ts);
+            DataRegionService dataRegionService =
+                new DataRegionService(programProvider, ts);
             EmulationService emulationService = new EmulationService(programProvider, ts);
             ExportService exportService = new ExportService(programProvider);
             FlowDisassemblyService flowDisassemblyService =
@@ -86,7 +88,7 @@ public class ServerManager {
                 listingService, functionService, commentService, symbolLabelService,
                 xrefCallGraphService, dataTypeService, analysisService,
                 binaryComparisonService, malwareSecurityService, programScriptService,
-                memoryBlockService, emulationService, exportService, flowDisassemblyService,
+                memoryBlockService, dataRegionService, emulationService, exportService, flowDisassemblyService,
                 listingRangeService, listingMutationService,
                 debuggerService, guiProjectService);
 

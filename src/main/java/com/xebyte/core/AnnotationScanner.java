@@ -8,6 +8,9 @@ import java.util.*;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
+import com.google.gson.JsonElement;
+import com.google.gson.JsonParser;
+
 import ghidra.program.model.listing.Program;
 
 /**
@@ -573,6 +576,8 @@ public class AnnotationScanner {
         List<ParamDescriptor> params = new ArrayList<>();
         for (ParamBinding binding : bindings) {
             if (binding == null) continue;
+            String schemaFragment =
+                validateSchemaFragment(binding.param);
             params.add(new ParamDescriptor(
                 binding.param.value(),
                 jsonType(
@@ -584,11 +589,33 @@ public class AnnotationScanner {
                     || !NO_DEFAULT.equals(binding.param.defaultValue()),
                 NO_DEFAULT.equals(binding.param.defaultValue()) ? null : binding.param.defaultValue(),
                 binding.param.description(),
-                binding.param.paramType()    // NEW
+                binding.param.paramType(),
+                schemaFragment
             ));
         }
         return new ToolDescriptor(tool.path(), tool.method(), tool.description(),
             category, categoryDescription, tool.supportsDryRun(), params);
+    }
+
+    private static String validateSchemaFragment(Param param) {
+        String fragment = param.schemaFragment();
+        if (fragment == null || fragment.isBlank()) {
+            return "";
+        }
+        try {
+            JsonElement parsed = JsonParser.parseString(fragment);
+            if (!parsed.isJsonObject()) {
+                throw new IllegalArgumentException(
+                    "schemaFragment for '" + param.value()
+                        + "' must be a JSON object");
+            }
+            return parsed.toString();
+        }
+        catch (RuntimeException error) {
+            throw new IllegalArgumentException(
+                "Invalid schemaFragment for parameter '"
+                    + param.value() + "'", error);
+        }
     }
 
     private static String jsonType(
@@ -643,7 +670,15 @@ public class AnnotationScanner {
 
     /** Describes a tool parameter for schema generation. */
     public record ParamDescriptor(String name, String type, String source,
-            boolean optional, String defaultValue, String description, String paramType) {
+            boolean optional, String defaultValue, String description,
+            String paramType, String schema) {
+        public ParamDescriptor(
+                String name, String type, String source,
+                boolean optional, String defaultValue, String description,
+                String paramType) {
+            this(name, type, source, optional, defaultValue, description,
+                paramType, "");
+        }
 
         /** Serialize to JSON. */
         public String toJson() {
@@ -663,6 +698,14 @@ public class AnnotationScanner {
             }
             if (paramType != null && !paramType.isEmpty()) {
                 sb.append(", \"param_type\": ").append(jsonStr(paramType));
+            }
+            if (schema != null && !schema.isBlank()) {
+                String trimmed = schema.trim();
+                if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) {
+                    throw new IllegalArgumentException(
+                        "Param schema must be a JSON object fragment");
+                }
+                sb.append(", \"schema\": ").append(trimmed);
             }
             sb.append("}");
             return sb.toString();

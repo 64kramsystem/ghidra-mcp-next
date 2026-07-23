@@ -106,7 +106,7 @@ class VersionInfo {
     // scanner-driven endpoints (e.g., headless usage that imports this class
     // without running the GUI activation path). The live value is set via
     // setEndpointCount() once the scanner has enumerated everything.
-    private static volatile int ENDPOINT_COUNT = 242;
+    private static volatile int ENDPOINT_COUNT = 243;
 
     static {
         // v5.4.2: loading "/version.properties" from the classpath root was
@@ -175,7 +175,7 @@ class VersionInfo {
     category = PluginCategoryNames.COMMON,
     shortDescription = "GhidraMCP - HTTP server plugin",
     description = "GhidraMCP - Starts an embedded HTTP server to expose program data via REST API and MCP bridge. " +
-                  "Provides 242 endpoints for reverse engineering automation. " +
+                  "Provides 243 endpoints for reverse engineering automation. " +
                   "Port configurable via Tool Options. " +
                   "Features: function analysis, decompilation, symbol management, cross-references, label operations, " +
                   "high-performance batch data analysis, field-level structure analysis, advanced call graph analysis, " +
@@ -268,6 +268,7 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
     private final com.xebyte.core.MalwareSecurityService malwareSecurityService;
     private final com.xebyte.core.ProgramScriptService programScriptService;
     private final com.xebyte.core.MemoryBlockService memoryBlockService;
+    private final com.xebyte.core.DataRegionService dataRegionService;
     private final com.xebyte.core.EmulationService emulationService;
     private final com.xebyte.core.ExportService exportService;
     private final com.xebyte.core.FlowDisassemblyService flowDisassemblyService;
@@ -294,6 +295,8 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
         this.programScriptService = new com.xebyte.core.ProgramScriptService(programProvider, threadingStrategy);
         this.memoryBlockService =
             new com.xebyte.core.MemoryBlockService(programProvider, threadingStrategy);
+        this.dataRegionService =
+            new com.xebyte.core.DataRegionService(programProvider, threadingStrategy);
         this.emulationService = new com.xebyte.core.EmulationService(programProvider, threadingStrategy);
         this.exportService = new com.xebyte.core.ExportService(programProvider);
         this.flowDisassemblyService =
@@ -564,7 +567,7 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
             listingService, functionService, commentService, symbolLabelService,
             xrefCallGraphService, dataTypeService, analysisService,
             binaryComparisonService, malwareSecurityService, programScriptService,
-            memoryBlockService, emulationService, exportService, flowDisassemblyService,
+            memoryBlockService, dataRegionService, emulationService, exportService, flowDisassemblyService,
             listingRangeService, listingMutationService,
             debuggerService, guiProjectService);
 

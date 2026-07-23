@@ -103,6 +103,59 @@ class TestSchemaJsonFormat(unittest.TestCase):
         tool = mcp._tool_manager._tools.get("schema_test_desc")
         self.assertIsNotNone(tool)
 
+    def test_nested_region_schema_is_preserved(self):
+        from bridge_mcp_ghidra import _parse_schema
+        fragment = {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1024,
+            "items": {
+                "oneOf": [
+                    {
+                        "type": "object",
+                        "properties": {
+                            "kind": {"const": "contiguous"},
+                            "pointers": {
+                                "type": "object",
+                                "properties": {
+                                    "layout": {
+                                        "enum": [
+                                            "little_endian_words",
+                                            "big_endian_words",
+                                        ]
+                                    }
+                                },
+                            },
+                        },
+                        "required": ["kind"],
+                        "additionalProperties": False,
+                    }
+                ]
+            },
+        }
+        parsed = _parse_schema(
+            {
+                "tools": [
+                    {
+                        "path": "/apply_data_regions",
+                        "method": "POST",
+                        "params": [
+                            {
+                                "name": "regions",
+                                "source": "body",
+                                "required": True,
+                                "schema": fragment,
+                            }
+                        ],
+                    }
+                ]
+            }
+        )[0]
+        self.assertEqual(
+            parsed["input_schema"]["properties"]["regions"],
+            {**fragment, "source": "body"},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
