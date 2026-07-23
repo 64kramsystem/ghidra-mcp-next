@@ -18,6 +18,7 @@ import ghidra.program.database.ProgramBuilder;
 import ghidra.program.database.ProgramDB;
 import ghidra.program.model.listing.CommentType;
 import ghidra.program.model.listing.Program;
+import ghidra.program.model.mem.MemoryBlock;
 import ghidra.program.model.symbol.Equate;
 import ghidra.program.model.symbol.Namespace;
 import ghidra.program.model.symbol.SourceType;
@@ -336,6 +337,136 @@ public class SymbolProfileServiceGhidraTest {
                 .get(0).getAsJsonObject()
                 .get("action").getAsString());
         assertNull(program.getMemory().getBlock("optional"));
+    }
+
+    @Test
+    public void disabledC64TemplateDoesNotConflictWithFullRam()
+            throws Exception {
+        builder.dispose();
+        builder = new ProgramBuilder(
+            "symbol-profile-c64",
+            "6502:LE:16:default",
+            "default",
+            this);
+        program = builder.getProgram();
+        builder.createMemory("full-ram", "0x0000", 0x10000);
+        HeadlessProgramProvider provider = new HeadlessProgramProvider();
+        provider.setCurrentProgram(program);
+        service = new SymbolProfileService(
+            provider, new DirectThreadingStrategy());
+        Object profile = JsonParser.parseString("""
+            {"schema_version":1,"id":"c64-shaped","version":"1",
+             "symbols":[
+               {"address":"0xd011","name":"VIC_CONTROL_1"},
+               {"address":"0xffd5","name":"KERNAL_LOAD"}],
+             "memory_blocks":[{
+               "name":"vic-register-template",
+               "start":"0xd000",
+               "length":1024,
+               "fill":0}]}
+            """);
+
+        JsonObject applied = ok(service.applySymbolProfile(
+            profile, false, "error", false, false, program.getName()));
+
+        assertTrue(applied.get("committed").getAsBoolean());
+        assertEquals(
+            "disabled",
+            applied.getAsJsonArray("memory_blocks")
+                .get(0).getAsJsonObject()
+                .get("action").getAsString());
+        assertNotNull(program.getSymbolTable().getGlobalSymbol(
+            "VIC_CONTROL_1", builder.addr("0xd011")));
+        assertNotNull(program.getSymbolTable().getGlobalSymbol(
+            "KERNAL_LOAD", builder.addr("0xffd5")));
+        assertNull(program.getMemory().getBlock(
+            "vic-register-template"));
+
+        JsonObject validated = ok(service.validateSymbolProfile(
+            profile, program.getName()));
+        assertFalse(validated.get("valid").getAsBoolean());
+        assertTrue(validated.toString().contains("overlap"));
+
+        Response enabled = service.applySymbolProfile(
+            profile, false, "error", false, true, program.getName());
+        assertTrue(enabled.toJson(), enabled instanceof Response.Err);
+        assertTrue(enabled.toJson().contains("overlap"));
+        assertNull(program.getMemory().getBlock(
+            "vic-register-template"));
+    }
+
+    @Test
+    public void ordinaryBlockIdentityIncludesItsAddressSpace()
+            throws Exception {
+        MemoryBlock other =
+            builder.createMemory("same-name", "OTHER:1000", 0x10);
+        int transaction =
+            program.startTransaction("normalize OTHER block");
+        try {
+            other.setPermissions(true, false, false);
+            other.setVolatile(false);
+            other.setComment("");
+        }
+        finally {
+            program.endTransaction(transaction, true);
+        }
+        Object profile = JsonParser.parseString("""
+            {"schema_version":1,"id":"space-identity","version":"1",
+             "memory_blocks":[{
+               "name":"same-name",
+               "start":"0x1000",
+               "length":16,
+               "fill":0}]}
+            """);
+
+        Response response = service.applySymbolProfile(
+            profile, false, "error", false, true, program.getName());
+
+        assertTrue(response.toJson(), response instanceof Response.Err);
+        assertTrue(response.toJson().contains(
+            "already used by a different block"));
+        assertEquals(
+            "OTHER",
+            program.getMemory().getBlock("same-name")
+                .getStart().getAddressSpace().getName());
+    }
+
+    @Test
+    public void keptEquateDefinitionKeepsEveryChildApplication()
+            throws Exception {
+        int transaction = program.startTransaction("seed parent equate");
+        try {
+            program.getEquateTable().createEquate("MASK", 1);
+        }
+        finally {
+            program.endTransaction(transaction, true);
+        }
+        Object profile = JsonParser.parseString("""
+            {"schema_version":1,"id":"keep-parent-equate","version":"1",
+             "equates":[{
+               "name":"MASK",
+               "value":128,
+               "applications":[{
+                 "address":"0x1000",
+                 "operand_index":0,
+                 "scalar_index":0}]}]}
+            """);
+
+        JsonObject result = ok(service.applySymbolProfile(
+            profile, false, "keep", false, false, program.getName()));
+
+        JsonObject equate =
+            result.getAsJsonArray("equates").get(0).getAsJsonObject();
+        JsonObject application =
+            equate.getAsJsonArray("applications")
+                .get(0).getAsJsonObject();
+        assertEquals("keep", equate.get("action").getAsString());
+        assertEquals("keep", application.get("action").getAsString());
+        assertNotNull(application.get("conflict"));
+        assertEquals(
+            1, program.getEquateTable().getEquate("MASK").getValue());
+        assertNull(program.getEquateTable().getEquate(
+            builder.addr("0x1000"), 0, 0x80));
     }
 
     @Test
