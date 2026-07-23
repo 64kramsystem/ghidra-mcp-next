@@ -478,16 +478,6 @@ public class GhidraMCPHeadlessServer implements GhidraLaunchable {
             sendResponse(exchange, endpointHandler.moveFolder(params.get("sourcePath"), params.get("destPath")));
         });
 
-        // --- Analysis Control ---
-
-        safeContext("/configure_analyzer", exchange -> {
-            Map<String, String> params = parsePostParams(exchange);
-            Boolean enabled = params.containsKey("enabled") ?
-                parseBooleanOrDefault(params.get("enabled"), true) : null;
-            sendResponse(exchange, endpointHandler.configureAnalyzer(
-                params.get("program"), params.get("name"), enabled));
-        });
-
         // --- Batch Variable Types (headless-specific parsing) ---
 
         safeContext("/batch_set_variable_types", exchange -> {
@@ -508,8 +498,8 @@ public class GhidraMCPHeadlessServer implements GhidraLaunchable {
 
     private int countEndpoints() {
         // registeredEndpointCount = annotation-scanned (shared services + HeadlessManagementService)
-        // 14 = infrastructure + schema + remaining manual createContext registrations
-        return registeredEndpointCount + 14;
+        // 13 = infrastructure + schema + remaining manual createContext registrations
+        return registeredEndpointCount + 13;
     }
 
     public void stop() {

@@ -1802,50 +1802,6 @@ public class HeadlessEndpointHandler {
     }
 
     // ==========================================================================
-    // ANALYSIS CONTROL ENDPOINTS
-    // ==========================================================================
-
-    public String listAnalyzers(String programName) {
-        Program program = getProgram(programName);
-        if (program == null) return getProgramError(programName);
-        if (!(programProvider instanceof HeadlessProgramProvider)) {
-            return "{\"error\": \"Analyzer listing not supported in this mode\"}";
-        }
-        HeadlessProgramProvider hpp = (HeadlessProgramProvider) programProvider;
-        try {
-            List<HeadlessProgramProvider.AnalyzerInfo> analyzers = hpp.listAnalyzers(program);
-            StringBuilder sb = new StringBuilder("{\"analyzers\":[");
-            for (int i = 0; i < analyzers.size(); i++) {
-                if (i > 0) sb.append(",");
-                HeadlessProgramProvider.AnalyzerInfo a = analyzers.get(i);
-                sb.append("{\"name\":\"").append(escapeJson(a.name)).append("\",");
-                sb.append("\"description\":\"").append(escapeJson(a.description)).append("\",");
-                sb.append("\"enabled\":").append(a.enabled).append(",");
-                sb.append("\"priority\":").append(a.priority).append("}");
-            }
-            sb.append("],\"count\":").append(analyzers.size()).append("}");
-            return sb.toString();
-        } catch (Exception e) {
-            return "{\"error\": \"" + escapeJson(e.getMessage()) + "\"}";
-        }
-    }
-
-    public String configureAnalyzer(String programName, String analyzerName, Boolean enabled) {
-        Program program = getProgram(programName);
-        if (program == null) return getProgramError(programName);
-        if (!(programProvider instanceof HeadlessProgramProvider)) {
-            return "{\"error\": \"Analyzer configuration not supported in this mode\"}";
-        }
-        HeadlessProgramProvider hpp = (HeadlessProgramProvider) programProvider;
-        try {
-            hpp.configureAnalyzer(program, analyzerName, enabled);
-            return "{\"success\": true, \"analyzer\": \"" + escapeJson(analyzerName) + "\"}";
-        } catch (Exception e) {
-            return "{\"error\": \"" + escapeJson(e.getMessage()) + "\"}";
-        }
-    }
-
-    // ==========================================================================
     // UTILITY ENDPOINTS
     // ==========================================================================
 

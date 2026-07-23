@@ -281,6 +281,139 @@ class TestEndpointsJson(unittest.TestCase):
         self.assertIn("dry_run", signature.parameters)
 
     @unittest.skipUnless(ENDPOINTS_JSON.exists(), "endpoints.json not found")
+    def test_analyzer_configuration_contract_and_analysis_group_loading(self):
+        data = json.loads(ENDPOINTS_JSON.read_text())
+        endpoints = {
+            ep["path"]: ep
+            for ep in data.get("endpoints", [])
+            if ep["path"]
+            in {
+                "/configure_analyzer",
+                "/configure_analyzers",
+                "/get_analyzer_configuration",
+            }
+        }
+        self.assertEqual(
+            set(endpoints),
+            {
+                "/configure_analyzer",
+                "/configure_analyzers",
+                "/get_analyzer_configuration",
+            },
+        )
+        self.assertEqual(
+            endpoints["/configure_analyzer"]["params"],
+            ["analyzer", "enabled", "program"],
+        )
+        self.assertEqual(
+            endpoints["/configure_analyzers"]["params"],
+            ["changes", "dry_run", "program"],
+        )
+        self.assertIs(
+            endpoints["/configure_analyzers"]["supports_dry_run"], False
+        )
+        self.assertEqual(
+            endpoints["/get_analyzer_configuration"]["params"], ["program"]
+        )
+        self.assertTrue(
+            all(ep["category"] == "analysis" for ep in endpoints.values())
+        )
+
+        import bridge_mcp_ghidra as bridge
+
+        raw_schema = {
+            "tools": [
+                {
+                    "path": "/configure_analyzer",
+                    "method": "POST",
+                    "category": "analysis",
+                    "supports_dry_run": False,
+                    "params": [
+                        {
+                            "name": "analyzer",
+                            "type": "string",
+                            "source": "body",
+                            "required": True,
+                        },
+                        {
+                            "name": "enabled",
+                            "type": "boolean",
+                            "source": "body",
+                            "required": True,
+                        },
+                        {
+                            "name": "program",
+                            "type": "string",
+                            "source": "query",
+                            "required": False,
+                        },
+                    ],
+                },
+                {
+                    "path": "/configure_analyzers",
+                    "method": "POST",
+                    "category": "analysis",
+                    "supports_dry_run": False,
+                    "params": [
+                        {
+                            "name": "changes",
+                            "type": "json",
+                            "source": "body",
+                            "required": True,
+                        },
+                        {
+                            "name": "dry_run",
+                            "type": "boolean",
+                            "source": "body",
+                            "required": False,
+                            "default": "true",
+                        },
+                        {
+                            "name": "program",
+                            "type": "string",
+                            "source": "query",
+                            "required": False,
+                        },
+                    ],
+                },
+                {
+                    "path": "/get_analyzer_configuration",
+                    "method": "GET",
+                    "category": "analysis",
+                    "params": [
+                        {
+                            "name": "program",
+                            "type": "string",
+                            "source": "query",
+                            "required": False,
+                        }
+                    ],
+                },
+            ]
+        }
+        try:
+            parsed = bridge._parse_schema(raw_schema)
+            self.assertEqual(
+                bridge.register_tools_from_schema(parsed, groups={"analysis"}), 3
+            )
+            self.assertTrue(
+                {
+                    "configure_analyzer",
+                    "configure_analyzers",
+                    "get_analyzer_configuration",
+                }.issubset(bridge.state._dynamic_tool_names)
+            )
+            handler = bridge.mcp._tool_manager._tools[
+                "configure_analyzers"
+            ].fn
+            self.assertEqual(
+                list(inspect.signature(handler).parameters),
+                ["changes", "dry_run", "program"],
+            )
+        finally:
+            bridge.register_tools_from_schema([])
+
+    @unittest.skipUnless(ENDPOINTS_JSON.exists(), "endpoints.json not found")
     def test_catalog_tool_names_are_capi_safe_after_bridge_parsing(self):
         """The generated endpoint catalog should produce valid exposed MCP names."""
         from bridge_mcp_ghidra import _parse_schema

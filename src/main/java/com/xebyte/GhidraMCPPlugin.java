@@ -106,7 +106,7 @@ class VersionInfo {
     // scanner-driven endpoints (e.g., headless usage that imports this class
     // without running the GUI activation path). The live value is set via
     // setEndpointCount() once the scanner has enumerated everything.
-    private static volatile int ENDPOINT_COUNT = 236;
+    private static volatile int ENDPOINT_COUNT = 238;
 
     static {
         // v5.4.2: loading "/version.properties" from the classpath root was
@@ -175,7 +175,7 @@ class VersionInfo {
     category = PluginCategoryNames.COMMON,
     shortDescription = "GhidraMCP - HTTP server plugin",
     description = "GhidraMCP - Starts an embedded HTTP server to expose program data via REST API and MCP bridge. " +
-                  "Provides 236 endpoints for reverse engineering automation. " +
+                  "Provides 238 endpoints for reverse engineering automation. " +
                   "Port configurable via Tool Options. " +
                   "Features: function analysis, decompilation, symbol management, cross-references, label operations, " +
                   "high-performance batch data analysis, field-level structure analysis, advanced call graph analysis, " +

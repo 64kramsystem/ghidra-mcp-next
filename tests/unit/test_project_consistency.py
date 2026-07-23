@@ -231,7 +231,6 @@ class TestJavaArchitecture(unittest.TestCase):
             "/tool/running_tools",
         }
         headless_only_expected = {
-            "/configure_analyzer",
             "/delete_project",
             "/health",
             "/list_projects",

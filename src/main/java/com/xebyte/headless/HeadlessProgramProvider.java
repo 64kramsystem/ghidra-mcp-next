@@ -1562,68 +1562,6 @@ public class HeadlessProgramProvider implements ProgramProvider {
     }
 
     /**
-     * List available analyzers for a program.
-     *
-     * @param program The program to list analyzers for
-     * @return List of AnalyzerInfo objects describing each analyzer
-     */
-    public List<AnalyzerInfo> listAnalyzers(Program program) {
-        List<AnalyzerInfo> result = new ArrayList<>();
-        if (program == null) return result;
-        try {
-            ghidra.framework.options.Options opts = program.getOptions(Program.ANALYSIS_PROPERTIES);
-            List<String> names = opts.getOptionNames();
-            for (String name : names) {
-                try {
-                    boolean enabled = opts.getBoolean(name, false);
-                    result.add(new AnalyzerInfo(name, "", enabled, ""));
-                } catch (Exception ignored) {
-                    // Option exists but is not a boolean (e.g. string option)
-                }
-            }
-        } catch (Exception e) {
-            Msg.error(this, "Error listing analyzers: " + e.getMessage(), e);
-        }
-        return result;
-    }
-
-    /**
-     * Enable or disable an analyzer for a program.
-     *
-     * @param program The program to configure
-     * @param analyzerName The name of the analyzer
-     * @param enabled Whether to enable or disable the analyzer
-     * @return true if the analyzer was configured successfully
-     */
-    public boolean configureAnalyzer(Program program, String analyzerName, Boolean enabled) {
-        if (program == null || analyzerName == null) return false;
-        try {
-            ghidra.framework.options.Options opts = program.getOptions(Program.ANALYSIS_PROPERTIES);
-            if (!opts.contains(analyzerName)) {
-                Msg.error(this, "Analyzer not found: " + analyzerName);
-                return false;
-            }
-            int tx = program.startTransaction("Configure Analyzer");
-            boolean txSuccess = false;
-            try {
-                if (enabled != null) {
-                    opts.setBoolean(analyzerName, enabled);
-                }
-                txSuccess = true;
-                Msg.info(this, "Configured analyzer: " + analyzerName + " enabled=" + enabled);
-                return true;
-            } catch (Exception e) {
-                throw e;
-            } finally {
-                program.endTransaction(tx, txSuccess);
-            }
-        } catch (Exception e) {
-            Msg.error(this, "Error configuring analyzer: " + e.getMessage(), e);
-            return false;
-        }
-    }
-
-    /**
      * Information about a Ghidra project found on disk.
      */
     public static class ProjectInfo {
@@ -1645,23 +1583,6 @@ public class HeadlessProgramProvider implements ProgramProvider {
             if (children != null) for (java.io.File child : children) deleteRecursive(child);
         }
         f.delete();
-    }
-
-    /**
-     * Information about a Ghidra analyzer.
-     */
-    public static class AnalyzerInfo {
-        public final String name;
-        public final String description;
-        public final boolean enabled;
-        public final String priority;
-
-        public AnalyzerInfo(String name, String description, boolean enabled, String priority) {
-            this.name = name;
-            this.description = description;
-            this.enabled = enabled;
-            this.priority = priority;
-        }
     }
 
     /**

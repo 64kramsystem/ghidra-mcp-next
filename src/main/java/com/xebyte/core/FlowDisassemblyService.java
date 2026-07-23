@@ -114,9 +114,22 @@ public final class FlowDisassemblyService {
     public FlowDisassemblyService(
             ProgramProvider programProvider,
             ThreadingStrategy threadingStrategy) {
+        this(
+            programProvider,
+            threadingStrategy,
+            FlowDisassemblyService::submitAnalysis);
+    }
+
+    FlowDisassemblyService(
+            ProgramProvider programProvider,
+            ThreadingStrategy threadingStrategy,
+            AnalysisQueue analysisQueue) {
         if (programProvider == null || threadingStrategy == null) {
             throw new IllegalArgumentException(
                 "programProvider and threadingStrategy are required");
+        }
+        if (analysisQueue == null) {
+            throw new IllegalArgumentException("analysisQueue is required");
         }
         this.programProvider = programProvider;
         this.threadingStrategy = threadingStrategy;
@@ -124,7 +137,7 @@ public final class FlowDisassemblyService {
         this.planningEngine = this::plan;
         this.stockDisassembler = FlowDisassemblyService::disassembleStock;
         this.mutationEngine = this::commitPlan;
-        this.analysisQueue = FlowDisassemblyService::submitAnalysis;
+        this.analysisQueue = analysisQueue;
     }
 
     FlowDisassemblyService(
