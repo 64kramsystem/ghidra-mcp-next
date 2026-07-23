@@ -289,6 +289,48 @@
 
     <!-- Build Profiles -->
     <profiles>
+        <!-- Opt-in runtime support for ProgramBuilder-backed live fixtures.
+             Activate with -Dghidra.test.install.dir=/path/to/ghidra.  These
+             jars are shipped by Ghidra but are not transitive dependencies of
+             the locally installed module POMs.  Keeping them on Surefire's
+             runtime path avoids changing normal compilation or CI behavior. -->
+        <profile>
+            <id>ghidra-live-fixtures</id>
+            <activation>
+                <property>
+                    <name>ghidra.test.install.dir</name>
+                </property>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <configuration>
+                            <additionalClasspathElements>
+                                <!-- Application logging bootstrap. -->
+                                <additionalClasspathElement>${ghidra.test.install.dir}/Ghidra/Framework/Generic/lib/log4j-api-2.25.4.jar</additionalClasspathElement>
+                                <additionalClasspathElement>${ghidra.test.install.dir}/Ghidra/Framework/Generic/lib/log4j-core-2.25.4.jar</additionalClasspathElement>
+                                <!-- Generic collections and XML support loaded by ProgramDB. -->
+                                <additionalClasspathElement>${ghidra.test.install.dir}/Ghidra/Framework/Generic/lib/commons-collections4-4.1.jar</additionalClasspathElement>
+                                <additionalClasspathElement>${ghidra.test.install.dir}/Ghidra/Framework/Generic/lib/guava-32.1.3-jre.jar</additionalClasspathElement>
+                                <additionalClasspathElement>${ghidra.test.install.dir}/Ghidra/Framework/Generic/lib/jdom2-2.0.6.1.jar</additionalClasspathElement>
+                                <!-- Runtime-only framework modules reached during language initialization. -->
+                                <additionalClasspathElement>${ghidra.test.install.dir}/Ghidra/Framework/Graph/lib/Graph.jar</additionalClasspathElement>
+                                <additionalClasspathElement>${ghidra.test.install.dir}/Ghidra/Framework/Help/lib/javahelp-2.0.05.jar</additionalClasspathElement>
+                                <!-- SLEIGH language-schema validation runtime. -->
+                                <additionalClasspathElement>${ghidra.test.install.dir}/Ghidra/Framework/SoftwareModeling/lib/isorelax-20050913.jar</additionalClasspathElement>
+                                <additionalClasspathElement>${ghidra.test.install.dir}/Ghidra/Framework/SoftwareModeling/lib/msv-20050913.jar</additionalClasspathElement>
+                                <additionalClasspathElement>${ghidra.test.install.dir}/Ghidra/Framework/SoftwareModeling/lib/xsdlib-20050913.jar</additionalClasspathElement>
+                                <additionalClasspathElement>${ghidra.test.install.dir}/Ghidra/Framework/SoftwareModeling/lib/relaxngDatatype-20050913.jar</additionalClasspathElement>
+                                <additionalClasspathElement>${ghidra.test.install.dir}/Ghidra/Framework/SoftwareModeling/lib/antlr-runtime-3.5.2.jar</additionalClasspathElement>
+                            </additionalClasspathElements>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
         <!-- Headless Server Profile -->
         <profile>
             <id>headless</id>

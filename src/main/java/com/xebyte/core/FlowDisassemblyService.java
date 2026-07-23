@@ -57,6 +57,15 @@ public final class FlowDisassemblyService {
     }
 
     @FunctionalInterface
+    interface StockDisassembler {
+        AddressSet disassemble(
+                Program program,
+                AddressSetView starts,
+                AddressSetView restriction,
+                boolean followFlow) throws Exception;
+    }
+
+    @FunctionalInterface
     interface AnalysisQueue {
         AnalysisSubmission submit(Program program, AddressSetView created) throws Exception;
     }
@@ -89,6 +98,7 @@ public final class FlowDisassemblyService {
     private final ThreadingStrategy threadingStrategy;
     private final ListingClearCore clearCore;
     private final PlanningEngine planningEngine;
+    private final StockDisassembler stockDisassembler;
     private final MutationEngine mutationEngine;
     private final AnalysisQueue analysisQueue;
 
@@ -103,6 +113,7 @@ public final class FlowDisassemblyService {
         this.threadingStrategy = threadingStrategy;
         this.clearCore = new ListingClearCore();
         this.planningEngine = this::plan;
+        this.stockDisassembler = FlowDisassemblyService::disassembleStock;
         this.mutationEngine = this::commitPlan;
         this.analysisQueue = FlowDisassemblyService::submitAnalysis;
     }
@@ -121,7 +132,27 @@ public final class FlowDisassemblyService {
         this.threadingStrategy = threadingStrategy;
         this.clearCore = new ListingClearCore();
         this.planningEngine = planningEngine;
+        this.stockDisassembler = FlowDisassemblyService::disassembleStock;
         this.mutationEngine = mutationEngine;
+        this.analysisQueue = analysisQueue;
+    }
+
+    FlowDisassemblyService(
+            ProgramProvider programProvider,
+            ThreadingStrategy threadingStrategy,
+            PlanningEngine planningEngine,
+            StockDisassembler stockDisassembler,
+            AnalysisQueue analysisQueue) {
+        if (programProvider == null || threadingStrategy == null ||
+            planningEngine == null || stockDisassembler == null || analysisQueue == null) {
+            throw new IllegalArgumentException("service collaborators are required");
+        }
+        this.programProvider = programProvider;
+        this.threadingStrategy = threadingStrategy;
+        this.clearCore = new ListingClearCore();
+        this.planningEngine = planningEngine;
+        this.stockDisassembler = stockDisassembler;
+        this.mutationEngine = this::commitPlan;
         this.analysisQueue = analysisQueue;
     }
 
@@ -292,7 +323,7 @@ public final class FlowDisassemblyService {
             FlowType flowType) {
 
         DecodedInstruction {
-            flows = flows == null ? List.of() : List.copyOf(flows);
+            flows = normalizeAddresses(flows);
         }
     }
 
@@ -375,7 +406,7 @@ public final class FlowDisassemblyService {
             FlowType flowType) {
 
         InstructionRecord {
-            flows = List.copyOf(flows);
+            flows = normalizeAddresses(flows);
         }
     }
 
@@ -490,7 +521,7 @@ public final class FlowDisassemblyService {
             }
 
             Map<Address, InstructionRecord> instructions = new LinkedHashMap<>();
-            Set<Address> processed = new TreeSet<>(ADDRESS_ORDER);
+            Set<QueueItem> processed = new TreeSet<>(QUEUE_ORDER);
             Set<Address> callTargets = new TreeSet<>(ADDRESS_ORDER);
             Set<Address> branchTargets = new TreeSet<>(ADDRESS_ORDER);
             List<UnresolvedFlow> unresolved = new ArrayList<>();
@@ -503,7 +534,7 @@ public final class FlowDisassemblyService {
 
             while (!queue.isEmpty()) {
                 QueueItem item = queue.remove();
-                if (!processed.add(item.address())) {
+                if (!processed.add(item) || instructions.containsKey(item.address())) {
                     continue;
                 }
                 if (instructions.size() >= request.maxInstructions()) {
@@ -535,25 +566,33 @@ public final class FlowDisassemblyService {
                 }
 
                 if (location.kind() == LocationKind.DEFINED_DATA) {
-                    if (!item.address().equals(location.unitStart())) {
+                    if (isScheduledData(location, dataToClear)) {
+                        if (isVirtualContinuation(
+                                location, item, instructions, dataToClear)) {
+                            location = Location.undefined(item.address());
+                        }
+                        else {
+                            conflicts.add(conflict(item, "middle_of_defined_data",
+                                location.unitStart(), location.unitEnd()));
+                            continue;
+                        }
+                    }
+                    else if (!item.address().equals(location.unitStart())) {
                         conflicts.add(conflict(item, "middle_of_defined_data",
                             location.unitStart(), location.unitEnd()));
                         continue;
                     }
-                    if (request.preserveDefinedData()) {
+                    else if (request.preserveDefinedData()) {
                         conflicts.add(conflict(item, "defined_data",
                             location.unitStart(), location.unitEnd()));
                         continue;
                     }
-                    if (!request.restriction().contains(
+                    else if (!request.restriction().contains(
                             location.unitStart(), location.unitEnd())) {
                         conflicts.add(conflict(item, "defined_data_crosses_restriction",
                             location.unitStart(), location.unitEnd()));
                         continue;
                     }
-                    dataToClear.putIfAbsent(
-                        location.unitStart(),
-                        new DataUnit(location.unitStart(), location.unitEnd()));
                 }
 
                 boolean existing = location.kind() == LocationKind.EXISTING_INSTRUCTION;
@@ -594,12 +633,14 @@ public final class FlowDisassemblyService {
                     continue;
                 }
 
+                Map<Address, DataUnit> pendingData = new LinkedHashMap<>();
                 if (!existing && !authorizeIntersectingUnits(
                         request,
                         item,
                         decoded.address(),
                         end,
                         dataToClear,
+                        pendingData,
                         conflicts)) {
                     continue;
                 }
@@ -624,6 +665,7 @@ public final class FlowDisassemblyService {
                 else {
                     plannedBytes.add(record.address(), end);
                 }
+                dataToClear.putAll(pendingData);
 
                 enqueueFlows(
                     request,
@@ -761,6 +803,7 @@ public final class FlowDisassemblyService {
                 Address start,
                 Address end,
                 Map<Address, DataUnit> dataToClear,
+                Map<Address, DataUnit> pendingData,
                 List<Conflict> conflicts) {
             List<Location> intersecting = source.intersecting(start, end);
             if (intersecting == null) {
@@ -776,23 +819,59 @@ public final class FlowDisassemblyService {
                 if (unit.kind() != LocationKind.DEFINED_DATA) {
                     continue;
                 }
+                if (isScheduledData(unit, dataToClear) ||
+                    isScheduledData(unit, pendingData)) {
+                    continue;
+                }
                 if (request.preserveDefinedData()) {
                     conflicts.add(conflict(item, "instruction_overlaps_defined_data",
                         unit.unitStart(), unit.unitEnd()));
                     return false;
                 }
                 if (unit.unitStart() == null || unit.unitEnd() == null ||
-                    start.compareTo(unit.unitStart()) > 0 ||
-                    end.compareTo(unit.unitEnd()) < 0 ||
                     !request.restriction().contains(unit.unitStart(), unit.unitEnd())) {
+                    conflicts.add(conflict(item, "defined_data_crosses_restriction",
+                        unit.unitStart(), unit.unitEnd()));
+                    return false;
+                }
+                if (start.compareTo(unit.unitStart()) > 0) {
                     conflicts.add(conflict(item, "partial_defined_data_overlap",
                         unit.unitStart(), unit.unitEnd()));
                     return false;
                 }
-                dataToClear.putIfAbsent(
+                pendingData.putIfAbsent(
                     unit.unitStart(), new DataUnit(unit.unitStart(), unit.unitEnd()));
             }
             return true;
+        }
+
+        private static boolean isScheduledData(
+                Location location,
+                Map<Address, DataUnit> scheduled) {
+            if (location.unitStart() == null || location.unitEnd() == null) {
+                return false;
+            }
+            DataUnit unit = scheduled.get(location.unitStart());
+            return unit != null && unit.end().equals(location.unitEnd());
+        }
+
+        private static boolean isVirtualContinuation(
+                Location location,
+                QueueItem item,
+                Map<Address, InstructionRecord> instructions,
+                Map<Address, DataUnit> scheduled) {
+            if (!isScheduledData(location, scheduled) ||
+                item.origin() == null ||
+                item.edgeKind() == EdgeKind.SEED) {
+                return false;
+            }
+            InstructionRecord origin = instructions.get(item.origin());
+            if (origin == null || origin.existing()) {
+                return false;
+            }
+            Address originEnd = origin.address().add(origin.length() - 1L);
+            return origin.address().compareTo(location.unitEnd()) <= 0 &&
+                originEnd.compareTo(location.unitStart()) >= 0;
         }
 
         private static void enqueueFlows(
@@ -1076,22 +1155,17 @@ public final class FlowDisassemblyService {
         AddressSet expected = plan.plannedNewInstructions();
         AddressSet created = new AddressSet();
         if (!expected.isEmpty()) {
-            List<String> messages = new ArrayList<>();
-            Disassembler disassembler = Disassembler.getDisassembler(
-                program, TaskMonitor.DUMMY, messages::add);
-            for (InstructionRecord instruction : plan.instructions()) {
-                if (instruction.existing() ||
-                    program.getListing().getInstructionAt(instruction.address()) != null) {
-                    continue;
-                }
-                created.add(disassembler.disassemble(
-                    instruction.address(), expected, false));
+            AddressSet frontier = commitFrontier(plan);
+            if (frontier.isEmpty()) {
+                throw new IllegalStateException(
+                    "planned instructions have no undefined commit frontier");
             }
+            created = stockDisassembler.disassemble(
+                program, frontier, expected, true);
             if (!created.hasSameAddresses(expected)) {
                 throw new IllegalStateException(
                     "stock disassembler diverged from preview; expected " +
-                        expected + ", created " + created +
-                        (messages.isEmpty() ? "" : ", messages=" + messages));
+                        expected + ", created " + created);
             }
         }
 
@@ -1120,6 +1194,42 @@ public final class FlowDisassemblyService {
                 createdFunction.getBody().getNumAddresses()));
         }
         return new CommitResult(created, changes);
+    }
+
+    private static AddressSet commitFrontier(FlowPlan plan) {
+        AddressSet expected = plan.plannedNewInstructions();
+        AddressSet frontier = new AddressSet();
+        for (Address seed : plan.normalizedSeeds()) {
+            if (expected.contains(seed)) {
+                frontier.add(seed);
+            }
+        }
+        for (InstructionRecord instruction : plan.instructions()) {
+            if (!instruction.existing()) {
+                continue;
+            }
+            if (instruction.fallThrough() != null &&
+                expected.contains(instruction.fallThrough())) {
+                frontier.add(instruction.fallThrough());
+            }
+            for (Address target : instruction.flows()) {
+                if (expected.contains(target)) {
+                    frontier.add(target);
+                }
+            }
+        }
+        return frontier;
+    }
+
+    private static AddressSet disassembleStock(
+            Program program,
+            AddressSetView starts,
+            AddressSetView restriction,
+            boolean followFlow) {
+        List<String> messages = new ArrayList<>();
+        Disassembler disassembler = Disassembler.getDisassembler(
+            program, TaskMonitor.DUMMY, messages::add);
+        return disassembler.disassemble(starts, restriction, followFlow);
     }
 
     private static AnalysisSubmission submitAnalysis(
@@ -1190,6 +1300,19 @@ public final class FlowDisassemblyService {
 
     private static List<String> addresses(List<Address> addresses) {
         return addresses.stream().map(Address::toString).toList();
+    }
+
+    private static List<Address> normalizeAddresses(List<Address> addresses) {
+        if (addresses == null || addresses.isEmpty()) {
+            return List.of();
+        }
+        Set<Address> normalized = new TreeSet<>(Address::compareTo);
+        for (Address address : addresses) {
+            if (address != null) {
+                normalized.add(address);
+            }
+        }
+        return List.copyOf(normalized);
     }
 
     private static List<Map<String, Object>> ranges(AddressSetView set) {

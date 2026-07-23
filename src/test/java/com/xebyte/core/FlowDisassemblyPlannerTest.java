@@ -218,6 +218,174 @@ public class FlowDisassemblyPlannerTest {
         assertEquals("decode_failure", plan.stopReasons().get(0).reason());
     }
 
+    @Test
+    public void decodeFailureAndBoundaryCrossingDoNotScheduleDataClears() {
+        FakeSource decodeFailure = new FakeSource();
+        decodeFailure.locate(FlowDisassemblyService.Location.data(
+            address(0x1000), address(0x1000), address(0x1000)));
+        FlowDisassemblyService.FlowPlan failed =
+            new FlowDisassemblyService.FlowPlanner(decodeFailure).plan(
+                request(List.of(address(0x1000)), true, false, 100));
+        assertTrue(failed.clearedData().isEmpty());
+        assertEquals("decode_failure", failed.stopReasons().get(0).reason());
+
+        FakeSource crossing = new FakeSource();
+        crossing.locate(FlowDisassemblyService.Location.data(
+            address(0x1000), address(0x1000), address(0x1001)));
+        crossing.define(instruction(0x1000, 3, RefType.TERMINATOR, null));
+        FlowDisassemblyService.FlowRequest bounded =
+            new FlowDisassemblyService.FlowRequest(
+                List.of(address(0x1000)),
+                new AddressSet(address(0x1000), address(0x1001)),
+                true,
+                false,
+                false,
+                false,
+                100);
+
+        FlowDisassemblyService.FlowPlan crossed =
+            new FlowDisassemblyService.FlowPlanner(crossing).plan(bounded);
+
+        assertTrue(crossed.clearedData().isEmpty());
+        assertEquals("restricted_boundary", crossed.stopReasons().get(0).reason());
+    }
+
+    @Test
+    public void virtuallyClearsCompleteMultiByteDataForReachableInstructions() {
+        FakeSource source = new FakeSource();
+        for (long offset = 0x1000; offset <= 0x1002; offset++) {
+            source.locate(FlowDisassemblyService.Location.data(
+                address(offset), address(0x1000), address(0x1002)));
+        }
+        source.define(instruction(0x1000, 1, RefType.FLOW, 0x1001L));
+        source.define(instruction(0x1001, 1, RefType.FLOW, 0x1002L));
+        source.define(instruction(0x1002, 1, RefType.TERMINATOR, null));
+
+        FlowDisassemblyService.FlowPlan plan =
+            new FlowDisassemblyService.FlowPlanner(source).plan(
+                request(List.of(address(0x1000)), true, false, 100));
+
+        assertEquals(List.of(address(0x1000), address(0x1001), address(0x1002)),
+            plan.instructions().stream()
+                .map(FlowDisassemblyService.InstructionRecord::address)
+                .toList());
+        assertEquals(List.of(new FlowDisassemblyService.DataUnit(
+            address(0x1000), address(0x1002))), plan.clearedData());
+    }
+
+    @Test
+    public void middleOfUnscheduledDefinedDataRemainsAConflict() {
+        FakeSource source = new FakeSource();
+        source.locate(FlowDisassemblyService.Location.data(
+            address(0x1001), address(0x1000), address(0x1002)));
+        source.define(instruction(0x1001, 1, RefType.TERMINATOR, null));
+
+        FlowDisassemblyService.FlowPlan plan =
+            new FlowDisassemblyService.FlowPlanner(source).plan(
+                request(List.of(address(0x1001)), true, false, 100));
+
+        assertTrue(plan.instructions().isEmpty());
+        assertTrue(plan.clearedData().isEmpty());
+        assertEquals("middle_of_defined_data", plan.conflicts().get(0).reason());
+    }
+
+    @Test
+    public void middleSeedConflictsEvenAfterStartSeedSchedulesTheDataUnit() {
+        FakeSource source = new FakeSource();
+        for (long offset = 0x1000; offset <= 0x1001; offset++) {
+            source.locate(FlowDisassemblyService.Location.data(
+                address(offset), address(0x1000), address(0x1001)));
+        }
+        source.define(instruction(0x1000, 1, RefType.FLOW, 0x1001L));
+        source.define(instruction(0x1001, 1, RefType.TERMINATOR, null));
+
+        FlowDisassemblyService.FlowPlan plan =
+            new FlowDisassemblyService.FlowPlanner(source).plan(
+                request(
+                    List.of(address(0x1000), address(0x1001)),
+                    true,
+                    false,
+                    100));
+
+        assertEquals(2, plan.instructions().size());
+        assertTrue(plan.conflicts().stream()
+            .anyMatch(conflict ->
+                conflict.address().equals(address(0x1001)) &&
+                conflict.edgeKind() == FlowDisassemblyService.EdgeKind.SEED &&
+                "middle_of_defined_data".equals(conflict.reason())));
+    }
+
+    @Test
+    public void externalBranchIntoScheduledDataConflictsButInternalFlowContinues() {
+        FakeSource source = new FakeSource();
+        source.define(instruction(
+            0x1000, 1, RefType.UNCONDITIONAL_JUMP, null, 0x1011));
+        for (long offset = 0x1010; offset <= 0x1011; offset++) {
+            source.locate(FlowDisassemblyService.Location.data(
+                address(offset), address(0x1010), address(0x1011)));
+        }
+        source.define(instruction(0x1010, 1, RefType.FLOW, 0x1011L));
+        source.define(instruction(0x1011, 1, RefType.TERMINATOR, null));
+
+        FlowDisassemblyService.FlowPlan plan =
+            new FlowDisassemblyService.FlowPlanner(source).plan(
+                request(
+                    List.of(address(0x1000), address(0x1010)),
+                    true,
+                    false,
+                    100));
+
+        assertTrue(plan.instructions().stream()
+            .anyMatch(record -> record.address().equals(address(0x1011))));
+        assertTrue(plan.conflicts().stream()
+            .anyMatch(conflict ->
+                conflict.address().equals(address(0x1011)) &&
+                conflict.origin().equals(address(0x1000)) &&
+                "middle_of_defined_data".equals(conflict.reason())));
+    }
+
+    @Test
+    public void acceptedInstructionOverlappingDataStartSchedulesCompleteUnit() {
+        FakeSource source = new FakeSource();
+        source.define(instruction(0x1000, 2, RefType.FLOW, 0x1002L));
+        for (long offset = 0x1001; offset <= 0x1003; offset++) {
+            source.locate(FlowDisassemblyService.Location.data(
+                address(offset), address(0x1001), address(0x1003)));
+        }
+        source.define(instruction(0x1002, 1, RefType.FLOW, 0x1003L));
+        source.define(instruction(0x1003, 1, RefType.TERMINATOR, null));
+
+        FlowDisassemblyService.FlowPlan plan =
+            new FlowDisassemblyService.FlowPlanner(source).plan(
+                request(List.of(address(0x1000)), true, false, 100));
+
+        assertEquals(List.of(address(0x1000), address(0x1002), address(0x1003)),
+            plan.instructions().stream()
+                .map(FlowDisassemblyService.InstructionRecord::address)
+                .toList());
+        assertEquals(List.of(new FlowDisassemblyService.DataUnit(
+            address(0x1001), address(0x1003))), plan.clearedData());
+    }
+
+    @Test
+    public void normalizesDeduplicatesAndSortsInstructionFlows() {
+        FakeSource source = new FakeSource();
+        source.define(instruction(
+            0x1000, 1, RefType.CONDITIONAL_JUMP, null,
+            0x1008, 0x1004, 0x1008));
+        source.define(instruction(0x1004, 1, RefType.TERMINATOR, null));
+        source.define(instruction(0x1008, 1, RefType.TERMINATOR, null));
+
+        FlowDisassemblyService.FlowPlan plan =
+            new FlowDisassemblyService.FlowPlanner(source).plan(
+                request(List.of(address(0x1000)), true, true, 100));
+
+        assertEquals(List.of(address(0x1004), address(0x1008)),
+            plan.instructions().get(0).flows());
+        assertEquals(List.of(address(0x1004), address(0x1008)),
+            plan.directBranchTargets());
+    }
+
     private static FlowDisassemblyService.FlowRequest request(
             List<Address> seeds,
             boolean followCalls,
