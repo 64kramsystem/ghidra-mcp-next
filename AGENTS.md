@@ -7,7 +7,7 @@ You are a coding agent working on **ghidra-mcp**, a Model Context Protocol serve
 - **Repo**: https://github.com/bethington/ghidra-mcp
 - **Version**: 5.15.0
 - **Language**: Java (Ghidra extension) + Python (MCP bridge)
-- **Key feature**: 244 MCP tools for local binary analysis, optional BSim,
+- **Key feature**: 245 MCP tools for local binary analysis, optional BSim,
   headless operation, and Ghidra TraceRMI debugging
 
 ## Directory Structure
