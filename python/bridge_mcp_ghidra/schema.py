@@ -6,7 +6,9 @@ from .validation import sanitize_tool_name, _allocate_tool_name
 # JSON type → Python type mapping
 _TYPE_MAP = {
     "string": str,
-    "json": str,
+    # fieldsJson parameters accept either a pre-serialized JSON string or a
+    # native JSON array/object. AnnotationScanner normalizes both forms.
+    "json": object,
     "integer": int,
     "boolean": bool,
     "number": float,

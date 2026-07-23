@@ -57,6 +57,7 @@ public class HeadlessEndpointHandler {
     private final com.xebyte.core.BinaryComparisonService binaryComparisonService;
     private final com.xebyte.core.MalwareSecurityService malwareSecurityService;
     private final com.xebyte.core.ProgramScriptService programScriptService;
+    private final com.xebyte.core.MemoryBlockService memoryBlockService;
     private final com.xebyte.core.EmulationService emulationService;
     private final com.xebyte.core.ExportService exportService;
     private final com.xebyte.core.FlowDisassemblyService flowDisassemblyService;
@@ -79,6 +80,8 @@ public class HeadlessEndpointHandler {
         this.binaryComparisonService = new com.xebyte.core.BinaryComparisonService(programProvider, threadingStrategy);
         this.malwareSecurityService = new com.xebyte.core.MalwareSecurityService(programProvider, threadingStrategy);
         this.programScriptService = new com.xebyte.core.ProgramScriptService(programProvider, threadingStrategy);
+        this.memoryBlockService =
+            new com.xebyte.core.MemoryBlockService(programProvider, threadingStrategy);
         this.emulationService = new com.xebyte.core.EmulationService(programProvider, threadingStrategy);
         this.exportService = new com.xebyte.core.ExportService(programProvider);
         this.flowDisassemblyService =
@@ -105,6 +108,9 @@ public class HeadlessEndpointHandler {
     public com.xebyte.core.BinaryComparisonService getBinaryComparisonService() { return binaryComparisonService; }
     public com.xebyte.core.MalwareSecurityService getMalwareSecurityService() { return malwareSecurityService; }
     public com.xebyte.core.ProgramScriptService getProgramScriptService() { return programScriptService; }
+    public com.xebyte.core.MemoryBlockService getMemoryBlockService() {
+        return memoryBlockService;
+    }
     public com.xebyte.core.EmulationService getEmulationService() { return emulationService; }
     public com.xebyte.core.ExportService getExportService() { return exportService; }
     public com.xebyte.core.FlowDisassemblyService getFlowDisassemblyService() {
@@ -316,12 +322,6 @@ public class HeadlessEndpointHandler {
 
     public String createFunctionAtAddress(String addressStr, String name, boolean disassembleFirst, String programName) {
         return functionService.createFunctionAtAddress(addressStr, name, disassembleFirst, programName).toJson();
-    }
-
-    public String createMemoryBlock(String name, String addressStr, long size,
-                                    boolean read, boolean write, boolean execute,
-                                    boolean isVolatile, String comment, String programName) {
-        return programScriptService.createMemoryBlock(name, addressStr, size, read, write, execute, isVolatile, comment, programName).toJson();
     }
 
     public String renameData(String addressStr, String newName, String programName) {
