@@ -323,12 +323,8 @@ public final class AddressEmulationEngine {
                 throw new IllegalArgumentException(
                     "Unknown register: " + item.getKey());
             }
-            if (register.isProgramCounter()) {
-                throw new IllegalArgumentException(
-                    "registers." + item.getKey()
-                        + " cannot override the program counter; "
-                        + "use address to select the execution entry");
-            }
+            validateInputRegister(
+                register, "registers." + item.getKey());
             result.put(
                 register,
                 parseUnsigned(
@@ -337,6 +333,24 @@ public final class AddressEmulationEngine {
                     "registers." + item.getKey()));
         }
         return result;
+    }
+
+    static void validateInputRegister(
+            Register register, String field) {
+        if (isProgramCounterAlias(register)) {
+            throw new IllegalArgumentException(
+                field + " cannot override the program counter "
+                    + "or one of its aliases; use address to "
+                    + "select the execution entry");
+        }
+        Register base = register.getBaseRegister();
+        if (register.isProcessorContext()
+                || (base != null && base.isProcessorContext())) {
+            throw new IllegalArgumentException(
+                field + " cannot override processor context; "
+                    + "select a program address whose context is "
+                    + "already defined");
+        }
     }
 
     private static List<MemoryOverride> parseMemoryOverrides(
@@ -524,6 +538,8 @@ public final class AddressEmulationEngine {
             if (request.returnAddress() != null) {
                 returnInjection = inject6502ReturnAddress(
                     program, request, emulator, thread);
+                callbacks.recordSyntheticReturn(
+                    returnInjection, request.returnAddress());
             }
         }
         catch (Exception error) {
@@ -853,8 +869,9 @@ public final class AddressEmulationEngine {
                     && "P".equals(register.getName())) {
                 value = finalSnapshot.get("P");
             }
-            else if (register.isProgramCounter()) {
-                value = unsignedOffset(thread.getCounter());
+            else if (isProgramCounterAlias(register)) {
+                value = truncateToRegister(
+                    unsignedOffset(thread.getCounter()), register);
             }
             else {
                 value = callbacks.readRegister(thread, register);
@@ -867,6 +884,22 @@ public final class AddressEmulationEngine {
             result.putIfAbsent(name, finalSnapshot.get(name));
         }
         return result;
+    }
+
+    private static boolean isProgramCounterAlias(Register register) {
+        Register base = register.getBaseRegister();
+        return register.isProgramCounter()
+            || (base != null && base.isProgramCounter());
+    }
+
+    private static BigInteger truncateToRegister(
+            BigInteger value, Register register) {
+        if (value == null || register.getBitLength() <= 0) {
+            return value;
+        }
+        return value.and(
+            BigInteger.ONE.shiftLeft(register.getBitLength())
+                .subtract(BigInteger.ONE));
     }
 
     private static BigInteger unsignedOffset(Address address) {
@@ -962,6 +995,8 @@ public final class AddressEmulationEngine {
         private final List<MemoryAccess> accesses = new ArrayList<>();
         private final List<MemoryAccess> selfModifying =
             new ArrayList<>();
+        private final List<StackFrameProvenance> stackFrames =
+            new ArrayList<>();
         private PcodeThread<byte[]> thread;
         private CurrentTrace current;
         private CurrentTrace lastCompleted;
@@ -1015,6 +1050,19 @@ public final class AddressEmulationEngine {
 
         AddressSetView runtimeInitialized() {
             return runtimeInitialized;
+        }
+
+        void recordSyntheticReturn(
+                ReturnInjection injection, Address returnAddress) {
+            stackFrames.add(new StackFrameProvenance(
+                StackFrameKind.SYNTHETIC_RETURN,
+                null,
+                null,
+                injection.lowAddress(),
+                injection.lowByte(),
+                injection.highAddress(),
+                injection.highByte(),
+                returnAddress.getAddressSpace()));
         }
 
         boolean lastInstructionIsIndirect() {
@@ -1336,13 +1384,25 @@ public final class AddressEmulationEngine {
             int target =
                 ((((high & 0xff) << 8) | (low & 0xff)) + 1)
                     & 0xffff;
+            AddressSpace returnSpace = consumeStackFrame(
+                Set.of(
+                    StackFrameKind.JSR_RETURN,
+                    StackFrameKind.SYNTHETIC_RETURN),
+                null,
+                null,
+                lowAddress,
+                low,
+                highAddress,
+                high,
+                current.instruction().getMinAddress()
+                    .getAddressSpace());
             executionThread.getState().setRegisterValue(
                 new RegisterValue(
                     stack,
                     BigInteger.valueOf(
                         0x100L + ((sp + 2) & 0xff))));
             executionThread.overrideCounter(
-                returnAddressSpace(target).getAddress(target));
+                returnSpace.getAddress(target));
         }
 
         private void execute6502Jsr(
@@ -1377,6 +1437,15 @@ public final class AddressEmulationEngine {
                 .setConcrete(lowAddress, new byte[]{low});
             recordAccess(
                 executionThread, AccessKind.WRITE, lowAddress, 1);
+            stackFrames.add(new StackFrameProvenance(
+                StackFrameKind.JSR_RETURN,
+                null,
+                null,
+                lowAddress,
+                low,
+                highAddress,
+                high,
+                instruction.getMinAddress().getAddressSpace()));
             executionThread.getState().setRegisterValue(
                 new RegisterValue(
                     stack,
@@ -1421,20 +1490,18 @@ public final class AddressEmulationEngine {
                         0x100L + ((sp + 3) & 0xff))));
             int target =
                 ((high & 0xff) << 8) | (low & 0xff);
-            executionThread.overrideCounter(
+            AddressSpace returnSpace = consumeStackFrame(
+                Set.of(StackFrameKind.INTERRUPT_RETURN),
+                statusAddress,
+                status,
+                lowAddress,
+                low,
+                highAddress,
+                high,
                 current.instruction().getMinAddress()
-                    .getAddressSpace().getAddress(target));
-        }
-
-        private AddressSpace returnAddressSpace(int target) {
-            Address requested = request.returnAddress();
-            if (requested != null
-                    && requested.getUnsignedOffset()
-                        == Integer.toUnsignedLong(target)) {
-                return requested.getAddressSpace();
-            }
-            return current.instruction().getMinAddress()
-                .getAddressSpace();
+                    .getAddressSpace());
+            executionThread.overrideCounter(
+                returnSpace.getAddress(target));
         }
 
         private void execute6502Brk(
@@ -1468,6 +1535,15 @@ public final class AddressEmulationEngine {
                 executionThread, lowAddress, low);
             storeSemanticByte(
                 executionThread, statusAddress, status);
+            stackFrames.add(new StackFrameProvenance(
+                StackFrameKind.INTERRUPT_RETURN,
+                statusAddress,
+                status,
+                lowAddress,
+                low,
+                highAddress,
+                high,
+                instruction.getMinAddress().getAddressSpace()));
             executionThread.getState().setRegisterValue(
                 new RegisterValue(
                     stack,
@@ -1501,6 +1577,37 @@ public final class AddressEmulationEngine {
                 .setConcrete(address, new byte[]{value});
             recordAccess(
                 executionThread, AccessKind.WRITE, address, 1);
+        }
+
+        private AddressSpace consumeStackFrame(
+                Set<StackFrameKind> kinds,
+                Address statusAddress,
+                Byte statusByte,
+                Address lowAddress,
+                byte lowByte,
+                Address highAddress,
+                byte highByte,
+                AddressSpace fallback) {
+            for (int index = stackFrames.size() - 1;
+                    index >= 0;
+                    index--) {
+                StackFrameProvenance frame =
+                    stackFrames.get(index);
+                if (!kinds.contains(frame.kind())
+                        || !Objects.equals(
+                            statusAddress, frame.statusAddress())
+                        || !Objects.equals(
+                            statusByte, frame.statusByte())
+                        || !lowAddress.equals(frame.lowAddress())
+                        || lowByte != frame.lowByte()
+                        || !highAddress.equals(frame.highAddress())
+                        || highByte != frame.highByte()) {
+                    continue;
+                }
+                stackFrames.remove(index);
+                return frame.returnSpace();
+            }
+            return fallback;
         }
 
         private static boolean isDirectMemory(Varnode varnode) {
@@ -1666,6 +1773,23 @@ public final class AddressEmulationEngine {
     }
 
     private record PendingLoad(Address start, int size) {
+    }
+
+    private enum StackFrameKind {
+        SYNTHETIC_RETURN,
+        JSR_RETURN,
+        INTERRUPT_RETURN
+    }
+
+    private record StackFrameProvenance(
+            StackFrameKind kind,
+            Address statusAddress,
+            Byte statusByte,
+            Address lowAddress,
+            byte lowByte,
+            Address highAddress,
+            byte highByte,
+            AddressSpace returnSpace) {
     }
 
     static byte[] decodeBytes(JsonElement value, String field) {
