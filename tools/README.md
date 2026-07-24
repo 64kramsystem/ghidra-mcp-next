@@ -1,7 +1,6 @@
 # Tools
 
-`tools/setup/` is the maintained setup, build, deploy, and version-management
-CLI.
+`tools/setup/` is the maintained setup, build, and deploy CLI.
 
 ```bash
 python -m tools.setup --help
@@ -9,8 +8,7 @@ python -m tools.setup preflight --ghidra-path /path/to/ghidra
 python -m tools.setup ensure-prereqs --ghidra-path /path/to/ghidra
 python -m tools.setup build
 python -m tools.setup deploy --ghidra-path /path/to/ghidra
-python -m tools.setup bump-version --new X.Y.Z
-python -m tools.setup verify-version
+python -m tools.setup verify-ghidra --ghidra-path /path/to/ghidra
 ```
 
 ## Command responsibilities
@@ -21,8 +19,12 @@ python -m tools.setup verify-version
 - `build` invokes the Maven package path.
 - `deploy` installs the freshest extension archive into the selected Ghidra
   profile and performs the requested smoke/release checks.
-- `bump-version` updates all maintained version-bearing files atomically.
-- `verify-version` checks that those files agree.
+- `verify-ghidra` checks an installation against the configured Ghidra
+  compatibility target.
+
+Release builds derive the Ghidra extension identity from the build timestamp.
+The Python bridge version is independently derived from the latest Git commit
+that changed bridge or bridge-packaging inputs.
 
 Manual Java packaging remains available:
 

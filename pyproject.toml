@@ -1,6 +1,6 @@
 [project]
 name = "ghidra-mcp-bridge"
-version = "5.15.0"
+dynamic = ["version"]
 description = "GhidraMCP-next bridge — a thin MCP↔HTTP multiplexer exposing Ghidra reverse-engineering tools to AI clients."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -39,15 +39,21 @@ Changelog = "https://github.com/64kramsystem/ghidra-mcp-next/blob/main/CHANGELOG
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.version]
+source = "code"
+path = "tools/bridge_version.py"
+expression = "get_bridge_version()"
+
 [tool.hatch.build.targets.wheel]
 packages = ["python/bridge_mcp_ghidra"]
 
 [tool.hatch.build.targets.sdist]
 include = [
-    "python/bridge_mcp_ghidra",
-    "README.md",
-    "LICENSE",
-    "CHANGELOG.md",
+    "/python/bridge_mcp_ghidra",
+    "/README.md",
+    "/LICENSE",
+    "/NOTICE",
+    "/tools/bridge_version.py",
 ]
 
 # ---------------------------------------------------------------------------

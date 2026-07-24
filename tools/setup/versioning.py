@@ -2,23 +2,14 @@ from __future__ import annotations
 
 import re
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass
 from pathlib import Path
 
 
-@dataclass(frozen=True)
-class VersionInfo:
-    project_version: str
-    ghidra_version: str
-
-
-def read_pom_versions(repo_root: Path) -> VersionInfo:
+def read_pom_ghidra_version(repo_root: Path) -> str:
     pom_path = repo_root / "pom.xml"
     tree = ET.parse(pom_path)
     root = tree.getroot()
-    namespace = (
-        {"m": root.tag.split("}")[0].strip("{")} if root.tag.startswith("{") else {}
-    )
+    namespace = {"m": root.tag.split("}")[0].strip("{")} if root.tag.startswith("{") else {}
 
     def find_text(path: str) -> str:
         if namespace:
@@ -29,14 +20,7 @@ def read_pom_versions(repo_root: Path) -> VersionInfo:
             raise ValueError(f"Missing expected XML element: {path}")
         return node.text.strip()
 
-    return VersionInfo(
-        project_version=find_text("m:version" if namespace else "version"),
-        ghidra_version=find_text(
-            "m:properties/m:ghidra.version"
-            if namespace
-            else "properties/ghidra.version"
-        ),
-    )
+    return find_text("m:properties/m:ghidra.version" if namespace else "properties/ghidra.version")
 
 
 _GHIDRA_PATH_RE = re.compile(r"ghidra_([0-9]+(?:\.[0-9]+){1,3})_(PUBLIC|DEV)")

@@ -23,6 +23,7 @@ import com.xebyte.core.JsonHelper;
 import com.xebyte.core.ProgramProvider;
 import com.xebyte.core.SecurityConfig;
 import com.xebyte.core.ThreadingStrategy;
+import com.xebyte.core.VersionPayload;
 import ghidra.GhidraApplicationLayout;
 import ghidra.GhidraLaunchable;
 import ghidra.app.script.GhidraScriptUtil;
@@ -49,12 +50,12 @@ import java.util.*;
  * - Server-side reverse engineering
  *
  * Usage:
- *   java -jar GhidraMCP-next-&lt;version&gt;.jar --port 8089 --project /path/to/project
- *   java -jar GhidraMCP-next-&lt;version&gt;.jar --port 8089 --file /path/to/binary.exe
+ *   java -jar GhidraMCP-next-&lt;timestamp&gt;.jar --port 8089 --project /path/to/project
+ *   java -jar GhidraMCP-next-&lt;timestamp&gt;.jar --port 8089 --file /path/to/binary.exe
  */
 public class GhidraMCPHeadlessServer implements GhidraLaunchable {
 
-    private static final String VERSION = "5.15.0-headless";
+    private static final String VERSION = VersionPayload.getVersion();
     private static final int DEFAULT_PORT = 8089;
     private static final String DEFAULT_BIND_ADDRESS = "127.0.0.1";
 
@@ -108,7 +109,7 @@ public class GhidraMCPHeadlessServer implements GhidraLaunchable {
         // Keep running until interrupted
         Runtime.getRuntime().addShutdownHook(new Thread(this::stop));
 
-        System.out.println("GhidraMCP-next Headless Server v" + VERSION + " running on port " + port);
+        System.out.println("GhidraMCP-next Headless Server " + VERSION + " running on port " + port);
         System.out.println("Press Ctrl+C to stop");
 
         // Block main thread
@@ -155,7 +156,7 @@ public class GhidraMCPHeadlessServer implements GhidraLaunchable {
                     break;
                 case "--version":
                 case "-v":
-                    System.out.println("GhidraMCP-next Headless Server v" + VERSION);
+                    System.out.println("GhidraMCP-next Headless Server " + VERSION);
                     System.exit(0);
                     break;
             }
@@ -163,7 +164,7 @@ public class GhidraMCPHeadlessServer implements GhidraLaunchable {
     }
 
     private void printUsage() {
-        System.out.println("GhidraMCP-next Headless Server v" + VERSION);
+        System.out.println("GhidraMCP-next Headless Server " + VERSION);
         System.out.println();
         System.out.println("Usage: java -jar GhidraMCP-next-" + VERSION + ".jar [options]");
         System.out.println();
@@ -373,7 +374,7 @@ public class GhidraMCPHeadlessServer implements GhidraLaunchable {
         // ==========================================================================
 
         safeContext("/check_connection", exchange -> {
-            sendResponse(exchange, "Connection OK - GhidraMCP-next Headless Server v" + VERSION);
+            sendResponse(exchange, "Connection OK - GhidraMCP-next Headless Server " + VERSION);
         });
 
         safeContext("/health", exchange -> {

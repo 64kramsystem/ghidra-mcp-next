@@ -6,7 +6,9 @@
     <groupId>com.xebyte</groupId>
     <artifactId>GhidraMCP-next</artifactId>
     <packaging>jar</packaging>
-    <version>5.15.0</version>
+    <!-- Maven requires a project version. Release identity comes exclusively
+         from release.timestamp; this sentinel is never exposed to users. -->
+    <version>0.0.0</version>
     <name>GhidraMCP-next</name>
     <description>Production-ready Model Context Protocol server for Ghidra reverse engineering platform. Provides MCP-based tooling and automation for reverse engineering workflows: convention-enforcing rename/type/comment endpoints, batch operations, P-code emulation, live debugger integration, headless server, and Ghidra Server multi-version support.</description>
     <url>https://github.com/64kramsystem/ghidra-mcp-next</url>
@@ -15,11 +17,9 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <ghidra.version>12.1.2</ghidra.version>
         <mockito.version>5.23.0</mockito.version>
-        <!-- Build timestamp generated at compile time (format: yyyyMMdd-HHmmss) -->
-        <build.timestamp>${maven.build.timestamp}</build.timestamp>
+        <!-- Release identity generated at compile time unless CI supplies one. -->
+        <release.timestamp>${maven.build.timestamp}</release.timestamp>
         <maven.build.timestamp.format>yyyyMMdd-HHmmss</maven.build.timestamp.format>
-        <!-- Build number - use current time as unique identifier -->
-        <build.number>${maven.build.timestamp}</build.number>
         <!-- Default empty so surefire's @{argLine} resolves even when the
              JaCoCo agent is skipped (jacoco.skip=true); prepare-agent
              overwrites this property at runtime. -->
@@ -168,7 +168,7 @@
         </dependency>
     </dependencies>
     <build>
-        <finalName>${project.artifactId}-${project.version}</finalName>
+        <finalName>${project.artifactId}-${release.timestamp}</finalName>
         <!-- Enable resource filtering for version substitution -->
         <resources>
             <resource>
@@ -177,6 +177,7 @@
                 <includes>
                     <include>com/xebyte/version.properties</include>
                     <include>extension.properties</include>
+                    <include>META-INF/MANIFEST.MF</include>
                 </includes>
             </resource>
             <resource>
@@ -185,6 +186,7 @@
                 <excludes>
                     <exclude>com/xebyte/version.properties</exclude>
                     <exclude>extension.properties</exclude>
+                    <exclude>META-INF/MANIFEST.MF</exclude>
                 </excludes>
             </resource>
         </resources>
@@ -254,7 +256,7 @@
                 <version>3.5.0</version>
                 <configuration>
                     <archive>
-                        <manifestFile>src/main/resources/META-INF/MANIFEST.MF</manifestFile>
+                        <manifestFile>${project.build.outputDirectory}/META-INF/MANIFEST.MF</manifestFile>
                     </archive>
                     <!-- Exclude the App class -->
                     <excludes>

@@ -21,10 +21,13 @@ from tools.release_automation import (
 @pytest.mark.parametrize(
     "path",
     [
+        ".gitignore",
         "pom.xml",
         "pyproject.toml",
+        "tools/bridge_version.py",
         "README.md",
         "LICENSE",
+        "NOTICE",
         "python/bridge_mcp_ghidra/server.py",
         "src/main/java/com/xebyte/GhidraMCPPlugin.java",
         "src/assembly/ghidra-extension.xml",
@@ -73,7 +76,7 @@ def _write_project(root: Path):
   <modelVersion>4.0.0</modelVersion>
   <groupId>test</groupId>
   <artifactId>GhidraMCP-next</artifactId>
-  <version>1.2.3</version>
+  <version>0.0.0</version>
   <properties><ghidra.version>12.1.2</ghidra.version></properties>
 </project>
 """,
@@ -102,9 +105,9 @@ def _write_artifacts(root: Path) -> tuple[Path, Path]:
     python_dir = root / "python-dist"
     extension_dir.mkdir()
     python_dir.mkdir()
-    (extension_dir / "GhidraMCP-next-1.2.3.zip").write_bytes(b"extension")
-    (python_dir / "ghidra_mcp_bridge-1.2.3-py3-none-any.whl").write_bytes(b"wheel")
-    (python_dir / "ghidra_mcp_bridge-1.2.3.tar.gz").write_bytes(b"sdist")
+    (extension_dir / "GhidraMCP-next-20260724-184501.zip").write_bytes(b"extension")
+    (python_dir / "ghidra_mcp_bridge-20260724.173040-py3-none-any.whl").write_bytes(b"wheel")
+    (python_dir / "ghidra_mcp_bridge-20260724.173040.tar.gz").write_bytes(b"sdist")
     return extension_dir, python_dir
 
 
@@ -127,6 +130,7 @@ def test_prepare_release_writes_verified_metadata_hashes_and_notes(tmp_path: Pat
     assert metadata["tag"] == "build-20260724-184501-0123456789ab"
     assert metadata["name"] == "GhidraMCP-next 20260724-184501"
     assert "project_version" not in metadata
+    assert metadata["bridge_version"] == "20260724.173040"
     assert metadata["commit_sha"] == sha
     assert [item["kind"] for item in metadata["artifacts"]] == [
         "ghidra_extension",
@@ -136,20 +140,21 @@ def test_prepare_release_writes_verified_metadata_hashes_and_notes(tmp_path: Pat
     assert json.loads((output_dir / "release-metadata.json").read_text()) == metadata
 
     expected_hashes = {
-        "GhidraMCP-next-1.2.3.zip": hashlib.sha256(b"extension").hexdigest(),
-        "ghidra_mcp_bridge-1.2.3-py3-none-any.whl": hashlib.sha256(b"wheel").hexdigest(),
-        "ghidra_mcp_bridge-1.2.3.tar.gz": hashlib.sha256(b"sdist").hexdigest(),
+        "GhidraMCP-next-20260724-184501.zip": hashlib.sha256(b"extension").hexdigest(),
+        "ghidra_mcp_bridge-20260724.173040-py3-none-any.whl": hashlib.sha256(b"wheel").hexdigest(),
+        "ghidra_mcp_bridge-20260724.173040.tar.gz": hashlib.sha256(b"sdist").hexdigest(),
     }
     checksum_lines = (output_dir / "SHA256SUMS").read_text().splitlines()
     assert checksum_lines == sorted(f"{digest}  {name}" for name, digest in expected_hashes.items())
     notes = (output_dir / "release-notes.md").read_text()
     assert notes.startswith("# GhidraMCP-next 20260724-184501\n")
     assert "Project version" not in notes
+    assert "- Bridge version: `20260724.173040`" in notes
     assert "- Removed semantic versions from release identities." in notes
     assert "Previous release" not in notes
     assert sha in notes
     assert all(name in notes for name in expected_hashes)
-    assert "| `GhidraMCP-next-1.2.3.zip` | 9 |" in notes
+    assert "| `GhidraMCP-next-20260724-184501.zip` | 9 |" in notes
 
 
 @pytest.mark.parametrize(
@@ -188,6 +193,24 @@ def test_prepare_release_rejects_ambiguous_artifacts(tmp_path: Path):
             python_dir=python_dir,
             output_dir=tmp_path / "release",
             build_timestamp="20260724-120000",
+            commit_sha="0" * 40,
+            expected_ghidra_version="12.1.2",
+        )
+
+
+def test_prepare_release_rejects_mismatched_bridge_versions(tmp_path: Path):
+    _write_project(tmp_path)
+    extension_dir, python_dir = _write_artifacts(tmp_path)
+    sdist = python_dir / "ghidra_mcp_bridge-20260724.173040.tar.gz"
+    sdist.rename(python_dir / "ghidra_mcp_bridge-20260724.173041.tar.gz")
+
+    with pytest.raises(ValueError, match="versions do not match"):
+        prepare_release(
+            repo_root=tmp_path,
+            extension_dir=extension_dir,
+            python_dir=python_dir,
+            output_dir=tmp_path / "release",
+            build_timestamp="20260724-184501",
             commit_sha="0" * 40,
             expected_ghidra_version="12.1.2",
         )

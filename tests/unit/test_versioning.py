@@ -2,7 +2,7 @@
 
 The pom pins ``ghidra.version`` to a major.minor series; an installed Ghidra of
 any patch release in that series must be accepted instead of hard-failing the
-preflight/verify-version check (firefart's ``12.1`` pinned vs ``12.1.2`` install).
+preflight/verify-ghidra check (firefart's ``12.1`` pinned vs ``12.1.2`` install).
 """
 from __future__ import annotations
 

@@ -10,7 +10,6 @@ import re
 
 import pytest
 
-
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.readonly,
@@ -82,39 +81,12 @@ class TestLiveServerSmoke:
         assert required.issubset(payload), payload
         assert payload["mode"] in {"gui", "headless"}
 
-    def test_version_payload_matches_pom(self, http_client):
-        """Catch deploys-of-stale-jar: the live plugin's version must
-        equal what pom.xml says we built. Without this, a deploy that
-        silently failed to overwrite the user-extension jar leaves the
-        previous version running and only manual inspection of the
-        Ghidra console would catch it."""
-        from pathlib import Path
-        import re
-
-        repo_root = Path(__file__).resolve().parents[2]
-        pom_text = (repo_root / "pom.xml").read_text(encoding="utf-8")
-        # Match the *project* version (the first <version> inside the
-        # opening <project> block — avoid dep versions). Anchored to the
-        # <packaging>jar</packaging> tag for safety, mirroring tools.setup
-        # version-bump.
-        # pom.xml lists <packaging>jar</packaging> then <version>X.Y.Z</version>
-        # at the project level. Anchoring on packaging avoids matching
-        # dependency versions later in the file.
-        match = re.search(
-            r"<packaging>jar</packaging>\s*<version>([^<]+)</version>",
-            pom_text,
-        )
-        assert match is not None, "Could not locate project version in pom.xml"
-        pom_version = match.group(1).strip()
-
+    def test_version_payload_uses_build_timestamp(self, http_client):
         response = http_client.get("/get_version")
         payload = json.loads(response.text)
-        live_version = payload["plugin_version"]
-
-        assert live_version == pom_version, (
-            f"Live plugin reports v{live_version} but pom.xml has v{pom_version} — "
-            "the deployed jar is stale. Rebuild and redeploy."
-        )
+        assert re.fullmatch(r"\d{8}-\d{6}", payload["plugin_version"])
+        assert payload["plugin_version"] == payload["build_timestamp"]
+        assert payload["full_version"] == (f"GhidraMCP-next {payload['plugin_version']}")
 
     def test_schema_meets_endpoint_floor(self, http_client):
         """The bridge's dynamic tool registration relies on /mcp/schema
@@ -161,9 +133,9 @@ class TestLiveServerSmoke:
         # Strip BUILD_DATE suffix if present (older builds embedded it).
         ghidra_version = ghidra_version.split()[0] if ghidra_version else ""
         # Must look like N.N or N.N.N — not empty, not "unknown".
-        assert re.match(r"^\d+\.\d+(?:\.\d+)?$", ghidra_version), (
-            f"ghidra_version field looks malformed: {payload.get('ghidra_version')!r}"
-        )
+        assert re.match(
+            r"^\d+\.\d+(?:\.\d+)?$", ghidra_version
+        ), f"ghidra_version field looks malformed: {payload.get('ghidra_version')!r}"
 
     def test_program_metadata_present(self, http_client):
         response = http_client.get("/get_metadata")
@@ -176,9 +148,7 @@ class TestLiveServerSmoke:
         assert response.status_code == 200
         assert len(response.text.strip()) > 0
 
-    def test_gui_context_navigation_round_trip(
-        self, http_client, first_function_address
-    ):
+    def test_gui_context_navigation_round_trip(self, http_client, first_function_address):
         version = json.loads(http_client.get("/get_version").text)
         if version.get("mode") != "gui":
             pytest.skip("GUI context tools are intentionally absent in headless mode")
@@ -203,10 +173,7 @@ class TestLiveServerSmoke:
         assert current.status_code == 200
         current_payload = json.loads(current.text)
         assert current_payload["has_address"] is True
-        assert (
-            current_payload["address"]
-            == navigation_payload["current_context"]["address"]
-        )
+        assert current_payload["address"] == navigation_payload["current_context"]["address"]
 
     def test_current_selection_normalized(self, http_client):
         version = json.loads(http_client.get("/get_version").text)
@@ -221,9 +188,7 @@ class TestLiveServerSmoke:
 
 class TestSafeRoundTripSmoke:
     def test_plate_comment_round_trip(self, http_client, first_function_address):
-        get_response = http_client.get(
-            "/get_plate_comment", params={"address": first_function_address}
-        )
+        get_response = http_client.get("/get_plate_comment", params={"address": first_function_address})
         if get_response.status_code != 200:
             pytest.skip("Plate comment endpoint unavailable")
 
@@ -242,9 +207,7 @@ class TestSafeRoundTripSmoke:
         assert set_response.status_code in [200, 400, 404]
 
     def test_prototype_round_trip(self, http_client, first_function_address):
-        get_response = http_client.get(
-            "/get_function_by_address", params={"address": first_function_address}
-        )
+        get_response = http_client.get("/get_function_by_address", params={"address": first_function_address})
         if get_response.status_code != 200:
             pytest.skip("Function details unavailable")
 
@@ -262,9 +225,7 @@ class TestSafeRoundTripSmoke:
         )
         assert set_response.status_code in [200, 400, 404, 500]
 
-    def test_rename_variables_endpoints_reachable(
-        self, http_client, first_function_address
-    ):
+    def test_rename_variables_endpoints_reachable(self, http_client, first_function_address):
         canonical = http_client.post(
             "/rename_variables",
             json_data={
@@ -284,9 +245,7 @@ class TestSafeRoundTripSmoke:
         assert legacy.status_code in [200, 404]
 
     def test_no_return_round_trip(self, http_client, first_function_address):
-        get_response = http_client.get(
-            "/get_function_by_address", params={"address": first_function_address}
-        )
+        get_response = http_client.get("/get_function_by_address", params={"address": first_function_address})
         if get_response.status_code != 200:
             pytest.skip("Function details unavailable")
 
@@ -296,10 +255,7 @@ class TestSafeRoundTripSmoke:
             if isinstance(payload, dict):
                 no_return = bool(payload.get("noReturn") or payload.get("no_return"))
         except json.JSONDecodeError:
-            if (
-                '"noReturn": true' in get_response.text
-                or '"no_return": true' in get_response.text
-            ):
+            if '"noReturn": true' in get_response.text or '"no_return": true' in get_response.text:
                 no_return = True
 
         set_response = http_client.post(

@@ -26,18 +26,13 @@ from tools.setup.ghidra import (
     run_selected_endpoint_contract_test,
     start_ghidra,
 )
-from tools.setup.versioning import VersionInfo
 
 
 def test_hosted_workflows_install_all_required_ghidra_jars():
     root = Path(__file__).resolve().parents[2]
     for relative_path in (".github/workflows/tests.yml",):
         workflow = (root / relative_path).read_text(encoding="utf-8")
-        missing = [
-            artifact_id
-            for artifact_id, jar_path in REQUIRED_GHIDRA_JARS
-            if jar_path not in workflow
-        ]
+        missing = [artifact_id for artifact_id, jar_path in REQUIRED_GHIDRA_JARS if jar_path not in workflow]
         assert missing == [], f"{relative_path} does not install {missing}"
 
 
@@ -92,9 +87,7 @@ def test_patch_frontend_tool_config_inserts_into_existing_open_utility_block():
     assert modified is True
     assert updated.count('<PACKAGE NAME="Utility">') == 1
     assert PLUGIN_CLASS in updated
-    assert "ghidra.framework.someother.Plugin" in updated, (
-        "preexisting Utility INCLUDE must be preserved"
-    )
+    assert "ghidra.framework.someother.Plugin" in updated, "preexisting Utility INCLUDE must be preserved"
     # Our INCLUDE must be inside the Utility block, not after </PACKAGE>.
     plugin_idx = updated.find(PLUGIN_CLASS)
     closing_idx = updated.find("</PACKAGE>")
@@ -110,7 +103,7 @@ def test_patch_frontend_tool_config_is_idempotent_when_plugin_present():
         '    <PACKAGE NAME="Utility">\n'
         f'        <INCLUDE CLASS="{PLUGIN_CLASS}" />\n'
         "    </PACKAGE>\n"
-        '    <EXTENSIONS>\n'
+        "    <EXTENSIONS>\n"
         '        <EXTENSION NAME="GhidraMCP-next" />\n'
         "    </EXTENSIONS>\n"
         "</TOOL>"
@@ -118,9 +111,7 @@ def test_patch_frontend_tool_config_is_idempotent_when_plugin_present():
 
     updated, modified = patch_frontend_tool_config(content)
 
-    assert updated.count(PLUGIN_CLASS) == 1, (
-        "Plugin already present — must not be re-added"
-    )
+    assert updated.count(PLUGIN_CLASS) == 1, "Plugin already present — must not be re-added"
     assert updated.count('<EXTENSION NAME="GhidraMCP-next" />') == 1
     assert modified is False, "no-op patch must report unmodified"
 
@@ -236,9 +227,7 @@ def test_resolve_ghidra_user_dir_reads_application_properties_when_path_unnamed(
     PUBLIC."""
     install = tmp_path / "custom-ghidra-install"
     (install / "Ghidra").mkdir(parents=True)
-    (install / "Ghidra" / "application.properties").write_text(
-        "application.version=12.1\n", encoding="utf-8"
-    )
+    (install / "Ghidra" / "application.properties").write_text("application.version=12.1\n", encoding="utf-8")
     user_base = tmp_path / "ghidra"
 
     resolved = resolve_ghidra_user_dir(install, user_base)
@@ -277,52 +266,31 @@ def test_collect_preflight_issues_reports_missing_jar(
     assert any("Missing required Ghidra dependency" in issue for issue in issues)
 
 
-def _stub_version(
-    monkeypatch: pytest.MonkeyPatch, repo_root: Path, version: str = "5.4.1"
-) -> None:
-    monkeypatch.setattr(
-        "tools.setup.ghidra.read_pom_versions",
-        lambda _root: VersionInfo(project_version=version, ghidra_version="12.1"),
-    )
-
-
 class TestFindPluginArchive:
-    def test_finds_exact_version_maven_archive(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ):
-        _stub_version(monkeypatch, tmp_path)
-        maven_zip = tmp_path / "target" / "GhidraMCP-next-5.4.1.zip"
+    def test_finds_timestamped_maven_archive(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        maven_zip = tmp_path / "target" / "GhidraMCP-next-20260724-192926.zip"
         maven_zip.parent.mkdir(parents=True)
         maven_zip.write_bytes(b"maven")
 
         assert find_plugin_archive(tmp_path) == maven_zip
 
-    def test_finds_unversioned_maven_archive(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ):
-        _stub_version(monkeypatch, tmp_path)
+    def test_finds_unversioned_maven_archive(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         maven_zip = tmp_path / "target" / "GhidraMCP-next.zip"
         maven_zip.parent.mkdir(parents=True)
         maven_zip.write_bytes(b"maven")
 
         assert find_plugin_archive(tmp_path) == maven_zip
 
-    def test_finds_versioned_maven_zip_by_glob_when_name_differs(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ):
-        _stub_version(monkeypatch, tmp_path)
+    def test_finds_timestamped_maven_zip_by_glob(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         target_dir = tmp_path / "target"
         target_dir.mkdir(parents=True)
-        other_zip = target_dir / "GhidraMCP-next-5.4.0.zip"
+        other_zip = target_dir / "GhidraMCP-next-20260724-191500.zip"
         other_zip.write_bytes(b"old")
 
         assert find_plugin_archive(tmp_path) == other_zip
 
-    def test_ignores_archive_outside_maven_target(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ):
-        _stub_version(monkeypatch, tmp_path)
-        legacy_zip = tmp_path / "build" / "distributions" / "GhidraMCP-next-5.4.1.zip"
+    def test_ignores_archive_outside_maven_target(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        legacy_zip = tmp_path / "build" / "distributions" / "GhidraMCP-next-20260724-192926.zip"
         legacy_zip.parent.mkdir(parents=True)
         legacy_zip.write_bytes(b"legacy")
 
@@ -330,9 +298,7 @@ class TestFindPluginArchive:
             find_plugin_archive(tmp_path)
 
 
-def test_start_ghidra_detaches_from_parent_session_on_posix(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
+def test_start_ghidra_detaches_from_parent_session_on_posix(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     ghidra_path = tmp_path / "ghidra_12.1_PUBLIC"
     ghidra_path.mkdir()
     launcher = ghidra_path / "ghidraRun"
@@ -343,9 +309,7 @@ def test_start_ghidra_detaches_from_parent_session_on_posix(
     monkeypatch.setattr(
         ghidra_setup.subprocess,
         "Popen",
-        lambda command, **kwargs: recorded.update(
-            {"command": command, "kwargs": kwargs}
-        ),
+        lambda command, **kwargs: recorded.update({"command": command, "kwargs": kwargs}),
     )
 
     assert start_ghidra(ghidra_path, repo_root=tmp_path) == 0
@@ -353,9 +317,7 @@ def test_start_ghidra_detaches_from_parent_session_on_posix(
     assert recorded["kwargs"]["start_new_session"] is True
 
 
-def test_start_ghidra_does_not_detach_on_non_posix(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
+def test_start_ghidra_does_not_detach_on_non_posix(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     ghidra_path = tmp_path / "ghidra_12.1_PUBLIC"
     ghidra_path.mkdir()
     launcher = ghidra_path / "ghidraRun"
@@ -366,18 +328,14 @@ def test_start_ghidra_does_not_detach_on_non_posix(
     monkeypatch.setattr(
         ghidra_setup.subprocess,
         "Popen",
-        lambda command, **kwargs: recorded.update(
-            {"command": command, "kwargs": kwargs}
-        ),
+        lambda command, **kwargs: recorded.update({"command": command, "kwargs": kwargs}),
     )
 
     assert start_ghidra(ghidra_path, repo_root=tmp_path) == 0
     assert recorded["kwargs"]["start_new_session"] is False
 
 
-def test_start_ghidra_uses_batch_launcher_without_detaching_on_windows(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
+def test_start_ghidra_uses_batch_launcher_without_detaching_on_windows(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     ghidra_path = tmp_path / "ghidra_12.1_PUBLIC"
     ghidra_path.mkdir()
     launcher = ghidra_path / "ghidraRun.bat"
@@ -390,9 +348,7 @@ def test_start_ghidra_uses_batch_launcher_without_detaching_on_windows(
     monkeypatch.setattr(
         ghidra_setup.subprocess,
         "Popen",
-        lambda command, **kwargs: recorded.update(
-            {"command": command, "kwargs": kwargs}
-        ),
+        lambda command, **kwargs: recorded.update({"command": command, "kwargs": kwargs}),
     )
 
     assert start_ghidra(ghidra_path, repo_root=tmp_path) == 0
@@ -400,9 +356,7 @@ def test_start_ghidra_uses_batch_launcher_without_detaching_on_windows(
     assert recorded["kwargs"]["start_new_session"] is False
 
 
-def test_collect_preflight_issues_passes_with_required_files(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
+def test_collect_preflight_issues_passes_with_required_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     ghidra_path = tmp_path / "ghidra_12.1_PUBLIC"
     (ghidra_path / "Extensions" / "Ghidra").mkdir(parents=True)
     (ghidra_path / "ghidraRun.bat").write_text("echo off\n", encoding="utf-8")
@@ -429,9 +383,7 @@ def test_collect_preflight_issues_passes_with_required_files(
 
 
 def test_resolve_mcp_url_uses_env_url(tmp_path: Path):
-    (tmp_path / ".env").write_text(
-        "GHIDRA_MCP_URL=http://127.0.0.1:9999\n", encoding="utf-8"
-    )
+    (tmp_path / ".env").write_text("GHIDRA_MCP_URL=http://127.0.0.1:9999\n", encoding="utf-8")
 
     assert resolve_mcp_url(tmp_path) == "http://127.0.0.1:9999"
 
@@ -450,15 +402,11 @@ def test_resolve_mcp_url_defaults_when_env_missing(tmp_path: Path):
 
 
 def test_resolve_deploy_test_modes_defaults_to_cli_only(tmp_path: Path):
-    assert resolve_deploy_test_modes(tmp_path, ["selected-contract"]) == [
-        "selected-contract"
-    ]
+    assert resolve_deploy_test_modes(tmp_path, ["selected-contract"]) == ["selected-contract"]
 
 
 def test_resolve_deploy_test_modes_reads_local_env(tmp_path: Path):
-    (tmp_path / ".env").write_text(
-        "GHIDRA_MCP_DEPLOY_TESTS=release,endpoint-catalog\n", encoding="utf-8"
-    )
+    (tmp_path / ".env").write_text("GHIDRA_MCP_DEPLOY_TESTS=release,endpoint-catalog\n", encoding="utf-8")
 
     assert resolve_deploy_test_modes(tmp_path, []) == ["release", "endpoint-catalog"]
 
@@ -472,9 +420,7 @@ def test_resolve_deploy_test_modes_can_disable_local_env(tmp_path: Path):
 def test_run_default_smoke_test_requires_key_tools(tmp_path: Path, monkeypatch):
     from tools.setup import ghidra
 
-    schema = {
-        "tools": [{"path": f"/{name}"} for name in sorted(ghidra.SMOKE_REQUIRED_TOOLS)]
-    }
+    schema = {"tools": [{"path": f"/{name}"} for name in sorted(ghidra.SMOKE_REQUIRED_TOOLS)]}
     monkeypatch.setattr(
         ghidra,
         "_mcp_request",
@@ -484,9 +430,7 @@ def test_run_default_smoke_test_requires_key_tools(tmp_path: Path, monkeypatch):
     run_default_smoke_test(tmp_path, "http://127.0.0.1:8089")
 
 
-def test_endpoint_catalog_accepts_schema_with_catalog_paths(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
+def test_endpoint_catalog_accepts_schema_with_catalog_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     from tools.setup import ghidra
 
     endpoints_dir = tmp_path / "tests"
@@ -507,9 +451,7 @@ def test_endpoint_catalog_accepts_schema_with_catalog_paths(
     run_endpoint_catalog_test(tmp_path, "http://127.0.0.1:8089")
 
 
-def test_selected_endpoint_contract_checks_schema_against_catalog(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
+def test_selected_endpoint_contract_checks_schema_against_catalog(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     from tools.setup import ghidra
 
     endpoints_dir = tmp_path / "tests"
@@ -521,14 +463,8 @@ def test_selected_endpoint_contract_checks_schema_against_catalog(
                 "endpoints": [
                     {
                         "path": f"/{name}",
-                        "method": (
-                            "POST"
-                            if name in {"create_struct", "delete_file"}
-                            else "GET"
-                        ),
-                        "params": (
-                            ["program"] if name != "delete_file" else ["filePath"]
-                        ),
+                        "method": ("POST" if name in {"create_struct", "delete_file"} else "GET"),
+                        "params": (["program"] if name != "delete_file" else ["filePath"]),
                     }
                     for name in selected
                 ]
@@ -545,16 +481,8 @@ def test_selected_endpoint_contract_checks_schema_against_catalog(
                 "tools": [
                     {
                         "path": f"/{name}",
-                        "method": (
-                            "POST"
-                            if name in {"create_struct", "delete_file"}
-                            else "GET"
-                        ),
-                        "params": (
-                            [{"name": "filePath"}]
-                            if name == "delete_file"
-                            else [{"name": "program"}]
-                        ),
+                        "method": ("POST" if name in {"create_struct", "delete_file"} else "GET"),
+                        "params": ([{"name": "filePath"}] if name == "delete_file" else [{"name": "program"}]),
                     }
                     for name in selected
                 ]
@@ -565,9 +493,7 @@ def test_selected_endpoint_contract_checks_schema_against_catalog(
     run_selected_endpoint_contract_test(tmp_path, "http://127.0.0.1:8089")
 
 
-def test_selected_endpoint_contract_reports_missing_selected_tool(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
+def test_selected_endpoint_contract_reports_missing_selected_tool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     from tools.setup import ghidra
 
     endpoints_dir = tmp_path / "tests"
@@ -590,21 +516,11 @@ def test_run_deploy_tests_dispatches_release_tier(monkeypatch: pytest.MonkeyPatc
     from tools.setup import ghidra
 
     calls: list[str] = []
-    monkeypatch.setattr(
-        ghidra, "run_default_smoke_test", lambda *args: calls.append("smoke")
-    )
-    monkeypatch.setattr(
-        ghidra, "reset_benchmark_fixture", lambda *args: calls.append("reset")
-    )
-    monkeypatch.setattr(
-        ghidra, "run_benchmark_read_test", lambda *args: calls.append("read")
-    )
-    monkeypatch.setattr(
-        ghidra, "run_benchmark_write_test", lambda *args: calls.append("write")
-    )
-    monkeypatch.setattr(
-        ghidra, "run_release_regression_tests", lambda *args: calls.append("release")
-    )
+    monkeypatch.setattr(ghidra, "run_default_smoke_test", lambda *args: calls.append("smoke"))
+    monkeypatch.setattr(ghidra, "reset_benchmark_fixture", lambda *args: calls.append("reset"))
+    monkeypatch.setattr(ghidra, "run_benchmark_read_test", lambda *args: calls.append("read"))
+    monkeypatch.setattr(ghidra, "run_benchmark_write_test", lambda *args: calls.append("write"))
+    monkeypatch.setattr(ghidra, "run_release_regression_tests", lambda *args: calls.append("release"))
     run_deploy_tests(Path("C:/repo"), "http://127.0.0.1:8089", ["release"])
 
     assert calls == ["smoke", "release"]
@@ -616,27 +532,17 @@ def test_run_deploy_tests_default_does_not_import_benchmark(
     from tools.setup import ghidra
 
     calls: list[str] = []
-    monkeypatch.setattr(
-        ghidra, "run_default_smoke_test", lambda *args: calls.append("smoke")
-    )
-    monkeypatch.setattr(
-        ghidra, "reset_benchmark_fixture", lambda *args: calls.append("reset")
-    )
-    monkeypatch.setattr(
-        ghidra, "run_benchmark_read_test", lambda *args: calls.append("read")
-    )
-    monkeypatch.setattr(
-        ghidra, "run_benchmark_write_test", lambda *args: calls.append("write")
-    )
+    monkeypatch.setattr(ghidra, "run_default_smoke_test", lambda *args: calls.append("smoke"))
+    monkeypatch.setattr(ghidra, "reset_benchmark_fixture", lambda *args: calls.append("reset"))
+    monkeypatch.setattr(ghidra, "run_benchmark_read_test", lambda *args: calls.append("read"))
+    monkeypatch.setattr(ghidra, "run_benchmark_write_test", lambda *args: calls.append("write"))
 
     run_deploy_tests(Path("C:/repo"), "http://127.0.0.1:8089", [])
 
     assert calls == ["smoke"]
 
 
-def test_reset_benchmark_fixture_builds_generic_fixture(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
+def test_reset_benchmark_fixture_builds_generic_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     from tools.setup import ghidra
 
     invocation: dict[str, object] = {}
@@ -655,9 +561,7 @@ def test_reset_benchmark_fixture_builds_generic_fixture(
     with pytest.raises(BuildInvoked):
         ghidra.reset_benchmark_fixture(tmp_path, "http://127.0.0.1:8089")
 
-    build_script = (
-        tmp_path / "tests" / "fixtures" / "ghidra_benchmark" / "build.py"
-    )
+    build_script = tmp_path / "tests" / "fixtures" / "ghidra_benchmark" / "build.py"
     assert invocation == {
         "command": [sys.executable, str(build_script)],
         "kwargs": {"cwd": tmp_path, "check": True},
@@ -681,11 +585,7 @@ def test_benchmark_regression_dir_uses_generic_fixture(tmp_path: Path):
 
 
 def test_mark_extension_known_promotes_empty_extensions_to_open_form():
-    content = (
-        "<TOOL>\n"
-        "    <EXTENSIONS />\n"
-        "</TOOL>"
-    )
+    content = "<TOOL>\n" "    <EXTENSIONS />\n" "</TOOL>"
 
     updated = mark_extension_known_in_tool_config(content, "GhidraMCP-next")
 
@@ -695,13 +595,7 @@ def test_mark_extension_known_promotes_empty_extensions_to_open_form():
 
 
 def test_mark_extension_known_appends_into_existing_open_extensions_block():
-    content = (
-        "<TOOL>\n"
-        "    <EXTENSIONS>\n"
-        '        <EXTENSION NAME="OtherExt" />\n'
-        "    </EXTENSIONS>\n"
-        "</TOOL>"
-    )
+    content = "<TOOL>\n" "    <EXTENSIONS>\n" '        <EXTENSION NAME="OtherExt" />\n' "    </EXTENSIONS>\n" "</TOOL>"
 
     updated = mark_extension_known_in_tool_config(content, "GhidraMCP-next")
 
@@ -712,11 +606,7 @@ def test_mark_extension_known_appends_into_existing_open_extensions_block():
 
 def test_mark_extension_known_is_idempotent():
     content = (
-        "<TOOL>\n"
-        "    <EXTENSIONS>\n"
-        '        <EXTENSION NAME="GhidraMCP-next" />\n'
-        "    </EXTENSIONS>\n"
-        "</TOOL>"
+        "<TOOL>\n" "    <EXTENSIONS>\n" '        <EXTENSION NAME="GhidraMCP-next" />\n' "    </EXTENSIONS>\n" "</TOOL>"
     )
 
     updated = mark_extension_known_in_tool_config(content, "GhidraMCP-next")
@@ -726,11 +616,7 @@ def test_mark_extension_known_is_idempotent():
 
 
 def test_mark_extension_known_creates_extensions_block_when_missing():
-    content = (
-        "<TOOL>\n"
-        '    <PACKAGE NAME="Utility" />\n'
-        "</TOOL>"
-    )
+    content = "<TOOL>\n" '    <PACKAGE NAME="Utility" />\n' "</TOOL>"
 
     updated = mark_extension_known_in_tool_config(content, "GhidraMCP-next")
 
@@ -927,9 +813,7 @@ def test_patch_ghidra_user_configs_no_target_keeps_legacy_glob(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_debugger_live_skipped_on_non_windows(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
+def test_debugger_live_skipped_on_non_windows(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     from tools.setup import ghidra
 
     monkeypatch.setattr(ghidra.os, "name", "posix")
@@ -937,9 +821,7 @@ def test_debugger_live_skipped_on_non_windows(
         ghidra.run_debugger_live_test(tmp_path, "http://127.0.0.1:8089")
 
 
-def test_debugger_live_skipped_when_benchmarkdebug_missing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
+def test_debugger_live_skipped_when_benchmarkdebug_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     from tools.setup import ghidra
 
     monkeypatch.setattr(ghidra.os, "name", "nt")
@@ -948,9 +830,7 @@ def test_debugger_live_skipped_when_benchmarkdebug_missing(
         ghidra.run_debugger_live_test(tmp_path, "http://127.0.0.1:8089")
 
 
-def test_debugger_live_skipped_on_environmental_launch_failure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
+def test_debugger_live_skipped_on_environmental_launch_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """A /debugger/launch failure whose error matches a known-environmental
     hint (no WDK, ghidratrace mismatch, dbgeng missing) gets re-classified
     as a skip, not a regression."""
@@ -977,9 +857,7 @@ def test_debugger_live_skipped_on_environmental_launch_failure(
         ghidra.run_debugger_live_test(tmp_path, "http://127.0.0.1:8089")
 
 
-def test_debugger_live_raises_runtime_error_on_real_failure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
+def test_debugger_live_raises_runtime_error_on_real_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """A non-environmental error (something the test actually caught)
     must still bubble up as RuntimeError so the release gate fails."""
     from tools.setup import ghidra
@@ -1010,9 +888,7 @@ def test_debugger_live_raises_runtime_error_on_real_failure(
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_debugger_python_prefers_env_var(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
+def test_resolve_debugger_python_prefers_env_var(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     from tools.setup import ghidra
 
     fake_py = tmp_path / "ms-store-python.exe"
@@ -1022,24 +898,18 @@ def test_resolve_debugger_python_prefers_env_var(
     assert resolved == fake_py
 
 
-def test_resolve_debugger_python_falls_back_to_dotenv(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
+def test_resolve_debugger_python_falls_back_to_dotenv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     from tools.setup import ghidra
 
     monkeypatch.delenv("GHIDRA_DEBUGGER_PYTHON", raising=False)
     fake_py = tmp_path / "dotenv-python.exe"
     fake_py.write_text("", encoding="utf-8")
-    (tmp_path / ".env").write_text(
-        f"GHIDRA_DEBUGGER_PYTHON={fake_py}\n", encoding="utf-8"
-    )
+    (tmp_path / ".env").write_text(f"GHIDRA_DEBUGGER_PYTHON={fake_py}\n", encoding="utf-8")
     resolved = ghidra._resolve_debugger_python(tmp_path)
     assert resolved == fake_py
 
 
-def test_install_ghidratrace_skips_when_no_wheel(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
-):
+def test_install_ghidratrace_skips_when_no_wheel(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys):
     from tools.setup import ghidra
 
     monkeypatch.delenv("GHIDRA_DEBUGGER_PYTHON", raising=False)
@@ -1050,9 +920,7 @@ def test_install_ghidratrace_skips_when_no_wheel(
     assert "No ghidratrace wheel found" in capsys.readouterr().out
 
 
-def test_install_ghidratrace_dry_run_does_not_invoke_pip(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
-):
+def test_install_ghidratrace_dry_run_does_not_invoke_pip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys):
     from tools.setup import ghidra
 
     # Build a fake wheel and a fake Python.
@@ -1069,18 +937,14 @@ def test_install_ghidratrace_dry_run_does_not_invoke_pip(
         raise AssertionError("subprocess.run must not run in dry_run mode")
 
     monkeypatch.setattr(ghidra.subprocess, "run", fail_if_called)
-    rc = ghidra.install_ghidratrace_for_debugger(
-        tmp_path, tmp_path / "ghidra_install", dry_run=True
-    )
+    rc = ghidra.install_ghidratrace_for_debugger(tmp_path, tmp_path / "ghidra_install", dry_run=True)
     assert rc == 0
     out = capsys.readouterr().out
     assert "DRY RUN" in out
     assert "ghidratrace-12.1" in out
 
 
-def test_install_ghidratrace_invokes_pip_with_force_reinstall(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
+def test_install_ghidratrace_invokes_pip_with_force_reinstall(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     from tools.setup import ghidra
 
     wheel_dir = tmp_path / "ghidra_install" / "Ghidra" / "Debug" / "Debugger-rmi-trace" / "pypkg" / "dist"
@@ -1102,13 +966,9 @@ def test_install_ghidratrace_invokes_pip_with_force_reinstall(
         return FakeCompleted()
 
     monkeypatch.setattr(ghidra.subprocess, "run", fake_run)
-    rc = ghidra.install_ghidratrace_for_debugger(
-        tmp_path, tmp_path / "ghidra_install"
-    )
+    rc = ghidra.install_ghidratrace_for_debugger(tmp_path, tmp_path / "ghidra_install")
     assert rc == 0
-    assert len(invocations) == 2, (
-        "expected 2 pip invocations (protobuf + ghidratrace)"
-    )
+    assert len(invocations) == 2, "expected 2 pip invocations (protobuf + ghidratrace)"
     # First: protobuf upgrade
     assert invocations[0][0] == str(fake_py)
     assert invocations[0][1:5] == ["-m", "pip", "install", "--upgrade"]
@@ -1118,9 +978,7 @@ def test_install_ghidratrace_invokes_pip_with_force_reinstall(
     assert str(wheel) in invocations[1]
 
 
-def test_run_release_regression_catches_debugger_skip(
-    monkeypatch: pytest.MonkeyPatch, capsys
-):
+def test_run_release_regression_catches_debugger_skip(monkeypatch: pytest.MonkeyPatch, capsys):
     """When debugger-live throws DebuggerLiveTestSkipped, the release
     regression tier prints SKIPPED and reports success — does NOT fail
     the gate."""

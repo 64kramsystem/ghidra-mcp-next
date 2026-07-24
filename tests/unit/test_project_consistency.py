@@ -1,7 +1,7 @@
 """
 Project Consistency Tests.
 
-Validates version consistency, bridge configuration, and architectural
+Validates build identity, bridge configuration, and architectural
 invariants across the project. All tests run without a server.
 """
 
@@ -9,10 +9,10 @@ import json
 import os
 import re
 import unittest
-import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import sys
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -30,76 +30,46 @@ def bridge_source_text() -> str:
     return "\n".join(p.read_text() for p in sorted(BRIDGE_PKG.glob("*.py")))
 
 
-def get_pom_version() -> str:
-    """Extract version from pom.xml."""
-    tree = ET.parse(POM_XML)
-    ns = {"m": "http://maven.apache.org/POM/4.0.0"}
-    version = tree.find(".//m:version", ns)
-    return version.text if version is not None else ""
+class TestBuildIdentity(unittest.TestCase):
+    """Verify the extension and bridge use independent automatic identities."""
 
-
-def get_pyproject_version() -> str:
-    """Extract the [project] version from pyproject.toml."""
-    match = re.search(
-        r'(?m)^version = "(\d+\.\d+\.\d+)"', PYPROJECT_TOML.read_text(encoding="utf-8")
-    )
-    return match.group(1) if match else ""
-
-
-def get_bridge_fallback_version() -> str:
-    """Extract the from-source __version__ fallback in the bridge package __init__.
-
-    This is the version reported when the bridge runs from an uninstalled
-    source tree (the importlib.metadata lookup fails). version_bump.py keeps it
-    in sync with pyproject/pom, so it's a real version source and must not drift.
-    """
-    init_py = BRIDGE_PKG / "__init__.py"
-    match = re.search(
-        r'__version__ = "(\d+\.\d+\.\d+)"', init_py.read_text(encoding="utf-8")
-    )
-    return match.group(1) if match else ""
-
-
-class TestVersionConsistency(unittest.TestCase):
-    """Verify version strings are consistent across sources."""
-
-    def test_pom_version_exists(self):
-        version = get_pom_version()
-        self.assertTrue(version, "pom.xml should have a version")
-        self.assertRegex(version, r'\d+\.\d+\.\d+')
-
-    def test_pyproject_version_matches_pom(self):
-        """The wheel's version (pyproject.toml) must track pom.xml."""
-        self.assertEqual(
-            get_pyproject_version(),
-            get_pom_version(),
-            "pyproject.toml [project] version != pom.xml version",
+    def test_maven_release_artifact_uses_build_timestamp(self):
+        pom = POM_XML.read_text(encoding="utf-8")
+        self.assertIn("<version>0.0.0</version>", pom)
+        self.assertIn(
+            "<finalName>${project.artifactId}-${release.timestamp}</finalName>",
+            pom,
         )
 
-    def test_bridge_fallback_version_matches_pom(self):
-        """The bridge package's from-source __version__ fallback must track pom.xml.
+    def test_bridge_version_is_dynamic_and_git_scoped(self):
+        pyproject = PYPROJECT_TOML.read_text(encoding="utf-8")
+        self.assertIn('dynamic = ["version"]', pyproject)
+        self.assertNotRegex(pyproject, r'(?m)^version = "\d+\.\d+\.\d+"$')
+        self.assertIn('path = "tools/bridge_version.py"', pyproject)
+        self.assertIn('"/python/bridge_mcp_ghidra"', pyproject)
+        self.assertNotIn('    "CHANGELOG.md",', pyproject)
 
-        version_bump.py maintains this alongside pyproject.toml; without this
-        guard it can silently drift (a running-from-source bridge would then
-        report a stale version). Regression: it shipped as 5.14.1 while the repo
-        was 5.15.0 until this check was added.
-        """
-        self.assertEqual(
-            get_bridge_fallback_version(),
-            get_pom_version(),
-            "python/bridge_mcp_ghidra/__init__.py __version__ fallback != pom.xml version",
+        version_source = (PROJECT_ROOT / "tools" / "bridge_version.py").read_text(encoding="utf-8")
+        for bridge_input in (
+            "python/bridge_mcp_ghidra",
+            "pyproject.toml",
+            "tools/bridge_version.py",
+            "README.md",
+            "LICENSE",
+            "NOTICE",
+            ".gitignore",
+        ):
+            self.assertIn(bridge_input, version_source)
+
+    def test_plugin_metadata_uses_build_timestamp(self):
+        version_properties = (
+            PROJECT_ROOT / "src" / "main" / "resources" / "com" / "xebyte" / "version.properties"
+        ).read_text(encoding="utf-8")
+        manifest = (PROJECT_ROOT / "src" / "main" / "resources" / "META-INF" / "MANIFEST.MF").read_text(
+            encoding="utf-8"
         )
-
-    def test_java_version_matches_pom(self):
-        """VersionInfo in GhidraMCPPlugin.java should match pom.xml."""
-        pom_version = get_pom_version()
-        plugin_path = JAVA_SRC / "GhidraMCPPlugin.java"
-        if plugin_path.exists():
-            content = plugin_path.read_text()
-            match = re.search(r'VERSION\s*=\s*"([^"]+)"', content)
-            if match:
-                self.assertEqual(match.group(1), pom_version,
-                    f"VersionInfo VERSION={match.group(1)} != pom.xml {pom_version}")
+        self.assertIn("app.version=${release.timestamp}", version_properties)
+        self.assertIn("Plugin-Version: ${release.timestamp}", manifest)
 
     def test_user_visible_tool_counts_use_stable_lower_bound(self):
         """User-visible descriptions should not hardcode the exact catalog size."""
@@ -130,12 +100,15 @@ class TestVersionConsistency(unittest.TestCase):
         expected = {
             PROJECT_ROOT / "README.md": "# GhidraMCP-next",
             PROJECT_ROOT / "pyproject.toml": 'description = "GhidraMCP-next bridge',
-            PROJECT_ROOT / "src" / "main" / "resources" / "extension.properties":
-                "name=GhidraMCP-next",
-            PROJECT_ROOT / "src" / "main" / "resources" / "META-INF" / "MANIFEST.MF":
-                "Plugin-Name: GhidraMCP-next",
-            PROJECT_ROOT / "src" / "main" / "resources" / "com" / "xebyte" /
-                "version.properties": "app.name=GhidraMCP-next",
+            PROJECT_ROOT / "src" / "main" / "resources" / "extension.properties": "name=GhidraMCP-next",
+            PROJECT_ROOT / "src" / "main" / "resources" / "META-INF" / "MANIFEST.MF": "Plugin-Name: GhidraMCP-next",
+            PROJECT_ROOT
+            / "src"
+            / "main"
+            / "resources"
+            / "com"
+            / "xebyte"
+            / "version.properties": "app.name=GhidraMCP-next",
         }
         for path, branding in expected.items():
             self.assertIn(branding, path.read_text(encoding="utf-8"))
@@ -204,23 +177,27 @@ class TestJavaArchitecture(unittest.TestCase):
             content = svc_file.read_text()
             if "@McpTool" in content:
                 # At least some methods should return Response
-                self.assertIn("Response", content,
-                    f"{svc_file.name} has @McpTool but no Response return type")
+                self.assertIn("Response", content, f"{svc_file.name} has @McpTool but no Response return type")
 
     def test_all_services_have_annotations(self):
         """All service files should have at least one @McpTool annotation."""
         expected = [
-            "ListingService", "FunctionService", "CommentService",
-            "SymbolLabelService", "XrefCallGraphService", "DataTypeService",
-            "AnalysisService", "BinaryComparisonService",
-            "MalwareSecurityService", "ProgramScriptService",
+            "ListingService",
+            "FunctionService",
+            "CommentService",
+            "SymbolLabelService",
+            "XrefCallGraphService",
+            "DataTypeService",
+            "AnalysisService",
+            "BinaryComparisonService",
+            "MalwareSecurityService",
+            "ProgramScriptService",
         ]
         for name in expected:
             path = CORE_SRC / f"{name}.java"
             if path.exists():
                 content = path.read_text()
-                self.assertIn("@McpTool", content,
-                    f"{name}.java missing @McpTool annotations")
+                self.assertIn("@McpTool", content, f"{name}.java missing @McpTool annotations")
 
     def test_manual_gui_headless_shared_endpoints_do_not_drift(self):
         """Manual createContext registrations need explicit GUI/headless parity."""
@@ -230,9 +207,7 @@ class TestJavaArchitecture(unittest.TestCase):
         headless = set(re.findall(r'safeContext\("([^"]+)"', headless_file.read_text()))
         annotated = set()
         for java_file in list(CORE_SRC.glob("*Service.java")) + list((JAVA_SRC / "headless").glob("*Service.java")):
-            annotated.update(
-                re.findall(r'@McpTool\(\s*(?:path\s*=\s*)?"([^"]+)"', java_file.read_text())
-            )
+            annotated.update(re.findall(r'@McpTool\(\s*(?:path\s*=\s*)?"([^"]+)"', java_file.read_text()))
 
         gui_only_expected = {
             "/batch_apply_documentation",
@@ -255,10 +230,7 @@ class TestJavaArchitecture(unittest.TestCase):
 
     def test_manual_repository_server_endpoints_are_absent(self):
         """Removed repository-server routes must not survive as catalog-only entries."""
-        paths = {
-            entry["path"]
-            for entry in json.loads(ENDPOINTS_JSON.read_text())["endpoints"]
-        }
+        paths = {entry["path"] for entry in json.loads(ENDPOINTS_JSON.read_text())["endpoints"]}
         self.assertFalse(any(path.startswith("/server/") for path in paths))
 
 
@@ -275,9 +247,7 @@ class TestProjectStructure(unittest.TestCase):
         self.assertTrue((JAVA_SRC / "GhidraMCPPlugin.java").exists())
 
     def test_headless_server_exists(self):
-        self.assertTrue(
-            (JAVA_SRC / "headless" / "GhidraMCPHeadlessServer.java").exists()
-        )
+        self.assertTrue((JAVA_SRC / "headless" / "GhidraMCPHeadlessServer.java").exists())
 
 
 if __name__ == "__main__":

@@ -9,14 +9,17 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterable, Sequence
 
-from tools.setup.versioning import read_pom_versions
+from tools.setup.versioning import read_pom_ghidra_version
 
 _RELEASE_FILES = frozenset(
     {
+        ".gitignore",
         "LICENSE",
+        "NOTICE",
         "README.md",
         "pom.xml",
         "pyproject.toml",
+        "tools/bridge_version.py",
     }
 )
 _RELEASE_PREFIXES = ("python/", "src/assembly/", "src/main/")
@@ -24,6 +27,8 @@ _TIMESTAMP_RE = re.compile(r"^[0-9]{8}-[0-9]{6}$")
 _SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 _UNRELEASED_RE = re.compile(r"(?m)^## Unreleased[ \t]*$")
 _LEVEL_TWO_HEADING_RE = re.compile(r"(?m)^## .+$")
+_BRIDGE_WHEEL_RE = re.compile(r"^ghidra_mcp_bridge-([0-9]{8}\.[0-9]{6})-[^-]+-[^-]+-[^-]+\.whl$")
+_BRIDGE_SDIST_RE = re.compile(r"^ghidra_mcp_bridge-([0-9]{8}\.[0-9]{6})\.tar\.gz$")
 
 
 def path_affects_release(path: str) -> bool:
@@ -73,6 +78,21 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _bridge_version(wheel: Path, sdist: Path) -> str:
+    wheel_match = _BRIDGE_WHEEL_RE.fullmatch(wheel.name)
+    sdist_match = _BRIDGE_SDIST_RE.fullmatch(sdist.name)
+    if wheel_match is None or sdist_match is None:
+        raise ValueError("bridge artifacts must use timestamp version YYYYMMDD.HHMMSS")
+    wheel_version = wheel_match.group(1)
+    sdist_version = sdist_match.group(1)
+    if wheel_version != sdist_version:
+        raise ValueError(
+            "bridge wheel and source distribution versions do not match: "
+            f"wheel={wheel_version}, sdist={sdist_version}"
+        )
+    return wheel_version
 
 
 def _unreleased_bounds(text: str) -> tuple[re.Match[str], int]:
@@ -129,17 +149,28 @@ def prepare_release(
     timestamp = _validated_timestamp(build_timestamp)
     sha = _validated_sha(commit_sha)
 
-    versions = read_pom_versions(repo_root)
-    if versions.ghidra_version != expected_ghidra_version:
+    ghidra_version = read_pom_ghidra_version(repo_root)
+    if ghidra_version != expected_ghidra_version:
         raise ValueError(
             "built Ghidra version does not match checkout: "
-            f"build={expected_ghidra_version}, checkout={versions.ghidra_version}"
+            f"build={expected_ghidra_version}, checkout={ghidra_version}"
         )
 
+    extension = _find_one(extension_dir, "*.zip", "Ghidra extension ZIP")
+    wheel = _find_one(python_dir, "*.whl", "Python wheel")
+    sdist = _find_one(python_dir, "*.tar.gz", "Python source distribution")
+    expected_extension_name = f"GhidraMCP-next-{timestamp}.zip"
+    if extension.name != expected_extension_name:
+        raise ValueError(
+            "Ghidra extension filename does not match release timestamp: "
+            f"expected={expected_extension_name}, actual={extension.name}"
+        )
+    bridge_version = _bridge_version(wheel, sdist)
+
     artifact_paths = [
-        ("ghidra_extension", _find_one(extension_dir, "*.zip", "Ghidra extension ZIP")),
-        ("python_wheel", _find_one(python_dir, "*.whl", "Python wheel")),
-        ("python_sdist", _find_one(python_dir, "*.tar.gz", "Python source distribution")),
+        ("ghidra_extension", extension),
+        ("python_wheel", wheel),
+        ("python_sdist", sdist),
     ]
     artifacts = [
         {
@@ -157,7 +188,8 @@ def prepare_release(
         "schema_version": 1,
         "name": name,
         "tag": tag,
-        "ghidra_version": versions.ghidra_version,
+        "ghidra_version": ghidra_version,
+        "bridge_version": bridge_version,
         "build_timestamp_utc": timestamp,
         "commit_sha": sha,
         "artifacts": artifacts,
@@ -173,7 +205,8 @@ def prepare_release(
     notes = [
         f"# {name}",
         "",
-        f"- Ghidra version: `{versions.ghidra_version}`",
+        f"- Ghidra version: `{ghidra_version}`",
+        f"- Bridge version: `{bridge_version}`",
         f"- Commit: `{sha}`",
         f"- Tag: `{tag}`",
         "",

@@ -1,5 +1,5 @@
 {
-  "version": "5.15.0",
+  "schema_version": 1,
   "description": "GhidraMCP-next REST API Endpoint Specification",
   "total_endpoints": 255,
   "categories": {

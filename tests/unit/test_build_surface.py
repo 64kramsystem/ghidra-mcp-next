@@ -58,6 +58,7 @@ def test_env_template_has_no_build_backend_selector():
     assert "TOOLS_SETUP_BACKEND" not in env_template
 
 
-def test_version_bump_has_no_docker_tag_rule():
-    version_bump = (ROOT / "tools/setup/version_bump.py").read_text(encoding="utf-8")
-    assert 'f"v{new_version}:"' not in version_bump
+def test_manual_version_bump_surface_is_absent():
+    assert not (ROOT / "tools/setup/version_bump.py").exists()
+    cli = (ROOT / "tools/setup/cli.py").read_text(encoding="utf-8")
+    assert "bump-version" not in cli
