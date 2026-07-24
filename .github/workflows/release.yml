@@ -32,12 +32,12 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       with:
         fetch-depth: 0  # Fetch full history for proper tagging
 
     - name: Set up JDK 21
-      uses: actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a  # v5.5.0
+      uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95  # v5.6.0
       with:
         java-version: '21'
         distribution: 'temurin'
@@ -96,9 +96,10 @@ jobs:
         echo "✅ Installed 19 Ghidra JARs to Maven local repository"
 
     - name: Install uv (Python build + test gate)
-      uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
+      uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9  # v9.0.0
       with:
         enable-cache: true
+        prune-cache: true
 
     - name: Set up Python (offline test gate)
       run: uv python install 3.12
@@ -290,7 +291,7 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Create GitHub Release
-      uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b  # v3.0.1
+      uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228  # v3.0.2
       with:
         tag_name: ${{ steps.version.outputs.TAG }}
         name: "GhidraMCP ${{ steps.version.outputs.VERSION }}"
