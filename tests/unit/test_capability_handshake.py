@@ -2,7 +2,6 @@ import json
 import asyncio
 import threading
 import time
-import tomllib
 from copy import deepcopy
 from dataclasses import replace
 from http.client import IncompleteRead
@@ -11,6 +10,11 @@ from unittest.mock import AsyncMock
 from pathlib import Path
 
 import pytest
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10
+    import tomli as tomllib
 
 from bridge_mcp_ghidra import handshake
 from bridge_mcp_ghidra import connection, registry, state, static_tools

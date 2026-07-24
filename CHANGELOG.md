@@ -105,6 +105,10 @@ Complete version history for the Ghidra MCP Server project.
 
 ### Changed
 
+- Removed the standalone CodeQL, unused pre-release, and self-hosted Windows
+  release-regression GitHub Actions workflows. Stable releases no longer
+  depend on the deleted live-regression workflow.
+
 - Replaced the clear-only `clear_instruction_flow_override` tool with the
   canonical setter, which accepts every Ghidra flow override including
   `NONE`, and made multiline address comments exactly idempotent.
@@ -130,6 +134,10 @@ Complete version history for the Ghidra MCP Server project.
   static test agent so clean builds no longer rely on dynamic agent loading.
 
 ### Fixed
+
+- Restored Python 3.10 test collection with the `tomli` compatibility parser,
+  and installed Ghidra's `ProposedUtils.jar` in hosted CI and release builds so
+  clean Maven runners can compile the TraceRMI target-method support.
 
 - `list_globals` and `list_data_items_by_xrefs` now reject unknown filter axes and output formats instead of silently returning partial or empty results. Empty text pages return explicit no-match messages, and their schema identifies `name_substring` as the substring matcher and `include_all_sections=true` as required for flat executable snapshots.
 - `set_plate_comment` now sets a plate comment at any valid program address

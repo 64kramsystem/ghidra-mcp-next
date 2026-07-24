@@ -14,37 +14,19 @@ on:
         description: 'Create and push tag for this release'
         type: boolean
         default: true
-      run_live_regression:
-        description: 'Run live Ghidra release regression on a self-hosted Windows runner before publishing'
-        type: boolean
-        default: false
-      ghidra_path:
-        description: 'Ghidra path for live regression self-hosted runner'
-        required: false
-        default: 'F:\ghidra_12.1.2_PUBLIC'
 
 env:
   GHIDRA_VERSION: 12.1.2
   GHIDRA_DATE: 20260605
 
 # OSSF Scorecard Token-Permissions: default to read-only. The
-# create-release job elevates to contents:write for tag + asset
-# creation; the release-regression reusable workflow is read-only.
+# create-release job elevates to contents:write for tag + asset creation.
 permissions:
   contents: read
 
 jobs:
-  release-regression:
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.run_live_regression == 'true'
-    uses: ./.github/workflows/release-regression.yml
-    with:
-      ghidra_path: ${{ github.event.inputs.ghidra_path }}
-      test_tier: release
-
   create-release:
     runs-on: ubuntu-latest
-    needs: [release-regression]
-    if: always() && (needs.release-regression.result == 'success' || needs.release-regression.result == 'skipped')
     permissions:
       contents: write  # Required for creating releases and tags
 
@@ -110,7 +92,8 @@ jobs:
         mvn -q install:install-file -Dfile="${GHIDRA_DIR}/Ghidra/Debug/Debugger-api/lib/Debugger-api.jar"                     -DgroupId=ghidra -DartifactId=Debugger-api              -Dversion=${GV} -Dpackaging=jar
         mvn -q install:install-file -Dfile="${GHIDRA_DIR}/Ghidra/Debug/Framework-TraceModeling/lib/Framework-TraceModeling.jar" -DgroupId=ghidra -DartifactId=Framework-TraceModeling -Dversion=${GV} -Dpackaging=jar
         mvn -q install:install-file -Dfile="${GHIDRA_DIR}/Ghidra/Debug/Debugger-rmi-trace/lib/Debugger-rmi-trace.jar"         -DgroupId=ghidra -DartifactId=Debugger-rmi-trace        -Dversion=${GV} -Dpackaging=jar
-        echo "✅ Installed 18 Ghidra JARs to Maven local repository"
+        mvn -q install:install-file -Dfile="${GHIDRA_DIR}/Ghidra/Debug/ProposedUtils/lib/ProposedUtils.jar"                   -DgroupId=ghidra -DartifactId=ProposedUtils              -Dversion=${GV} -Dpackaging=jar
+        echo "✅ Installed 19 Ghidra JARs to Maven local repository"
 
     - name: Install uv (Python build + test gate)
       uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
@@ -123,8 +106,8 @@ jobs:
     - name: Offline test gate (block release on red tests)
       run: |
         # A tagged release must not ship if the offline tiers are red. Integration
-        # tests need live Ghidra and stay on the self-hosted release-regression path;
-        # here we run everything that passes without a Ghidra server.
+        # Integration tests need live Ghidra; here we run everything that passes
+        # without a Ghidra server.
         echo "Running offline Java tests..."
         mvn -q test -Dtest='com.xebyte.offline.*Test'
         echo "Running Python unit tests..."
