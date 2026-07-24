@@ -6,6 +6,10 @@ Complete version history for the Ghidra MCP Server project.
 
 ## Unreleased
 
+### Changed
+
+- Removed the obsolete semantic-version release checklist and aligned maintained release guidance with the automatic timestamp-release workflow.
+
 ## GhidraMCP-next 20260724-165710
 
 ### Added

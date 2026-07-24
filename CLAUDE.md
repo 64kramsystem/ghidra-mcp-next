@@ -152,5 +152,6 @@ python -m tools.setup bump-version --new X.Y.Z
 python -m tools.setup verify-version
 ```
 
-Use `docs/releases/RELEASE_CHECKLIST.md` for release preparation and add
-user-visible changes under `Unreleased` in `CHANGELOG.md`.
+Add user-visible changes under `Unreleased` in `CHANGELOG.md`. Do not create
+release tags or publish manually: after its gates pass, `.github/workflows/tests.yml`
+publishes release-worthy `main` pushes as timestamp releases.

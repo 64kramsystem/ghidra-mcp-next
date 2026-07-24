@@ -1,21 +1,17 @@
-# Release documentation
+# Releases
 
-[`../../CHANGELOG.md`](../../CHANGELOG.md) is the canonical version history.
-Older changelog entries describe the code that shipped at that time; they are
-historical records, not instructions for the current tree.
+Releases are automatic timestamp snapshots, not semantic-version milestones.
+After all tests pass, `.github/workflows/tests.yml` publishes a release-worthy
+push to `main`. A manual dispatch from `main` forces publication.
 
-The current unreleased architecture is local-first:
+Release names use `GhidraMCP-next <UTC timestamp>` and tags use
+`build-<UTC timestamp>-<12-character commit>`. Each release contains the tested
+Ghidra extension ZIP, Python wheel, Python source distribution,
+`release-metadata.json`, and `SHA256SUMS`.
 
-- 234 cataloged endpoints served by the Ghidra GUI plugin or headless server;
-- Maven for Java builds and `uv` for Python packaging and tests;
-- local Ghidra projects and explicit multi-program selection;
-- Ghidra TraceRMI debugging through the 21 `debugger_*` tools; and
-- optional, explicitly configured local BSim plus six local comparison tools.
+Add user-visible changes under `Unreleased` in
+[`../../CHANGELOG.md`](../../CHANGELOG.md). After publication, the workflow
+moves those entries under the timestamp release heading and pushes the
+changelog update as `github-actions[bot]`.
 
-The repository-server, documentation-propagation, standalone proxy-debugger,
-naming-policy, Gradle, Docker, and application-specific automation surfaces
-described by some historical releases have been removed.
-
-Use [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md) for the current release
-runbook and [`../README.md`](../README.md) for the maintained documentation
-index.
+No manual release preparation, version bump, or release tag is required.

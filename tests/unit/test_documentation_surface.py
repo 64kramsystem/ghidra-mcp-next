@@ -30,7 +30,6 @@ MAINTAINED = [
     "docs/prompts/ORPHANED_CODE_DISCOVERY_WORKFLOW.md",
     "docs/prompts/STRING_LABELING_CONVENTION.md",
     "docs/releases/README.md",
-    "docs/releases/RELEASE_CHECKLIST.md",
     ".github/workflows/README.md",
     "tools/README.md",
     "tools/context_analysis/README.md",
@@ -110,6 +109,7 @@ def test_obsolete_document_trees_and_files_are_absent():
         "docs/archive/legacy-tools",
         "docs/project-management",
         "docs/releases/archive",
+        "docs/releases/RELEASE_CHECKLIST.md",
         "docs/HUNGARIAN_NOTATION.md",
         "docs/NAMING_CONVENTIONS.md",
         "docs/PLATE_COMMENT_BEST_PRACTICES.md",
@@ -127,6 +127,27 @@ def test_obsolete_document_trees_and_files_are_absent():
         "tools/scyllahide",
     ):
         assert not (ROOT / path).exists(), path
+
+
+def test_release_guidance_describes_only_timestamp_automation():
+    text = "\n".join(
+        (ROOT / path).read_text(encoding="utf-8")
+        for path in (
+            ".github/workflows/README.md",
+            "docs/releases/README.md",
+            "CLAUDE.md",
+        )
+    )
+    for obsolete in (
+        "RELEASE_CHECKLIST",
+        "release.yml",
+        "vX.Y.Z",
+        "build-v<version>",
+        "stable release",
+    ):
+        assert obsolete not in text
+    assert "GhidraMCP-next <UTC timestamp>" in text
+    assert "build-<UTC timestamp>-<12-character commit>" in text
 
 
 def test_runtime_guidance_does_not_link_to_deleted_workflow_docs():
