@@ -12,8 +12,6 @@
 # Dependabot from spamming a backlog of stale PRs if a maintainer
 # falls behind on review.
 #
-# Required by OSSF Scorecard's Dependency-Update-Tool check.
-
 version: 2
 updates:
   - package-ecosystem: github-actions
