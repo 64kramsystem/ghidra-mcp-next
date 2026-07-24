@@ -34,9 +34,7 @@ MAINTAINED = [
     ".github/workflows/README.md",
     "tools/README.md",
     "tools/context_analysis/README.md",
-    "workflows/README.md",
     "ghidra_scripts/README.md",
-    "logs/README.md",
     "scripts/ghidra/README.md",
 ]
 
