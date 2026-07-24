@@ -20,7 +20,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       build_timestamp: ${{ steps.build-meta.outputs.build_timestamp }}
-      project_version: ${{ steps.build-meta.outputs.project_version }}
       ghidra_version: ${{ steps.build-meta.outputs.ghidra_version }}
 
     steps:
@@ -37,14 +36,12 @@ jobs:
       id: build-meta
       run: |
         BUILD_TIMESTAMP=$(date -u +%Y%m%d-%H%M%S)
-        PROJECT_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
         GHIDRA_VERSION=$(mvn help:evaluate -Dexpression=ghidra.version -q -DforceStdout)
         {
           echo "build_timestamp=${BUILD_TIMESTAMP}"
-          echo "project_version=${PROJECT_VERSION}"
           echo "ghidra_version=${GHIDRA_VERSION}"
         } >> "$GITHUB_OUTPUT"
-        echo "Build metadata: GhidraMCP ${PROJECT_VERSION}, Ghidra ${GHIDRA_VERSION}, ${BUILD_TIMESTAMP} UTC"
+        echo "Build metadata: GhidraMCP-next ${BUILD_TIMESTAMP}, Ghidra ${GHIDRA_VERSION}"
 
     - name: Cache Ghidra installation
       id: cache-ghidra
@@ -329,12 +326,12 @@ jobs:
           --output-dir release-info \
           --build-timestamp "${{ needs.java-build.outputs.build_timestamp }}" \
           --commit-sha "${{ github.sha }}" \
-          --project-version "${{ needs.java-build.outputs.project_version }}" \
           --ghidra-version "${{ needs.java-build.outputs.ghidra_version }}"
 
         METADATA=release-info/release-metadata.json
         {
           echo "tag=$(jq -r .tag "$METADATA")"
+          echo "name=$(jq -r .name "$METADATA")"
           echo "extension=$(jq -r '.artifacts[] | select(.kind == "ghidra_extension") | .name' "$METADATA")"
           echo "wheel=$(jq -r '.artifacts[] | select(.kind == "python_wheel") | .name' "$METADATA")"
           echo "sdist=$(jq -r '.artifacts[] | select(.kind == "python_sdist") | .name' "$METADATA")"
@@ -357,7 +354,7 @@ jobs:
           release-info/release-metadata.json \
           release-info/SHA256SUMS \
           --target "${{ github.sha }}" \
-          --title "GhidraMCP ${{ needs.java-build.outputs.project_version }} timestamp build" \
+          --title "${{ steps.prepare.outputs.name }}" \
           --notes-file release-info/release-notes.md \
           --latest=false
 
@@ -379,3 +376,24 @@ jobs:
             exit 1
           }
         done
+
+    - name: Roll released changelog entries
+      if: steps.changes.outputs.release == 'true'
+      env:
+        BUILD_TIMESTAMP: ${{ needs.java-build.outputs.build_timestamp }}
+      run: |
+        python -m tools.release_automation roll-changelog \
+          --changelog CHANGELOG.md \
+          --build-timestamp "$BUILD_TIMESTAMP"
+
+        if git diff --quiet -- CHANGELOG.md; then
+          exit 0
+        fi
+
+        git config user.name "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git add CHANGELOG.md
+        git commit -m "Record GhidraMCP-next ${BUILD_TIMESTAMP}"
+        git fetch origin main
+        git rebase origin/main
+        git push origin HEAD:main

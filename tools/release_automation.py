@@ -9,13 +9,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterable, Sequence
 
-import tomllib
-
 from tools.setup.versioning import read_pom_versions
 
 _RELEASE_FILES = frozenset(
     {
-        "CHANGELOG.md",
         "LICENSE",
         "README.md",
         "pom.xml",
@@ -25,7 +22,8 @@ _RELEASE_FILES = frozenset(
 _RELEASE_PREFIXES = ("python/", "src/assembly/", "src/main/")
 _TIMESTAMP_RE = re.compile(r"^[0-9]{8}-[0-9]{6}$")
 _SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
-_VERSION_RE = re.compile(r"^[0-9A-Za-z][0-9A-Za-z._-]*$")
+_UNRELEASED_RE = re.compile(r"(?m)^## Unreleased[ \t]*$")
+_LEVEL_TWO_HEADING_RE = re.compile(r"(?m)^## .+$")
 
 
 def path_affects_release(path: str) -> bool:
@@ -42,17 +40,6 @@ def should_publish(changed_paths: Iterable[str]) -> bool:
 def decode_changed_paths(payload: bytes, *, nul_terminated: bool) -> list[str]:
     separator = b"\0" if nul_terminated else b"\n"
     return [item.decode("utf-8", errors="surrogateescape") for item in payload.split(separator) if item]
-
-
-def _python_project_version(repo_root: Path) -> str:
-    project = tomllib.loads((repo_root / "pyproject.toml").read_text(encoding="utf-8"))
-    try:
-        version = project["project"]["version"]
-    except (KeyError, TypeError) as exc:
-        raise ValueError("pyproject.toml is missing project.version") from exc
-    if not isinstance(version, str) or not version.strip():
-        raise ValueError("pyproject.toml project.version must be a non-empty string")
-    return version.strip()
 
 
 def _validated_timestamp(value: str) -> str:
@@ -88,6 +75,47 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _unreleased_bounds(text: str) -> tuple[re.Match[str], int]:
+    matches = list(_UNRELEASED_RE.finditer(text))
+    if len(matches) != 1:
+        raise ValueError(f"CHANGELOG.md must contain exactly one ## Unreleased heading; found {len(matches)}")
+    heading = matches[0]
+    next_heading = _LEVEL_TWO_HEADING_RE.search(text, heading.end())
+    return heading, next_heading.start() if next_heading else len(text)
+
+
+def unreleased_changelog(changelog_path: Path) -> str:
+    text = changelog_path.read_text(encoding="utf-8")
+    heading, section_end = _unreleased_bounds(text)
+    return text[heading.end() : section_end].strip()
+
+
+def roll_changelog(changelog_path: Path, build_timestamp: str) -> bool:
+    timestamp = _validated_timestamp(build_timestamp)
+    release_heading = f"## GhidraMCP-next {timestamp}"
+    text = changelog_path.read_text(encoding="utf-8")
+    unreleased_heading, section_end = _unreleased_bounds(text)
+    section = text[unreleased_heading.end() : section_end].strip()
+
+    if re.search(rf"(?m)^{re.escape(release_heading)}[ \t]*$", text):
+        if section:
+            raise ValueError(f"{release_heading} already exists while ## Unreleased is not empty")
+        return False
+
+    suffix = text[section_end:].lstrip("\n")
+    parts = [
+        text[: unreleased_heading.end()].rstrip(),
+        "",
+        release_heading,
+    ]
+    if section:
+        parts.extend(["", section])
+    if suffix:
+        parts.extend(["", suffix.rstrip()])
+    changelog_path.write_text("\n".join(parts) + "\n", encoding="utf-8")
+    return True
+
+
 def prepare_release(
     *,
     repo_root: Path,
@@ -96,30 +124,17 @@ def prepare_release(
     output_dir: Path,
     build_timestamp: str,
     commit_sha: str,
-    expected_project_version: str,
     expected_ghidra_version: str,
 ) -> dict[str, object]:
     timestamp = _validated_timestamp(build_timestamp)
     sha = _validated_sha(commit_sha)
 
     versions = read_pom_versions(repo_root)
-    python_version = _python_project_version(repo_root)
-    if versions.project_version != python_version:
-        raise ValueError(
-            "project version mismatch: " f"pom.xml={versions.project_version}, pyproject.toml={python_version}"
-        )
-    if versions.project_version != expected_project_version:
-        raise ValueError(
-            "built project version does not match checkout: "
-            f"build={expected_project_version}, checkout={versions.project_version}"
-        )
     if versions.ghidra_version != expected_ghidra_version:
         raise ValueError(
             "built Ghidra version does not match checkout: "
             f"build={expected_ghidra_version}, checkout={versions.ghidra_version}"
         )
-    if not _VERSION_RE.fullmatch(versions.project_version):
-        raise ValueError(f"project version is not tag-safe: {versions.project_version!r}")
 
     artifact_paths = [
         ("ghidra_extension", _find_one(extension_dir, "*.zip", "Ghidra extension ZIP")),
@@ -136,11 +151,12 @@ def prepare_release(
         for kind, path in artifact_paths
     ]
 
-    tag = f"build-v{versions.project_version}-{timestamp}-{sha[:12]}"
+    name = f"GhidraMCP-next {timestamp}"
+    tag = f"build-{timestamp}-{sha[:12]}"
     metadata: dict[str, object] = {
         "schema_version": 1,
+        "name": name,
         "tag": tag,
-        "project_version": versions.project_version,
         "ghidra_version": versions.ghidra_version,
         "build_timestamp_utc": timestamp,
         "commit_sha": sha,
@@ -155,12 +171,17 @@ def prepare_release(
     (output_dir / "SHA256SUMS").write_text("\n".join(checksum_lines) + "\n", encoding="utf-8")
 
     notes = [
-        f"# GhidraMCP timestamp build {timestamp} UTC",
+        f"# {name}",
         "",
-        f"- Project version: `{versions.project_version}`",
         f"- Ghidra version: `{versions.ghidra_version}`",
         f"- Commit: `{sha}`",
         f"- Tag: `{tag}`",
+        "",
+        "## Changes",
+        "",
+        unreleased_changelog(repo_root / "CHANGELOG.md") or "_No curated changes were recorded._",
+        "",
+        "## Artifacts",
         "",
         "| Artifact | Size (bytes) | SHA-256 |",
         "| --- | ---: | --- |",
@@ -188,8 +209,11 @@ def _build_parser() -> argparse.ArgumentParser:
     prepare.add_argument("--output-dir", type=Path, required=True)
     prepare.add_argument("--build-timestamp", required=True)
     prepare.add_argument("--commit-sha", required=True)
-    prepare.add_argument("--project-version", required=True)
     prepare.add_argument("--ghidra-version", required=True)
+
+    roll = subparsers.add_parser("roll-changelog", help="move Unreleased entries under a timestamp release")
+    roll.add_argument("--changelog", type=Path, required=True)
+    roll.add_argument("--build-timestamp", required=True)
     return parser
 
 
@@ -201,6 +225,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             print("true" if should_publish(paths) else "false")
             return 0
 
+        if args.command == "roll-changelog":
+            changed = roll_changelog(args.changelog, args.build_timestamp)
+            print("changed" if changed else "unchanged")
+            return 0
+
         metadata = prepare_release(
             repo_root=args.repo_root,
             extension_dir=args.extension_dir,
@@ -208,12 +237,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             output_dir=args.output_dir,
             build_timestamp=args.build_timestamp,
             commit_sha=args.commit_sha,
-            expected_project_version=args.project_version,
             expected_ghidra_version=args.ghidra_version,
         )
         print(metadata["tag"])
         return 0
-    except (OSError, ValueError, tomllib.TOMLDecodeError) as exc:
+    except (OSError, ValueError) as exc:
         print(f"release automation error: {exc}", file=sys.stderr)
         return 2
 
