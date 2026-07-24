@@ -8,6 +8,11 @@ Complete version history for the Ghidra MCP Server project.
 
 ### Added
 
+- Added timestamp-based publication for release-worthy, fully green `main`
+  pushes. The workflow releases the exact tested Ghidra extension ZIP, Python
+  wheel, and source distribution without a semantic-version bump, skips
+  non-artifact changes across the complete push range, serializes release
+  creation, and attaches build/commit/version metadata plus SHA-256 hashes.
 - Added compact-by-default `get_listing_range` responses for high-volume
   verification reads. Large byte payloads use length and SHA-256 summaries,
   rich text is explicitly capped, incoming references are grouped by

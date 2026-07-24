@@ -5,6 +5,7 @@ on:
     branches: [ main, develop ]
   pull_request:
     branches: [ main, develop ]
+  workflow_dispatch:
 
 # Default to read-only so any job without an explicit permissions block can
 # only read repository contents.
@@ -17,9 +18,10 @@ jobs:
   java-build:
     name: Java Build (Maven)
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        java-version: [ '21' ]
+    outputs:
+      build_timestamp: ${{ steps.build-meta.outputs.build_timestamp }}
+      project_version: ${{ steps.build-meta.outputs.project_version }}
+      ghidra_version: ${{ steps.build-meta.outputs.ghidra_version }}
 
     steps:
     - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
@@ -27,9 +29,22 @@ jobs:
     - name: Set up Java
       uses: actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a  # v5.5.0
       with:
-        java-version: ${{ matrix.java-version }}
+        java-version: '21'
         distribution: 'temurin'
         cache: maven
+
+    - name: Define build metadata
+      id: build-meta
+      run: |
+        BUILD_TIMESTAMP=$(date -u +%Y%m%d-%H%M%S)
+        PROJECT_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+        GHIDRA_VERSION=$(mvn help:evaluate -Dexpression=ghidra.version -q -DforceStdout)
+        {
+          echo "build_timestamp=${BUILD_TIMESTAMP}"
+          echo "project_version=${PROJECT_VERSION}"
+          echo "ghidra_version=${GHIDRA_VERSION}"
+        } >> "$GITHUB_OUTPUT"
+        echo "Build metadata: GhidraMCP ${PROJECT_VERSION}, Ghidra ${GHIDRA_VERSION}, ${BUILD_TIMESTAMP} UTC"
 
     - name: Cache Ghidra installation
       id: cache-ghidra
@@ -101,7 +116,10 @@ jobs:
         echo "✅ Installed 19 Ghidra JARs to Maven local repository"
 
     - name: Build extension
-      run: mvn clean package assembly:single -DskipTests
+      run: |
+        mvn clean package assembly:single -DskipTests \
+          -Dbuild.timestamp="${{ steps.build-meta.outputs.build_timestamp }}" \
+          -Dbuild.number="${{ steps.build-meta.outputs.build_timestamp }}"
 
     - name: Run offline Java tests
       run: |
@@ -112,11 +130,18 @@ jobs:
         # excluded from this run.
         mvn -q test -Dtest='com.xebyte.offline.*Test'
 
+    - name: Upload release extension
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+      with:
+        name: release-extension
+        path: target/GhidraMCP-*.zip
+        if-no-files-found: error
+
     - name: Verify build artifacts
       run: |
         echo "✅ Java compilation + offline tests passed"
-        ls -la target/GhidraMCP-*.zip 2>/dev/null || echo "No zip artifact (assembly may use different name)"
-        ls -la target/*.jar 2>/dev/null | head -5
+        find target -maxdepth 1 -type f -name 'GhidraMCP-*.zip' -exec ls -la {} +
+        find target -maxdepth 1 -type f -name '*.jar' -exec ls -la {} +
 
     - name: Upload test results
       if: always()
@@ -173,6 +198,20 @@ jobs:
         # platform/version skew — raise it as coverage improves, never lower it.
         uv run --python ${{ matrix.python-version }} --group test \
           pytest tests/unit/ -v --tb=short --cov-fail-under=46
+
+    - name: Build Python distributions
+      if: matrix.python-version == '3.12' && success()
+      run: uv build
+
+    - name: Upload release Python distributions
+      if: matrix.python-version == '3.12' && success()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+      with:
+        name: release-python-distributions
+        path: |
+          dist/*.whl
+          dist/*.tar.gz
+        if-no-files-found: error
 
     - name: Upload coverage
       if: ${{ always() && hashFiles('coverage.xml', 'tests/coverage.xml') != '' }}
@@ -279,3 +318,118 @@ jobs:
           echo "❌ Some tests failed"
           exit 1
         fi
+
+  automatic-release:
+    name: Timestamp Release
+    runs-on: ubuntu-latest
+    needs: [ java-build, build-status ]
+    if: >-
+      success() &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    concurrency:
+      group: automatic-release-${{ github.repository }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+
+    steps:
+    - name: Checkout release commit
+      uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      with:
+        fetch-depth: 0
+
+    - name: Download release extension
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
+      with:
+        name: release-extension
+        path: release-extension
+
+    - name: Download release Python distributions
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
+      with:
+        name: release-python-distributions
+        path: release-python-distributions
+
+    - name: Check whether distributed artifacts can change
+      id: changes
+      env:
+        BEFORE: ${{ github.event.before }}
+        AFTER: ${{ github.sha }}
+      run: |
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          echo "release=true" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        ZERO=0000000000000000000000000000000000000000
+        if [ -z "$BEFORE" ] || [ "$BEFORE" = "$ZERO" ] || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+          echo "release=true" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        SHOULD_PUBLISH=$(git diff --name-only -z "$BEFORE" "$AFTER" |
+          python -m tools.release_automation classify --null)
+        echo "release=${SHOULD_PUBLISH}" >> "$GITHUB_OUTPUT"
+
+    - name: Prepare release metadata
+      if: steps.changes.outputs.release == 'true'
+      id: prepare
+      run: |
+        python -m tools.release_automation prepare \
+          --repo-root . \
+          --extension-dir release-extension \
+          --python-dir release-python-distributions \
+          --output-dir release-info \
+          --build-timestamp "${{ needs.java-build.outputs.build_timestamp }}" \
+          --commit-sha "${{ github.sha }}" \
+          --project-version "${{ needs.java-build.outputs.project_version }}" \
+          --ghidra-version "${{ needs.java-build.outputs.ghidra_version }}"
+
+        METADATA=release-info/release-metadata.json
+        {
+          echo "tag=$(jq -r .tag "$METADATA")"
+          echo "extension=$(jq -r '.artifacts[] | select(.kind == "ghidra_extension") | .name' "$METADATA")"
+          echo "wheel=$(jq -r '.artifacts[] | select(.kind == "python_wheel") | .name' "$METADATA")"
+          echo "sdist=$(jq -r '.artifacts[] | select(.kind == "python_sdist") | .name' "$METADATA")"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Create timestamp release
+      if: steps.changes.outputs.release == 'true'
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        if gh release view "${{ steps.prepare.outputs.tag }}" >/dev/null 2>&1; then
+          echo "Release tag already exists: ${{ steps.prepare.outputs.tag }}" >&2
+          exit 1
+        fi
+
+        gh release create "${{ steps.prepare.outputs.tag }}" \
+          "release-extension/${{ steps.prepare.outputs.extension }}" \
+          "release-python-distributions/${{ steps.prepare.outputs.wheel }}" \
+          "release-python-distributions/${{ steps.prepare.outputs.sdist }}" \
+          release-info/release-metadata.json \
+          release-info/SHA256SUMS \
+          --target "${{ github.sha }}" \
+          --title "GhidraMCP ${{ needs.java-build.outputs.project_version }} timestamp build" \
+          --notes-file release-info/release-notes.md \
+          --latest=false
+
+    - name: Verify timestamp release assets
+      if: steps.changes.outputs.release == 'true'
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        ASSETS=$(gh release view "${{ steps.prepare.outputs.tag }}" --json assets --jq '.assets[].name')
+        for EXPECTED in \
+          "${{ steps.prepare.outputs.extension }}" \
+          "${{ steps.prepare.outputs.wheel }}" \
+          "${{ steps.prepare.outputs.sdist }}" \
+          release-metadata.json \
+          SHA256SUMS
+        do
+          echo "$ASSETS" | grep -Fx "$EXPECTED" >/dev/null || {
+            echo "Missing release asset: $EXPECTED" >&2
+            exit 1
+          }
+        done
