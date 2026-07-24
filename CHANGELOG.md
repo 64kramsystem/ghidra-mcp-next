@@ -105,6 +105,8 @@ Complete version history for the Ghidra MCP Server project.
 
 ### Changed
 
+- Simplified the README introduction to describe this project as a cleaned,
+  tested, restructured, and extended version of the original Ghidra MCP.
 - Removed the standalone CodeQL and OpenSSF Scorecard scans, unused
   pre-release workflow, and self-hosted Windows release-regression workflow.
   Stable releases no longer depend on the deleted live-regression workflow.
