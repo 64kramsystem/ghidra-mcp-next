@@ -33,7 +33,6 @@ You are a coding agent working on **ghidra-mcp**, a Model Context Protocol serve
 - Quick compile check: `mvn clean compile -q`
 - Follow existing code style
 - Update CHANGELOG.md for user-facing changes
-- Create PRs for review (don't push directly to main)
 - Use `python -m tools.setup bump-version --new X.Y.Z` to bump version across all maintained files atomically
 
 ## Commands
