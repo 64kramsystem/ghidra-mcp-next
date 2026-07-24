@@ -6,6 +6,8 @@ Complete version history for the GhidraMCP-next project.
 
 ## Unreleased
 
+## GhidraMCP-next 20260724-173122
+
 ### Changed
 
 - Removed the obsolete semantic-version release checklist and aligned maintained release guidance with the automatic timestamp-release workflow.
