@@ -1,5 +1,5 @@
 """
-GhidraMCP Integration Tests - All Endpoints
+GhidraMCP-next Integration Tests - All Endpoints
 Tests endpoint registration, response formats, and basic functionality.
 """
 
@@ -33,7 +33,7 @@ class TestServerConnection:
         """Server should respond to health check."""
         response = http_client.get("/check_connection")
         assert response.status_code == 200
-        assert "Connection OK" in response.text or "GhidraMCP" in response.text
+        assert "Connection OK" in response.text or "GhidraMCP-next" in response.text
 
     def test_version_endpoint(self, http_client):
         """Server should return version info."""

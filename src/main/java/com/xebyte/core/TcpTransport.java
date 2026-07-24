@@ -6,7 +6,7 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 
 /**
- * TCP socket transport — the default transport for GhidraMCP.
+ * TCP socket transport — the default transport for GhidraMCP-next.
  * Binds an {@link HttpServer} to a TCP address and port.
  *
  * @since 4.3.0

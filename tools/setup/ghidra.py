@@ -53,7 +53,7 @@ REQUIRED_GHIDRA_JARS: tuple[tuple[str, str], ...] = (
 )
 
 PLUGIN_CLASS = "com.xebyte.GhidraMCPPlugin"
-PLUGIN_EXTENSION_NAME = "GhidraMCP"
+PLUGIN_EXTENSION_NAME = "GhidraMCP-next"
 DEFAULT_MCP_URL = "http://127.0.0.1:8089"
 DEFAULT_MCP_WAIT_SECONDS = 120
 DEFAULT_GHIDRA_EXIT_WAIT_SECONDS = 15
@@ -257,7 +257,7 @@ def patch_frontend_tool_config(content: str) -> tuple[str, bool]:
     original = content
     updated = content
 
-    for package_name in ("Developer", "GhidraMCP"):
+    for package_name in ("Developer", "GhidraMCP-next"):
         updated = re.sub(
             rf"\s*<PACKAGE NAME=\"{re.escape(package_name)}\"\s*/>\s*",
             "\n",
@@ -345,7 +345,7 @@ def mark_extension_known_in_tool_config(content: str, extension_name: str) -> st
 def patch_tool_tcd(content: str) -> tuple[str, bool]:
     original = content
     updated = re.sub(
-        rf'\s*<PACKAGE NAME="GhidraMCP">\s*<INCLUDE CLASS="{re.escape(PLUGIN_CLASS)}"\s*/>\s*</PACKAGE>',
+        rf'\s*<PACKAGE NAME="GhidraMCP-next">\s*<INCLUDE CLASS="{re.escape(PLUGIN_CLASS)}"\s*/>\s*</PACKAGE>',
         "",
         content,
     )
@@ -424,15 +424,15 @@ def _find_plugin_jar(repo_root: Path) -> Path | None:
     target_dir = repo_root / "target"
     version = read_pom_versions(repo_root).project_version
     candidates = [
-        target_dir / "GhidraMCP.jar",
-        target_dir / f"GhidraMCP-{version}.jar",
+        target_dir / "GhidraMCP-next.jar",
+        target_dir / f"GhidraMCP-next-{version}.jar",
     ]
     for candidate in candidates:
         if candidate.is_file():
             return candidate
 
     jars = sorted(
-        target_dir.glob("GhidraMCP*.jar"),
+        target_dir.glob("GhidraMCP-next*.jar"),
         key=lambda path: path.stat().st_mtime,
         reverse=True,
     )
@@ -445,18 +445,18 @@ def install_user_extension(
     user_base_dir = ghidra_user_base_dir()
     user_version_dir = resolve_ghidra_user_dir(ghidra_path, user_base_dir)
     user_extensions_base = user_version_dir / "Extensions"
-    user_extension_dir = user_extensions_base / "GhidraMCP"
+    user_extension_dir = user_extensions_base / "GhidraMCP-next"
     user_lib_dir = user_extension_dir / "lib"
 
     if dry_run:
         print(f"DRY RUN: ensure directory {user_extensions_base}")
-        print(f"DRY RUN: remove stale jars matching {user_lib_dir / 'GhidraMCP*.jar'}")
+        print(f"DRY RUN: remove stale jars matching {user_lib_dir / 'GhidraMCP-next*.jar'}")
         print(f"DRY RUN: extract {archive_path} -> {user_extensions_base}")
         return user_extension_dir
 
     user_extensions_base.mkdir(parents=True, exist_ok=True)
     user_lib_dir.mkdir(parents=True, exist_ok=True)
-    for stale_jar in user_lib_dir.glob("GhidraMCP*.jar"):
+    for stale_jar in user_lib_dir.glob("GhidraMCP-next*.jar"):
         for attempt in range(10):
             try:
                 stale_jar.unlink(missing_ok=True)
@@ -479,7 +479,7 @@ def install_user_extension(
                 "Extension extraction failed and no fallback plugin jar was found"
             ) from exc
 
-        fallback_destination = user_lib_dir / "GhidraMCP.jar"
+        fallback_destination = user_lib_dir / "GhidraMCP-next.jar"
         shutil.copy2(plugin_jar, fallback_destination)
         print(f"Fell back to jar-only install at {fallback_destination}")
         return user_extension_dir
@@ -513,22 +513,22 @@ def find_plugin_archive(repo_root: Path) -> Path:
     version = read_pom_versions(repo_root).project_version
     target_dir = repo_root / "target"
     candidates = [
-        target_dir / f"GhidraMCP-{version}.zip",
-        target_dir / "GhidraMCP.zip",
+        target_dir / f"GhidraMCP-next-{version}.zip",
+        target_dir / "GhidraMCP-next.zip",
     ]
     existing_candidates = [candidate for candidate in candidates if candidate.is_file()]
     if existing_candidates:
         return max(existing_candidates, key=lambda path: path.stat().st_mtime)
 
     archives = sorted(
-        target_dir.glob("GhidraMCP*.zip"),
+        target_dir.glob("GhidraMCP-next*.zip"),
         key=lambda path: path.stat().st_mtime,
         reverse=True,
     )
     if archives:
         return archives[0]
 
-    raise FileNotFoundError("No GhidraMCP plugin archive found in target/")
+    raise FileNotFoundError("No GhidraMCP-next plugin archive found in target/")
 
 
 def print_command(command: list[str]) -> None:
@@ -785,7 +785,7 @@ def clear_restored_benchmark_tools(repo_root: Path, *, dry_run: bool = False) ->
         print(f"DRY RUN: remove {removed} restored benchmark CodeBrowser tool(s) from {project_state}")
         return removed
 
-    backup_path = project_state.with_name(project_state.name + ".GhidraMCP.bak")
+    backup_path = project_state.with_name(project_state.name + ".GhidraMCP-next.bak")
     shutil.copy2(project_state, backup_path)
     tree.write(project_state, encoding="utf-8", xml_declaration=True)
     print(f"Removed {removed} restored benchmark CodeBrowser tool(s) from {project_state}")
@@ -1306,7 +1306,7 @@ def run_benchmark_write_test(repo_root: Path, mcp_url: str) -> None:
             "/batch_set_comments",
             {
                 "address": address,
-                "plate_comment": "GhidraMCP deploy benchmark write probe",
+                "plate_comment": "GhidraMCP-next deploy benchmark write probe",
                 "disassembly_comments": [{"address": address, "comment": "deploy smoke"}],
             },
         ),
@@ -2005,7 +2005,7 @@ def _resolve_debugger_python(repo_root: Path) -> Path | None:
 
     The Ghidra dbgeng / gdb / lldb launcher .bat / .sh scripts run
     ``"%OPT_PYTHON_EXE%" ...`` (defaulting to ``python``), and the
-    GhidraMCP plugin propagates ``GHIDRA_DEBUGGER_PYTHON`` from .env into
+    GhidraMCP-next plugin propagates ``GHIDRA_DEBUGGER_PYTHON`` from .env into
     that variable when running the debugger live test. So the
     interpreter to install ``ghidratrace`` into is:
 
@@ -2252,7 +2252,7 @@ def deploy_to_ghidra(
     if dry_run:
         print(f"DRY RUN: ensure directory {extensions_dir}")
         print(
-            f"DRY RUN: remove existing archives matching {extensions_dir / 'GhidraMCP*.zip'}"
+            f"DRY RUN: remove existing archives matching {extensions_dir / 'GhidraMCP-next*.zip'}"
         )
         print(f"DRY RUN: copy {archive_path} -> {destination_archive}")
         build_bridge_wheel(repo_root, dry_run=True)
@@ -2275,7 +2275,7 @@ def deploy_to_ghidra(
         return 0
 
     extensions_dir.mkdir(parents=True, exist_ok=True)
-    for existing_archive in extensions_dir.glob("GhidraMCP*.zip"):
+    for existing_archive in extensions_dir.glob("GhidraMCP-next*.zip"):
         existing_archive.unlink()
 
     shutil.copy2(archive_path, destination_archive)

@@ -1,6 +1,6 @@
 # Project Structure
 
-Ghidra MCP has two runtime layers: a Java extension/headless service that owns
+GhidraMCP-next has two runtime layers: a Java extension/headless service that owns
 Ghidra operations, and a Python bridge that exposes the discovered HTTP schema
 as MCP tools.
 

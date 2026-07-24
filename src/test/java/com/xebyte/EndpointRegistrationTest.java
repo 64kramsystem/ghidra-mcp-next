@@ -277,7 +277,7 @@ public class EndpointRegistrationTest extends TestCase {
         }
 
         assertTrue("MCP HTTP server should be responding. " +
-                  "Ensure Ghidra is running with GhidraMCP plugin enabled and MCP server started.",
+                  "Ensure Ghidra is running with GhidraMCP-next plugin enabled and MCP server started.",
                   serverResponding);
     }
 }

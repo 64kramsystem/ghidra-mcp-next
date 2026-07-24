@@ -192,7 +192,7 @@ def prepare_release(
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="GhidraMCP release automation")
+    parser = argparse.ArgumentParser(description="GhidraMCP-next release automation")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     classify = subparsers.add_parser("classify", help="decide whether changed paths affect release artifacts")

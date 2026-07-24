@@ -270,7 +270,7 @@ class TestConnectInstance(unittest.TestCase):
                     (
                         json.dumps(
                             {
-                                "plugin_name": "GhidraMCP",
+                                "plugin_name": "GhidraMCP-next",
                                 "plugin_version": "5.15.0",
                                 "build_timestamp": "dev",
                                 "build_number": "0",

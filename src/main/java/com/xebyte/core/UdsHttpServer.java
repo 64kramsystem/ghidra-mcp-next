@@ -26,7 +26,7 @@ import java.net.UnixDomainSocketAddress;
  * {@link com.sun.net.httpserver.HttpServer}, but uses a
  * {@link UdsHttpExchange} instead of the Sun-internal HttpExchange.
  *
- * Only enough HTTP is implemented to handle GhidraMCP's request patterns:
+ * Only enough HTTP is implemented to handle GhidraMCP-next's request patterns:
  * GET with query params, POST with URL-encoded or JSON body, and simple
  * text/JSON responses.
  */
@@ -82,14 +82,14 @@ public class UdsHttpServer {
         }
 
         executor = Executors.newCachedThreadPool(r -> {
-            Thread t = new Thread(r, "GhidraMCP-UDS-Worker");
+            Thread t = new Thread(r, "GhidraMCP-next-UDS-Worker");
             t.setDaemon(true);
             return t;
         });
 
         running = true;
 
-        Thread acceptThread = new Thread(this::acceptLoop, "GhidraMCP-UDS-Accept");
+        Thread acceptThread = new Thread(this::acceptLoop, "GhidraMCP-next-UDS-Accept");
         acceptThread.setDaemon(true);
         acceptThread.start();
 

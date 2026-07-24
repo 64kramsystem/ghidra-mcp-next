@@ -111,7 +111,7 @@ public class ProgramScriptService {
             // writes go inside the same transaction since they mutate the
             // program too; persistProgram (save) runs AFTER the
             // transaction is closed.
-            int txId = program.startTransaction("GhidraMCP auto-analysis");
+            int txId = program.startTransaction("GhidraMCP-next auto-analysis");
             boolean txOk = false;
             try {
                 ghidra.program.util.GhidraProgramUtilities.markProgramNotToAskToAnalyze(program);

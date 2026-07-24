@@ -1,9 +1,9 @@
-# Ghidra MCP — Claude Code Guide
+# GhidraMCP-next — Claude Code Guide
 
 ## Overview
 
-Ghidra MCP 5.15.0 exposes 236 tools through a Java Ghidra extension/headless
-server and a Python MCP bridge.
+GhidraMCP-next 5.15.0 exposes more than 250 tools through a Java Ghidra
+extension/headless server and a Python MCP bridge.
 
 ```text
 AI client <-> python/bridge_mcp_ghidra <-> local Ghidra HTTP/UDS <-> Java services
@@ -35,7 +35,7 @@ asked.
   handling.
 - `python/bridge_mcp_ghidra/` — discovery, schema normalization, tool groups,
   dispatch, transports, and CLI.
-- `tests/endpoints.json` — authoritative repository catalog (236 endpoints).
+- `tests/endpoints.json` — authoritative repository catalog (more than 250 endpoints).
 - `ghidra_scripts/` — exact reviewed generic-script allowlist.
 - `tools/setup/` — setup, Maven build, deploy, and atomic version management.
 

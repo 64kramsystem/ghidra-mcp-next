@@ -50,7 +50,7 @@ def uds_supported() -> bool:
 
 
 def get_socket_dir() -> Path:
-    """Get the primary GhidraMCP socket runtime directory.
+    """Get the primary GhidraMCP-next socket runtime directory.
 
     Kept for backwards compatibility. For instance discovery prefer
     `get_socket_dir_candidates()` -- when Claude Desktop spawns the bridge

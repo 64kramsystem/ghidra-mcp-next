@@ -49,13 +49,13 @@ def test_patch_frontend_tool_config_adds_plugin_to_self_closing_utility_block():
     assert modified is True
     assert PLUGIN_CLASS in updated
     assert '<PACKAGE NAME="Utility">' in updated
-    assert '<EXTENSION NAME="GhidraMCP" />' in updated
+    assert '<EXTENSION NAME="GhidraMCP-next" />' in updated
 
 
 def test_patch_frontend_tool_config_removes_stale_package_and_inserts_plugin():
     content = (
         "<TOOL>\n"
-        '  <PACKAGE NAME="GhidraMCP">\n'
+        '  <PACKAGE NAME="GhidraMCP-next">\n'
         '    <INCLUDE CLASS="old.Plugin" />\n'
         "  </PACKAGE>\n"
         '  <ROOT_NODE NAME="root" />\n'
@@ -65,10 +65,10 @@ def test_patch_frontend_tool_config_removes_stale_package_and_inserts_plugin():
     updated, modified = patch_frontend_tool_config(content)
 
     assert modified is True
-    assert 'PACKAGE NAME="GhidraMCP"' not in updated
+    assert 'PACKAGE NAME="GhidraMCP-next"' not in updated
     assert PLUGIN_CLASS in updated
     assert updated.count(PLUGIN_CLASS) == 1
-    assert '<EXTENSION NAME="GhidraMCP" />' in updated
+    assert '<EXTENSION NAME="GhidraMCP-next" />' in updated
 
 
 def test_patch_frontend_tool_config_inserts_into_existing_open_utility_block():
@@ -111,7 +111,7 @@ def test_patch_frontend_tool_config_is_idempotent_when_plugin_present():
         f'        <INCLUDE CLASS="{PLUGIN_CLASS}" />\n'
         "    </PACKAGE>\n"
         '    <EXTENSIONS>\n'
-        '        <EXTENSION NAME="GhidraMCP" />\n'
+        '        <EXTENSION NAME="GhidraMCP-next" />\n'
         "    </EXTENSIONS>\n"
         "</TOOL>"
     )
@@ -121,14 +121,14 @@ def test_patch_frontend_tool_config_is_idempotent_when_plugin_present():
     assert updated.count(PLUGIN_CLASS) == 1, (
         "Plugin already present — must not be re-added"
     )
-    assert updated.count('<EXTENSION NAME="GhidraMCP" />') == 1
+    assert updated.count('<EXTENSION NAME="GhidraMCP-next" />') == 1
     assert modified is False, "no-op patch must report unmodified"
 
 
 def test_patch_codebrowser_tcd_removes_ghidra_mcp_package_block():
     content = (
         "<TOOL>\n"
-        '  <PACKAGE NAME="GhidraMCP">\n'
+        '  <PACKAGE NAME="GhidraMCP-next">\n'
         f'    <INCLUDE CLASS="{PLUGIN_CLASS}" />\n'
         "  </PACKAGE>\n"
         "</TOOL>"
@@ -138,8 +138,8 @@ def test_patch_codebrowser_tcd_removes_ghidra_mcp_package_block():
 
     assert modified is True
     assert PLUGIN_CLASS not in updated
-    assert 'PACKAGE NAME="GhidraMCP"' not in updated
-    assert '<EXTENSION NAME="GhidraMCP" />' in updated
+    assert 'PACKAGE NAME="GhidraMCP-next"' not in updated
+    assert '<EXTENSION NAME="GhidraMCP-next" />' in updated
 
 
 def test_resolve_ghidra_user_dir_prefers_matching_public_dir(tmp_path: Path):
@@ -291,7 +291,7 @@ class TestFindPluginArchive:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
         _stub_version(monkeypatch, tmp_path)
-        maven_zip = tmp_path / "target" / "GhidraMCP-5.4.1.zip"
+        maven_zip = tmp_path / "target" / "GhidraMCP-next-5.4.1.zip"
         maven_zip.parent.mkdir(parents=True)
         maven_zip.write_bytes(b"maven")
 
@@ -301,7 +301,7 @@ class TestFindPluginArchive:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
         _stub_version(monkeypatch, tmp_path)
-        maven_zip = tmp_path / "target" / "GhidraMCP.zip"
+        maven_zip = tmp_path / "target" / "GhidraMCP-next.zip"
         maven_zip.parent.mkdir(parents=True)
         maven_zip.write_bytes(b"maven")
 
@@ -313,7 +313,7 @@ class TestFindPluginArchive:
         _stub_version(monkeypatch, tmp_path)
         target_dir = tmp_path / "target"
         target_dir.mkdir(parents=True)
-        other_zip = target_dir / "GhidraMCP-5.4.0.zip"
+        other_zip = target_dir / "GhidraMCP-next-5.4.0.zip"
         other_zip.write_bytes(b"old")
 
         assert find_plugin_archive(tmp_path) == other_zip
@@ -322,7 +322,7 @@ class TestFindPluginArchive:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
         _stub_version(monkeypatch, tmp_path)
-        legacy_zip = tmp_path / "build" / "distributions" / "GhidraMCP-5.4.1.zip"
+        legacy_zip = tmp_path / "build" / "distributions" / "GhidraMCP-next-5.4.1.zip"
         legacy_zip.parent.mkdir(parents=True)
         legacy_zip.write_bytes(b"legacy")
 
@@ -687,11 +687,11 @@ def test_mark_extension_known_promotes_empty_extensions_to_open_form():
         "</TOOL>"
     )
 
-    updated = mark_extension_known_in_tool_config(content, "GhidraMCP")
+    updated = mark_extension_known_in_tool_config(content, "GhidraMCP-next")
 
     assert "<EXTENSIONS />" not in updated
     assert "<EXTENSIONS>" in updated
-    assert '<EXTENSION NAME="GhidraMCP" />' in updated
+    assert '<EXTENSION NAME="GhidraMCP-next" />' in updated
 
 
 def test_mark_extension_known_appends_into_existing_open_extensions_block():
@@ -703,26 +703,26 @@ def test_mark_extension_known_appends_into_existing_open_extensions_block():
         "</TOOL>"
     )
 
-    updated = mark_extension_known_in_tool_config(content, "GhidraMCP")
+    updated = mark_extension_known_in_tool_config(content, "GhidraMCP-next")
 
     assert updated.count("<EXTENSIONS>") == 1
     assert '<EXTENSION NAME="OtherExt" />' in updated
-    assert '<EXTENSION NAME="GhidraMCP" />' in updated
+    assert '<EXTENSION NAME="GhidraMCP-next" />' in updated
 
 
 def test_mark_extension_known_is_idempotent():
     content = (
         "<TOOL>\n"
         "    <EXTENSIONS>\n"
-        '        <EXTENSION NAME="GhidraMCP" />\n'
+        '        <EXTENSION NAME="GhidraMCP-next" />\n'
         "    </EXTENSIONS>\n"
         "</TOOL>"
     )
 
-    updated = mark_extension_known_in_tool_config(content, "GhidraMCP")
+    updated = mark_extension_known_in_tool_config(content, "GhidraMCP-next")
 
     assert updated == content
-    assert updated.count('<EXTENSION NAME="GhidraMCP" />') == 1
+    assert updated.count('<EXTENSION NAME="GhidraMCP-next" />') == 1
 
 
 def test_mark_extension_known_creates_extensions_block_when_missing():
@@ -732,10 +732,10 @@ def test_mark_extension_known_creates_extensions_block_when_missing():
         "</TOOL>"
     )
 
-    updated = mark_extension_known_in_tool_config(content, "GhidraMCP")
+    updated = mark_extension_known_in_tool_config(content, "GhidraMCP-next")
 
     assert "<EXTENSIONS>" in updated
-    assert '<EXTENSION NAME="GhidraMCP" />' in updated
+    assert '<EXTENSION NAME="GhidraMCP-next" />' in updated
 
 
 # ---------------------------------------------------------------------------
@@ -759,7 +759,7 @@ def test_patch_ghidra_user_configs_patches_frontend_tool_xml(tmp_path: Path):
 
     patched = fe_xml.read_text(encoding="utf-8")
     assert PLUGIN_CLASS in patched
-    assert '<EXTENSION NAME="GhidraMCP" />' in patched
+    assert '<EXTENSION NAME="GhidraMCP-next" />' in patched
 
 
 def test_patch_ghidra_user_configs_dry_run_does_not_modify(tmp_path: Path):
@@ -783,7 +783,7 @@ def test_patch_ghidra_user_configs_handles_missing_user_base(tmp_path: Path):
 
 
 def test_patch_ghidra_user_configs_strips_stale_codebrowser_tcd(tmp_path: Path):
-    """Stale tcd files from older Ghidra versions get the GhidraMCP
+    """Stale tcd files from older Ghidra versions get the GhidraMCP-next
     PACKAGE block removed (the plugin lives in FrontEnd now). The
     deploy depends on this cleanup to avoid double-registration."""
     user_base = tmp_path / "ghidra"
@@ -792,7 +792,7 @@ def test_patch_ghidra_user_configs_strips_stale_codebrowser_tcd(tmp_path: Path):
         tcd,
         (
             "<TOOL>\n"
-            '    <PACKAGE NAME="GhidraMCP">\n'
+            '    <PACKAGE NAME="GhidraMCP-next">\n'
             f'        <INCLUDE CLASS="{PLUGIN_CLASS}" />\n'
             "    </PACKAGE>\n"
             "</TOOL>"
@@ -803,8 +803,8 @@ def test_patch_ghidra_user_configs_strips_stale_codebrowser_tcd(tmp_path: Path):
 
     patched = tcd.read_text(encoding="utf-8")
     assert PLUGIN_CLASS not in patched
-    assert 'PACKAGE NAME="GhidraMCP"' not in patched
-    assert '<EXTENSION NAME="GhidraMCP" />' in patched
+    assert 'PACKAGE NAME="GhidraMCP-next"' not in patched
+    assert '<EXTENSION NAME="GhidraMCP-next" />' in patched
 
 
 def test_patch_ghidra_user_configs_idempotent_second_call_no_op(tmp_path: Path):
@@ -822,7 +822,7 @@ def test_patch_ghidra_user_configs_idempotent_second_call_no_op(tmp_path: Path):
 
     assert after_first == after_second
     assert after_second.count(PLUGIN_CLASS) == 1
-    assert after_second.count('<EXTENSION NAME="GhidraMCP" />') == 1
+    assert after_second.count('<EXTENSION NAME="GhidraMCP-next" />') == 1
 
 
 # ---------------------------------------------------------------------------
@@ -859,14 +859,14 @@ def test_patch_ghidra_user_configs_target_dir_only_touches_target(tmp_path: Path
 
 def test_patch_ghidra_user_configs_target_dir_only_touches_target_tcd(tmp_path: Path):
     """Same scope guarantee for tool tcd files, which carry historical
-    GhidraMCP PACKAGE blocks that should be cleared only in the target."""
+    GhidraMCP-next PACKAGE blocks that should be cleared only in the target."""
     user_base = tmp_path / "ghidra"
     target = user_base / "ghidra_12.1_PUBLIC"
     sibling = user_base / "ghidra_12.0.4_PUBLIC"
 
     stale_tcd = (
         "<TOOL>\n"
-        '    <PACKAGE NAME="GhidraMCP">\n'
+        '    <PACKAGE NAME="GhidraMCP-next">\n'
         f'        <INCLUDE CLASS="{PLUGIN_CLASS}" />\n'
         "    </PACKAGE>\n"
         "</TOOL>"

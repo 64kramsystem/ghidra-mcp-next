@@ -99,8 +99,8 @@ def build_rules(
         ),
         ReplacementRule(
             repo_root / "README.md",
-            rf"GhidraMCP Headless Server v{escaped_old}",
-            f"GhidraMCP Headless Server v{new_version}",
+            rf"GhidraMCP-next Headless Server v{escaped_old}",
+            f"GhidraMCP-next Headless Server v{new_version}",
         ),
         ReplacementRule(
             repo_root / "AGENTS.md",

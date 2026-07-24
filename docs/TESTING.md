@@ -73,7 +73,7 @@ and the Python wheel rather than accepting a command's exit code alone.
 ## Live GUI and headless tests
 
 Live integration tests are supplemental. Prepare a disposable local project,
-load a known binary, enable/start Ghidra MCP, and then run only the appropriate
+load a known binary, enable/start GhidraMCP-next, and then run only the appropriate
 marked suite. For example:
 
 ```bash

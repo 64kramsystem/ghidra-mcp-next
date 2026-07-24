@@ -8,6 +8,8 @@ def test_removed_build_and_container_paths_are_absent():
     forbidden = [
         "build.gradle", "settings.gradle", "gradlew", "gradlew.bat",
         "gradle", "docker", "tests/unit/test_gradle_tasks.py",
+        "ghidra-mcp-setup.ps1", "tests/run_tests.py",
+        "scripts/ghidra_server_health_check.py",
     ]
     assert [path for path in forbidden if (ROOT / path).exists()] == []
 
@@ -49,18 +51,6 @@ def test_mockito_is_loaded_as_a_test_agent():
     pom = (ROOT / "pom.xml").read_text(encoding="utf-8")
     assert "-javaagent:" in pom
     assert "mockito-core" in pom
-
-
-def test_test_runner_has_no_docker_mode():
-    runner = (ROOT / "tests/run_tests.py").read_text(encoding="utf-8")
-    assert "--docker" not in runner
-    assert 'tests_dir / "docker"' not in runner
-    assert "args.docker" not in runner
-    assert all(flag in runner for flag in ("--unit", "--integration", "--all"))
-    assert all(
-        target in runner
-        for target in ('tests_dir / "unit"', 'tests_dir / "integration"', "args.extra_args")
-    )
 
 
 def test_env_template_has_no_build_backend_selector():

@@ -1,6 +1,6 @@
 # MCP Tool Usage Guide
 
-This guide is for agents operating Ghidra MCP against local GUI or headless
+This guide is for agents operating GhidraMCP-next against local GUI or headless
 projects.
 
 ## 1. Establish the target
@@ -140,7 +140,7 @@ use Ghidra's available Wine/GDB-compatible launch offer. Correlate live and
 static addresses through the mapping tools.
 
 For a bug in Wine itself, source-level Wine/GDB/build/test work is primary.
-Ghidra MCP can support instruction and control-flow analysis but should not be
+GhidraMCP-next can support instruction and control-flow analysis but should not be
 presented as the source-patching system.
 
 ## 8. Trusted scripts and optional BSim

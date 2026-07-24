@@ -8,7 +8,7 @@ import java.net.InetSocketAddress;
 import java.util.concurrent.Executor;
 
 /**
- * Abstracts the transport layer for the GhidraMCP HTTP server.
+ * Abstracts the transport layer for the GhidraMCP-next HTTP server.
  * Implementations control how the server binds and listens for connections.
  *
  * <p>Current implementations:

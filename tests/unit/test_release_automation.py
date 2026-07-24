@@ -41,7 +41,6 @@ def test_release_artifact_inputs_are_in_scope(path: str):
         ".github/workflows/tests.yml",
         "docs/TESTING.md",
         "ghidra_scripts/ApplyDWORD.java",
-        "scripts/ghidra_server_health_check.py",
         "src/test/java/com/xebyte/AppTest.java",
         "tests/unit/test_release_automation.py",
         "tools/release_automation.py",
@@ -73,7 +72,7 @@ def _write_project(root: Path):
 <project xmlns="http://maven.apache.org/POM/4.0.0">
   <modelVersion>4.0.0</modelVersion>
   <groupId>test</groupId>
-  <artifactId>GhidraMCP</artifactId>
+  <artifactId>GhidraMCP-next</artifactId>
   <version>1.2.3</version>
   <properties><ghidra.version>12.1.2</ghidra.version></properties>
 </project>
@@ -103,7 +102,7 @@ def _write_artifacts(root: Path) -> tuple[Path, Path]:
     python_dir = root / "python-dist"
     extension_dir.mkdir()
     python_dir.mkdir()
-    (extension_dir / "GhidraMCP-1.2.3.zip").write_bytes(b"extension")
+    (extension_dir / "GhidraMCP-next-1.2.3.zip").write_bytes(b"extension")
     (python_dir / "ghidra_mcp_bridge-1.2.3-py3-none-any.whl").write_bytes(b"wheel")
     (python_dir / "ghidra_mcp_bridge-1.2.3.tar.gz").write_bytes(b"sdist")
     return extension_dir, python_dir
@@ -137,7 +136,7 @@ def test_prepare_release_writes_verified_metadata_hashes_and_notes(tmp_path: Pat
     assert json.loads((output_dir / "release-metadata.json").read_text()) == metadata
 
     expected_hashes = {
-        "GhidraMCP-1.2.3.zip": hashlib.sha256(b"extension").hexdigest(),
+        "GhidraMCP-next-1.2.3.zip": hashlib.sha256(b"extension").hexdigest(),
         "ghidra_mcp_bridge-1.2.3-py3-none-any.whl": hashlib.sha256(b"wheel").hexdigest(),
         "ghidra_mcp_bridge-1.2.3.tar.gz": hashlib.sha256(b"sdist").hexdigest(),
     }
@@ -150,7 +149,7 @@ def test_prepare_release_writes_verified_metadata_hashes_and_notes(tmp_path: Pat
     assert "Previous release" not in notes
     assert sha in notes
     assert all(name in notes for name in expected_hashes)
-    assert "| `GhidraMCP-1.2.3.zip` | 9 |" in notes
+    assert "| `GhidraMCP-next-1.2.3.zip` | 9 |" in notes
 
 
 @pytest.mark.parametrize(

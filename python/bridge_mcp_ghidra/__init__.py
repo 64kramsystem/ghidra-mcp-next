@@ -1,4 +1,4 @@
-"""GhidraMCP Bridge — thin MCP↔HTTP multiplexer.
+"""GhidraMCP-next Bridge — thin MCP↔HTTP multiplexer.
 
 On startup: exposes list_instances + connect_instance plus tool-group tools.
 On connect_instance: validates /get_version and /mcp/schema from the selected

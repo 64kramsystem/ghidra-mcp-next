@@ -18,7 +18,7 @@ from bridge_mcp_ghidra import connection, registry, state, static_tools
 
 
 VERSION = {
-    "plugin_name": "GhidraMCP",
+    "plugin_name": "GhidraMCP-next",
     "plugin_version": "5.15.0",
     "build_timestamp": "20260723-201928",
     "build_number": "20260723-201928",

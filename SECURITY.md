@@ -9,7 +9,7 @@ maintainers have had a reasonable opportunity to respond.
 
 ## Deployment model
 
-Ghidra MCP is designed for a trusted single-user workstation. Keep both the
+GhidraMCP-next is designed for a trusted single-user workstation. Keep both the
 Ghidra HTTP service and the Python bridge on loopback unless you have explicitly
 secured every client and transport.
 

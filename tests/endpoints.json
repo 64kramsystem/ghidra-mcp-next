@@ -1,6 +1,6 @@
 {
   "version": "5.15.0",
-  "description": "GhidraMCP REST API Endpoint Specification",
+  "description": "GhidraMCP-next REST API Endpoint Specification",
   "total_endpoints": 255,
   "categories": {
     "listing": "List program data",

@@ -1,5 +1,5 @@
 """
-GhidraMCP Test Configuration and Fixtures
+GhidraMCP-next Test Configuration and Fixtures
 """
 
 import json
