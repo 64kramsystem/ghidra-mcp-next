@@ -3,6 +3,7 @@
 - Keep GUI and headless endpoint schemas in parity.
 - When endpoint registrations change, update and verify `tests/endpoints.json`.
 - Update `CHANGELOG.md` for user-facing changes.
+- Never use conventional-commit prefixes (`feat/`, …) in commit titles or branch names
 
 ## Verification
 
