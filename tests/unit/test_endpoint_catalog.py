@@ -204,6 +204,7 @@ class TestEndpointsJson(unittest.TestCase):
                 "max_units",
                 "max_bytes",
                 "max_incoming_refs_per_unit",
+                "compact",
                 "cursor",
                 "program",
             ],

@@ -57,6 +57,9 @@ public final class ListingRangeService {
     private static final int MIN_MAX_BYTES = 256;
     private static final int MAX_BYTES_LIMIT = 1_048_576;
     private static final int MAX_INCOMING_LIMIT = 10_000;
+    private static final int COMPACT_INLINE_BYTES = 32;
+    private static final int COMPACT_TEXT_CAP = 256;
+    private static final String COMPACT_TEXT_SUFFIX = "\u2026";
     private static final int CURSOR_VERSION = 1;
     private static final String CURSOR_MAC_ALGORITHM = "HmacSHA256";
     private static final byte[] CURSOR_MAC_KEY = randomKey();
@@ -78,7 +81,9 @@ public final class ListingRangeService {
     @McpTool(
         path = "/get_listing_range",
         description = "Read an authoritative mixed instruction/data/undefined listing range "
-            + "without requiring or creating functions",
+            + "without requiring or creating functions. Compact output is the default; "
+            + "it summarizes byte payloads above 32 bytes and truncates comment/data "
+            + "renderings above 256 characters. Pass compact=false for exact full records.",
         category = "listing")
     public Response getListingRange(
             @Param(value = "start", paramType = "address",
@@ -92,6 +97,9 @@ public final class ListingRangeService {
             @Param(value = "max_incoming_refs_per_unit", defaultValue = "1000",
                 description = "Maximum incoming references per unit (1..10000)")
                 int maxIncomingRefsPerUnit,
+            @Param(value = "compact", defaultValue = "true",
+                description = "Return bounded summaries with an exact full-page replay request")
+                boolean compact,
             @Param(value = "cursor", defaultValue = "",
                 description = "Opaque cursor from a previous page") String cursor,
             @Param(value = "program", defaultValue = "",
@@ -111,7 +119,7 @@ public final class ListingRangeService {
             Program program = resolved.program();
             return threadingStrategy.executeRead(() -> readAuthoritativeRange(
                 program, startText, endText, maxUnits, maxBytes,
-                maxIncomingRefsPerUnit, cursor));
+                maxIncomingRefsPerUnit, compact, cursor));
         }
         catch (Exception exception) {
             return Response.err("Error reading listing range: " + exception.getMessage());
@@ -125,6 +133,7 @@ public final class ListingRangeService {
             int maxUnits,
             int maxBytes,
             int maxIncomingRefsPerUnit,
+            boolean compact,
             String cursor) throws Exception {
         // This snapshot intentionally precedes every model-dependent parse,
         // containment check, unit expansion, index build, and byte read.
@@ -180,7 +189,7 @@ public final class ListingRangeService {
         Page page = readPage(
             program, index, programId, modificationNumber,
             requestedStart, requestedEnd, effectiveStart, effectiveEnd,
-            pageStart, maxUnits, maxBytes, maxIncomingRefsPerUnit);
+            pageStart, maxUnits, maxBytes, maxIncomingRefsPerUnit, compact);
         if (program.getModificationNumber() != modificationNumber) {
             return Response.err(
                 "Program changed while reading listing range; retry from the first page.");
@@ -237,7 +246,8 @@ public final class ListingRangeService {
             Address pageStart,
             int maxUnits,
             int maxBytes,
-            int maxIncomingRefsPerUnit) throws Exception {
+            int maxIncomingRefsPerUnit,
+            boolean compact) throws Exception {
         List<Map<String, Object>> units = new ArrayList<>();
         int includedBytes = 0;
         Address current = pageStart;
@@ -262,7 +272,8 @@ public final class ListingRangeService {
                         current, unitEnd, maxIncomingRefsPerUnit);
                     units.add(renderUnit(
                         metadata, programId, modificationNumber, existing,
-                        current, unitEnd, true, null, false, true));
+                        current, unitEnd, true, null, false, true, compact,
+                        program.getName()));
                     returnedEnd = unitEnd;
                     current = next(unitEnd);
                     break;
@@ -299,7 +310,8 @@ public final class ListingRangeService {
 
             units.add(renderUnit(
                 metadata, programId, modificationNumber, existing,
-                current, unitEnd, initialized, bytes, bytesComplete, false));
+                current, unitEnd, initialized, bytes, bytesComplete, false,
+                compact, program.getName()));
             returnedEnd = unitEnd;
             current = next(unitEnd);
         }
@@ -328,11 +340,50 @@ public final class ListingRangeService {
                 maxUnits, maxBytes, maxIncomingRefsPerUnit, address(current));
             response.put("next_cursor", ListingCursorCodec.encode(payload));
         }
+        if (compact) {
+            response.put("compact", true);
+            Map<String, Object> arguments = new LinkedHashMap<>();
+            arguments.put("program", program.getName());
+            arguments.put("start", address(pageStart));
+            arguments.put("end", address(returnedEnd));
+            arguments.put("max_units", maxUnits);
+            arguments.put("max_bytes", maxBytes);
+            arguments.put(
+                "max_incoming_refs_per_unit", maxIncomingRefsPerUnit);
+            arguments.put("compact", false);
+            Map<String, Object> fullPageRequest = new LinkedHashMap<>();
+            fullPageRequest.put("tool", "get_listing_range");
+            fullPageRequest.put("arguments", arguments);
+            response.put("full_page_request", fullPageRequest);
+        }
         response.put("units", units);
         return new Page(response);
     }
 
     private static Map<String, Object> renderUnit(
+            UnitMetadata metadata,
+            String programId,
+            long modificationNumber,
+            CodeUnit existing,
+            Address start,
+            Address end,
+            boolean initialized,
+            byte[] bytes,
+            boolean bytesComplete,
+            boolean oversized,
+            boolean compact,
+            String programName) {
+        if (compact) {
+            return renderCompactUnit(
+                metadata, existing, start, end, initialized, bytes,
+                bytesComplete, oversized, programName);
+        }
+        return renderFullUnit(
+            metadata, programId, modificationNumber, existing, start, end,
+            initialized, bytes, bytesComplete, oversized);
+    }
+
+    private static Map<String, Object> renderFullUnit(
             UnitMetadata metadata,
             String programId,
             long modificationNumber,
@@ -404,6 +455,95 @@ public final class ListingRangeService {
         return unit;
     }
 
+    private static Map<String, Object> renderCompactUnit(
+            UnitMetadata metadata,
+            CodeUnit existing,
+            Address start,
+            Address end,
+            boolean initialized,
+            byte[] bytes,
+            boolean bytesComplete,
+            boolean oversized,
+            String programName) {
+        String kind = existing instanceof Instruction ? "instruction"
+            : existing instanceof Data ? "data" : "undefined";
+        Map<String, Object> unit = new LinkedHashMap<>();
+        unit.put("start", address(start));
+        unit.put("end", address(end));
+        unit.put("kind", kind);
+        unit.put("initialized", initialized);
+        unit.put("bytes_complete", bytesComplete);
+        int byteLength = rangeLength(start, end);
+        if (bytes == null) {
+            unit.put("bytes", null);
+        }
+        else if (bytes.length <= COMPACT_INLINE_BYTES) {
+            unit.put("bytes", HEX.formatHex(bytes));
+        }
+        else {
+            unit.put("byte_length", bytes.length);
+            unit.put("byte_sha256", sha256(bytes));
+        }
+        if (oversized
+                || (bytes != null && bytes.length > COMPACT_INLINE_BYTES)) {
+            Map<String, Object> bytesRequest = new LinkedHashMap<>();
+            bytesRequest.put("tool", "inspect_memory_content");
+            bytesRequest.put("program", programName);
+            bytesRequest.put("address", address(start));
+            bytesRequest.put("length", byteLength);
+            unit.put("bytes_request", bytesRequest);
+            if (oversized) {
+                unit.put("byte_length", byteLength);
+            }
+        }
+
+        if (existing instanceof Instruction instruction) {
+            unit.put("mnemonic", instruction.getMnemonicString());
+            unit.put("operand_text", operandText(instruction));
+            unit.put("flow_type", instruction.getFlowType() == null
+                ? null : instruction.getFlowType().getName());
+            unit.put("fall_through", instruction.getFallThrough() == null
+                ? null : address(instruction.getFallThrough()));
+            Address[] flows = instruction.getFlows();
+            unit.put("flows", flows == null ? List.of()
+                : Arrays.stream(flows).sorted()
+                    .map(ListingRangeService::address).toList());
+        }
+        else if (existing instanceof Data data) {
+            DataMetadata dataMetadata = readDataMetadata(data);
+            unit.put("data_type", dataMetadata.displayName());
+            putCompactText(
+                unit, "representation", data.getDefaultValueRepresentation());
+        }
+
+        Map<String, Map<String, Object>> labels = new LinkedHashMap<>();
+        for (LabelRecord label : metadata.labels()) {
+            String key = String.join("\u001f",
+                address(label.address()), label.namespace(), label.name(),
+                Boolean.toString(label.primary()));
+            labels.putIfAbsent(key, compactLabelRecord(label));
+        }
+        unit.put("labels", List.copyOf(labels.values()));
+        unit.put("comments", metadata.comments().stream()
+            .map(ListingRangeService::compactCommentRecord)
+            .toList());
+        unit.put("outgoing_references", metadata.outgoing().stream()
+            .map(ListingRangeService::compactReferenceRecord)
+            .toList());
+
+        IncomingPage incoming = metadata.incoming();
+        unit.put(
+            "incoming_reference_groups", compactIncomingGroups(incoming));
+        unit.put("incoming_references_complete", incoming.complete());
+        if (!incoming.complete()) {
+            unit.put("incoming_references_next_address",
+                address(incoming.nextAddress()));
+            unit.put("incoming_references_next_offset", incoming.nextOffset());
+            unit.put("incoming_references_tool", "get_xrefs_to");
+        }
+        return unit;
+    }
+
     private static String operandText(Instruction instruction) {
         List<String> operands = new ArrayList<>();
         for (int index = 0; index < instruction.getNumOperands(); index++) {
@@ -432,6 +572,77 @@ public final class ListingRangeService {
         return record;
     }
 
+    private static Map<String, Object> compactLabelRecord(LabelRecord label) {
+        Map<String, Object> record = new LinkedHashMap<>();
+        record.put("address", address(label.address()));
+        record.put("name", label.name());
+        record.put("namespace", label.namespace());
+        record.put("primary", label.primary());
+        return record;
+    }
+
+    private static Map<String, Object> compactCommentRecord(
+            CommentRecord comment) {
+        Map<String, Object> record = new LinkedHashMap<>();
+        record.put("address", address(comment.address()));
+        record.put("type", comment.type().name().toLowerCase(java.util.Locale.ROOT));
+        putCompactText(record, "text", comment.text());
+        return record;
+    }
+
+    private static Map<String, Object> compactReferenceRecord(
+            Reference reference) {
+        Map<String, Object> record = new LinkedHashMap<>();
+        record.put("source", address(reference.getFromAddress()));
+        record.put("destination", address(reference.getToAddress()));
+        record.put("type", reference.getReferenceType().getName());
+        return record;
+    }
+
+    private static List<Map<String, Object>> compactIncomingGroups(
+            IncomingPage incoming) {
+        Map<String, Long> includedByDestination = new LinkedHashMap<>();
+        for (Reference reference : incoming.included()) {
+            includedByDestination.merge(
+                address(reference.getToAddress()), 1L, Long::sum);
+        }
+        String continuation = incoming.complete()
+            ? null : address(incoming.nextAddress());
+        if (continuation != null) {
+            includedByDestination.putIfAbsent(continuation, 0L);
+        }
+
+        List<Map<String, Object>> groups = new ArrayList<>();
+        for (Map.Entry<String, Long> entry
+                : includedByDestination.entrySet()) {
+            Map<String, Object> group = new LinkedHashMap<>();
+            group.put("destination", entry.getKey());
+            group.put("included", entry.getValue());
+            group.put(
+                "complete",
+                continuation == null || !continuation.equals(entry.getKey()));
+            groups.add(group);
+        }
+        return List.copyOf(groups);
+    }
+
+    private static void putCompactText(
+            Map<String, Object> record, String field, String value) {
+        if (value == null || value.length() <= COMPACT_TEXT_CAP) {
+            record.put(field, value);
+            return;
+        }
+        int prefixEnd = COMPACT_TEXT_CAP - COMPACT_TEXT_SUFFIX.length();
+        if (prefixEnd > 0
+                && Character.isHighSurrogate(value.charAt(prefixEnd - 1))
+                && Character.isLowSurrogate(value.charAt(prefixEnd))) {
+            prefixEnd--;
+        }
+        record.put(field, value.substring(0, prefixEnd) + COMPACT_TEXT_SUFFIX);
+        record.put(field + "_length", value.length());
+        record.put(field + "_truncated", true);
+    }
+
     private static Map<String, Object> referenceRecord(
             String programId, long modificationNumber, Reference reference) {
         Map<String, Object> record = new LinkedHashMap<>();
@@ -458,10 +669,13 @@ public final class ListingRangeService {
     }
 
     private static String sha256(String text) {
+        return sha256(text.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static String sha256(byte[] bytes) {
         try {
             return HEX.formatHex(
-                MessageDigest.getInstance("SHA-256")
-                    .digest(text.getBytes(StandardCharsets.UTF_8)));
+                MessageDigest.getInstance("SHA-256").digest(bytes));
         }
         catch (NoSuchAlgorithmException exception) {
             throw new IllegalStateException("SHA-256 is unavailable", exception);
@@ -557,6 +771,8 @@ public final class ListingRangeService {
         }
     }
 
+    // compact is presentation-only and intentionally absent, so a cursor can
+    // continue in either compact or full mode without changing page membership.
     record CursorPayload(
         int version,
         String programId,
@@ -1019,6 +1235,8 @@ public final class ListingRangeService {
                     return new CursorValidation(
                         null, "Listing cursor bounds do not match this request.");
                 }
+                // compact is deliberately not validated: presentation mode
+                // does not affect these cursor-bound page limits.
                 if (json.get("max_units").getAsInt() != maxUnits
                         || json.get("max_bytes").getAsInt() != maxBytes
                         || json.get("max_incoming").getAsInt() != maxIncoming) {

@@ -1580,10 +1580,11 @@
         "max_units",
         "max_bytes",
         "max_incoming_refs_per_unit",
+        "compact",
         "cursor",
         "program"
       ],
-      "description": "Read an authoritative mixed instruction/data/undefined listing range without requiring or creating functions"
+      "description": "Read an authoritative mixed instruction/data/undefined listing range without requiring or creating functions. Compact output is the default; it summarizes byte payloads above 32 bytes and truncates comment/data renderings above 256 characters. Pass compact=false for exact full records."
     },
     {
       "path": "/get_metadata",
