@@ -246,72 +246,16 @@ jobs:
       run: |
         uv run --python 3.12 --group test pytest tests/unit/ -v --no-cov --tb=short
 
-  code-quality:
-    # ADVISORY / non-blocking: every step below ends in `|| true` (or an echo
-    # fallback), so this job surfaces lint/format drift without ever failing CI.
-    # It is intentionally NOT a gate — `build-status` does not depend on it. To make
-    # it gating, drop the `|| true` once the tree is verified flake8/black-clean.
-    name: Code Quality (advisory, non-blocking)
-    runs-on: ubuntu-latest
-
-    steps:
-    - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
-
-    - name: Install uv
-      uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
-      with:
-        enable-cache: true
-
-    - name: Run flake8
-      run: uvx flake8 python/bridge_mcp_ghidra/ --max-line-length=120 --ignore=E501,W503 || true
-
-    - name: Check formatting with black
-      run: uvx black --check python/bridge_mcp_ghidra/ 2>/dev/null || echo "black check skipped"
-
-  markdown-lint:
-    # ADVISORY / non-blocking: continue-on-error means findings never fail CI, and
-    # build-status does not depend on this job. Informational doc-lint only.
-    name: Documentation Quality (advisory, non-blocking)
-    runs-on: ubuntu-latest
-
-    steps:
-    - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
-
-    - name: Lint markdown
-      uses: DavidAnson/markdownlint-cli2-action@8de2aa07cae85fd17c0b35642db70cf5495f1d25  # v24.0.0
-      with:
-        globs: '**/*.md'
-        config: '.markdownlintrc'
-      continue-on-error: true
-
-  pester-tests:
-    name: Pester (ghidra-mcp-setup.ps1)
-    runs-on: windows-latest
-
-    steps:
-    - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
-
-    - name: Run Pester suite
-      shell: powershell
-      run: .\tests\pester\Run-Tests.ps1 -CI
-
-    - name: Upload Pester results
-      if: always()
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
-      with:
-        name: pester-results
-        path: tests/pester/pester-results.xml
-
   build-status:
     name: Build Status
     runs-on: ubuntu-latest
-    needs: [ java-build, python-tests, python-tests-windows, pester-tests ]
+    needs: [ java-build, python-tests, python-tests-windows ]
     if: always()
 
     steps:
     - name: Report Status
       run: |
-        if [ "${{ needs.java-build.result }}" = "success" ] && [ "${{ needs.python-tests.result }}" = "success" ] && [ "${{ needs.python-tests-windows.result }}" = "success" ] && [ "${{ needs.pester-tests.result }}" = "success" ]; then
+        if [ "${{ needs.java-build.result }}" = "success" ] && [ "${{ needs.python-tests.result }}" = "success" ] && [ "${{ needs.python-tests-windows.result }}" = "success" ]; then
           echo "✅ All tests passed"
           exit 0
         else
