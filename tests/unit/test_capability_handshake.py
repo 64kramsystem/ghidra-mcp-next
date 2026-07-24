@@ -375,22 +375,20 @@ def _wire_responses(version=None, schema=None):
 
 @pytest.fixture
 def clean_connection():
-    original_defaults = set(state._default_groups)
+    original_profile = state._tool_profile
     with state._ghidra_lock:
         registry._adapter().replace_dynamic({})
         state._connection = state.ConnectionBundle()
         state._last_attempt = None
         state.publish_connection(state._connection)
-        state._lazy_mode = False
-        state._default_groups = original_defaults
+        state.configure_tool_profile("full")
     yield
     with state._ghidra_lock:
         registry._adapter().replace_dynamic({})
         state._connection = state.ConnectionBundle()
         state._last_attempt = None
         state.publish_connection(state._connection)
-        state._lazy_mode = False
-        state._default_groups = original_defaults
+        state._tool_profile = original_profile
 
 
 def test_eager_handshake_publishes_complete_bundle(monkeypatch, clean_connection):
@@ -473,8 +471,7 @@ def test_lazy_handshake_and_atomic_group_load(monkeypatch, clean_connection):
     monkeypatch.setattr(
         static_tools.transport, "candidate_request", _wire_responses()
     )
-    state._lazy_mode = True
-    state._default_groups = {"listing"}
+    state.configure_tool_profile("custom", {"listing"})
     result = asyncio.run(
         connection.handshake_candidate(
             "connect",
@@ -487,11 +484,72 @@ def test_lazy_handshake_and_atomic_group_load(monkeypatch, clean_connection):
     )
     assert result["manifest_count"] == 2
     assert result["callable_dynamic_count"] == 1
+    assert result["tool_profile"] == "custom"
+    assert result["profile_groups"] == ["listing"]
     assert state._connection.dynamic_names == ("alpha",)
     loaded = json.loads(asyncio.run(static_tools.load_tool_group("memory")))
     assert loaded["new_tool_names"] == ["beta"]
     assert state._connection.generation == 1
     assert state._connection.callable_dynamic_count == 2
+
+
+def test_minimal_profile_keeps_full_catalog_searchable(
+    monkeypatch, clean_connection
+):
+    monkeypatch.setattr(
+        static_tools.transport, "candidate_request", _wire_responses()
+    )
+    state.configure_tool_profile("minimal")
+    result = asyncio.run(
+        connection.handshake_candidate(
+            "connect",
+            mode="tcp",
+            endpoint="http://127.0.0.1:8089",
+            project="A",
+            ctx=None,
+            failure_policy="clear",
+        )
+    )
+    assert result["tool_profile"] == "minimal"
+    assert result["profile_groups"] == []
+    assert result["manifest_count"] == 2
+    assert result["callable_dynamic_count"] == 0
+    assert state._connection.dynamic_names == ()
+    assert len(state._connection.full_schema) == 2
+
+    found = json.loads(asyncio.run(static_tools.search_tools("beta")))
+    assert found["match_count"] == 1
+    assert found["matches"] == [
+        {
+            "name": "beta",
+            "group": "memory",
+            "status": "not_loaded",
+            "description": "",
+            "fix": 'load_tool_group("memory")',
+        }
+    ]
+
+
+def test_unknown_custom_profile_group_fails_handshake(
+    monkeypatch, clean_connection
+):
+    monkeypatch.setattr(
+        static_tools.transport, "candidate_request", _wire_responses()
+    )
+    state.configure_tool_profile("custom", {"typo"})
+    result = asyncio.run(
+        connection.handshake_candidate(
+            "connect",
+            mode="tcp",
+            endpoint="http://127.0.0.1:8089",
+            project="A",
+            ctx=None,
+            failure_policy="clear",
+        )
+    )
+    assert result["connected"] is False
+    assert result["failure"]["category"] == "unknown tool group"
+    assert "typo" in result["error"]
 
 
 def test_eager_mode_refuses_partial_unload(monkeypatch, clean_connection):
@@ -509,6 +567,8 @@ def test_eager_mode_refuses_partial_unload(monkeypatch, clean_connection):
         )
     )
     before = state._connection
+    assert before.tool_profile == "full"
+    assert before.profile_groups == ()
     result = json.loads(
         asyncio.run(static_tools.unload_tool_group("memory"))
     )
@@ -584,8 +644,7 @@ def test_check_tools_reports_manifest_generation(monkeypatch, clean_connection):
     monkeypatch.setattr(
         static_tools.transport, "candidate_request", _wire_responses()
     )
-    state._lazy_mode = True
-    state._default_groups = {"listing"}
+    state.configure_tool_profile("custom", {"listing"})
     asyncio.run(
         connection.handshake_candidate(
             "connect",
@@ -675,10 +734,10 @@ def test_candidate_build_is_never_observable_as_mixed_state(
     release = threading.Event()
     original = connection.fetch_staged_candidate
 
-    def paused(mode, endpoint):
+    def paused(mode, endpoint, profile=None):
         entered.set()
         release.wait(timeout=5)
-        return original(mode, endpoint)
+        return original(mode, endpoint, profile)
 
     monkeypatch.setattr(connection, "fetch_staged_candidate", paused)
     monkeypatch.setattr(
@@ -1023,8 +1082,7 @@ def test_registration_failure_rolls_back_eager_and_lazy_maps(
     assert set(registry._adapter().snapshot()) == static_tools.STATIC_TOOL_NAMES
 
     monkeypatch.setattr(registry, "_build_tool_object", original)
-    state._lazy_mode = True
-    state._default_groups = {"listing"}
+    state.configure_tool_profile("custom", {"listing"})
     asyncio.run(
         connection.handshake_candidate(
             "connect",
@@ -1102,7 +1160,7 @@ def test_publication_failure_restores_exact_map_and_reports_server_identity(
             mode="tcp",
             endpoint="http://127.0.0.1:8090",
             generation=2,
-            lazy=False,
+            profile=state.resolve_tool_profile("full"),
         )
     assert exc.value.category == "registration failure"
     assert exc.value.server_identity == VERSION
@@ -1216,8 +1274,7 @@ def test_group_change_does_not_suppress_required_reconnect(
     monkeypatch.setattr(
         static_tools.transport, "candidate_request", _wire_responses()
     )
-    state._lazy_mode = True
-    state._default_groups = {"listing"}
+    state.configure_tool_profile("custom", {"listing"})
     asyncio.run(
         connection.handshake_candidate(
             "connect",
@@ -1382,8 +1439,7 @@ def test_notification_matrix_for_failures_switch_reconnect_and_groups(
     monkeypatch.setattr(
         static_tools.transport, "candidate_request", _wire_responses()
     )
-    state._lazy_mode = True
-    state._default_groups = {"listing"}
+    state.configure_tool_profile("custom", {"listing"})
     connected = asyncio.run(
         connection.handshake_candidate(
             "connect",
@@ -1537,7 +1593,7 @@ def test_post_create_handshake_cleanup_notifies_for_removed_active_map(
         ),
     )
 
-    def fail_fetch(_mode, _endpoint):
+    def fail_fetch(_mode, _endpoint, _profile):
         raise handshake.HandshakeError(
             "malformed schema", "injected post-create failure"
         )
