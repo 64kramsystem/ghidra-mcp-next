@@ -79,4 +79,3 @@ After this the function appears as `Widget::Widget_OnClick` and the decompiler s
 ## Related
 
 - Manual checks: [TESTING.md](TESTING.md)
-- Contributing policy: [CONTRIBUTING.md](../CONTRIBUTING.md)

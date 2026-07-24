@@ -52,7 +52,7 @@ open-source dependency boundaries.
 - Ghidra 12.1.2 or a compatible release
 - Java 21
 - Maven 3.9+
-- Python 3.10+
+- Python 3.11+
 - `uv` is recommended for the locked Python environment
 
 Ghidra 12.1 ships Jython as an optional extension. Java scripts work without

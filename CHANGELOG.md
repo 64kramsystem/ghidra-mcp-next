@@ -121,6 +121,8 @@ Complete version history for the Ghidra MCP Server project.
 
 ### Changed
 
+- Raised the Python minimum from 3.10 to 3.11 and updated the compatibility
+  matrix to test Python 3.11 through 3.14.
 - Simplified the README introduction to describe this project as a cleaned,
   tested, restructured, and extended version of the original Ghidra MCP.
 - Removed the standalone CodeQL and OpenSSF Scorecard scans, unused
@@ -174,6 +176,8 @@ Complete version history for the Ghidra MCP Server project.
 
 ### Removed
 
+- Removed the redundant `CONTRIBUTING.md`; the repository's concise agent
+  instructions and existing development documentation remain authoritative.
 - Gradle, Docker, the alternate build-backend selector, and their CI paths.
 - The linear `disassemble_bytes` contract, replaced by bounded,
   flow-following `disassemble_flow`.

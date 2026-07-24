@@ -8,7 +8,6 @@ MAINTAINED = [
     "AGENTS.md",
     "CLAUDE.md",
     "README.md",
-    "CONTRIBUTING.md",
     "ROADMAP.md",
     "SECURITY.md",
     "docs/README.md",
