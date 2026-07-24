@@ -4,7 +4,6 @@
 | --- | --- |
 | `tests.yml` | Pull-request and push gates for Python, Java/Maven, catalog, packaging, and documentation contracts. |
 | `release.yml` | Stable release validation and artifact publication. |
-| `scorecard.yml` | OpenSSF Scorecard analysis. |
 
 ## Pull requests
 
