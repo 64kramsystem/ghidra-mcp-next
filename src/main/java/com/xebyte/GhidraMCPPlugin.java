@@ -242,6 +242,7 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
     private final com.xebyte.core.ProgramScriptService programScriptService;
     private final com.xebyte.core.MemoryBlockService memoryBlockService;
     private final com.xebyte.core.DataRegionService dataRegionService;
+    private final com.xebyte.core.ControlFlowService controlFlowService;
     private final com.xebyte.core.SymbolProfileService symbolProfileService;
     private final com.xebyte.core.EmulationService emulationService;
     private final com.xebyte.core.ExportService exportService;
@@ -273,6 +274,9 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
             new com.xebyte.core.MemoryBlockService(programProvider, threadingStrategy);
         this.dataRegionService =
             new com.xebyte.core.DataRegionService(programProvider, threadingStrategy);
+        this.controlFlowService =
+            new com.xebyte.core.ControlFlowService(
+                programProvider, threadingStrategy);
         this.symbolProfileService =
             new com.xebyte.core.SymbolProfileService(programProvider, threadingStrategy);
         this.emulationService = new com.xebyte.core.EmulationService(programProvider, threadingStrategy);
@@ -545,7 +549,8 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
             listingService, functionService, commentService, symbolLabelService,
             xrefCallGraphService, dataTypeService, analysisService,
             binaryComparisonService, malwareSecurityService, programScriptService,
-            memoryBlockService, dataRegionService, symbolProfileService,
+            memoryBlockService, dataRegionService, controlFlowService,
+            symbolProfileService,
             emulationService, exportService, flowDisassemblyService,
             listingRangeService, listingMutationService,
             debuggerService, guiProjectService, guiContextService);
@@ -1102,14 +1107,6 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
 
     private String setFunctionNoReturn(String functionAddrStr, boolean noReturn) {
         return functionService.setFunctionNoReturn(functionAddrStr, noReturn).toJson();
-    }
-
-    private String clearInstructionFlowOverride(String instructionAddrStr, String programName) {
-        return functionService.clearInstructionFlowOverride(instructionAddrStr, programName).toJson();
-    }
-
-    private String clearInstructionFlowOverride(String instructionAddrStr) {
-        return functionService.clearInstructionFlowOverride(instructionAddrStr).toJson();
     }
 
     private String setVariableStorage(String functionAddrStr, String variableName, String storageSpec, String programName) {

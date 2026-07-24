@@ -8,6 +8,12 @@ Complete version history for the Ghidra MCP Server project.
 
 ### Added
 
+- Added dry-run-first, function-independent manual control-flow metadata:
+  `update_entry_points`, `set_instruction_flow_override`,
+  `batch_update_references`, `describe_jump_table`, and
+  `annotate_self_modified_operand`. The tools atomically preserve explicit
+  entry, override, computed-dispatch, jump-table, and self-modifying-code
+  evidence without running analysis or guessing targets and layouts.
 - Added GUI-only `get_current_address`, `get_current_selection`, and
   `go_to_address` MCP tools with normalized program/address context,
   lossless ordered multi-range selections, Swing-safe reads and navigation,
@@ -92,6 +98,9 @@ Complete version history for the Ghidra MCP Server project.
 
 ### Changed
 
+- Replaced the clear-only `clear_instruction_flow_override` tool with the
+  canonical setter, which accepts every Ghidra flow override including
+  `NONE`, and made multiline address comments exactly idempotent.
 - Renamed the bridge management wrappers to
   `create_and_connect_project` and `import_file_and_notify`. The server
   manifest's `create_project` and `import_file` now register normally instead

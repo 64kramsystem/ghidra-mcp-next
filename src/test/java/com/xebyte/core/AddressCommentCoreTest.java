@@ -156,6 +156,34 @@ public class AddressCommentCoreTest {
     }
 
     @Test
+    public void appendIdempotentRecognizesCompleteMultilineSegments() {
+        when(listing.getComment(CommentType.PRE, address))
+            .thenReturn(
+                "A\nB\nC",
+                "A\nB\nC\nD",
+                "A\nB\nC\nD",
+                "A\nB",
+                "AA\nB",
+                "");
+
+        assertFalse(appendPre("A\nB").changed());
+        assertFalse(appendPre("B\nC").changed());
+        assertFalse(appendPre("C\nD").changed());
+        assertEquals("A\nB\nX\nY", appendPre("X\nY").resulting());
+        assertEquals("AA\nB\nA\nB", appendPre("A\nB").resulting());
+        assertEquals("A\nB", appendPre("A\nB").resulting());
+    }
+
+    private AddressCommentCore.Plan appendPre(String text) {
+        return core.plan(
+            program,
+            target,
+            CommentType.PRE,
+            text,
+            AddressCommentCore.WriteMode.APPEND_IDEMPOTENT);
+    }
+
+    @Test
     public void unmappedAndExternalAddressesAreRejectedBeforeListingRead() {
         Address unmapped = RAM.getAddress(0x2000);
         when(memory.contains(unmapped)).thenReturn(false);

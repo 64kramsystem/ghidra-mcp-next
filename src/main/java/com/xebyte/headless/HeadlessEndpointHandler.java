@@ -59,6 +59,7 @@ public class HeadlessEndpointHandler {
     private final com.xebyte.core.ProgramScriptService programScriptService;
     private final com.xebyte.core.MemoryBlockService memoryBlockService;
     private final com.xebyte.core.DataRegionService dataRegionService;
+    private final com.xebyte.core.ControlFlowService controlFlowService;
     private final com.xebyte.core.SymbolProfileService symbolProfileService;
     private final com.xebyte.core.EmulationService emulationService;
     private final com.xebyte.core.ExportService exportService;
@@ -86,6 +87,9 @@ public class HeadlessEndpointHandler {
             new com.xebyte.core.MemoryBlockService(programProvider, threadingStrategy);
         this.dataRegionService =
             new com.xebyte.core.DataRegionService(programProvider, threadingStrategy);
+        this.controlFlowService =
+            new com.xebyte.core.ControlFlowService(
+                programProvider, threadingStrategy);
         this.symbolProfileService =
             new com.xebyte.core.SymbolProfileService(
                 programProvider, threadingStrategy);
@@ -120,6 +124,9 @@ public class HeadlessEndpointHandler {
     }
     public com.xebyte.core.DataRegionService getDataRegionService() {
         return dataRegionService;
+    }
+    public com.xebyte.core.ControlFlowService getControlFlowService() {
+        return controlFlowService;
     }
     public com.xebyte.core.SymbolProfileService getSymbolProfileService() {
         return symbolProfileService;
@@ -1922,10 +1929,6 @@ public class HeadlessEndpointHandler {
 
     public String setFunctionNoReturn(String functionAddrStr, boolean noReturn, String programName) {
         return functionService.setFunctionNoReturn(functionAddrStr, noReturn, programName).toJson();
-    }
-
-    public String clearInstructionFlowOverride(String instructionAddrStr, String programName) {
-        return functionService.clearInstructionFlowOverride(instructionAddrStr, programName).toJson();
     }
 
     public String setVariableStorage(String functionAddrStr, String variableName, String storageSpec, String programName) {

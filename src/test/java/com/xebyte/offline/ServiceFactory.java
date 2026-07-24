@@ -3,6 +3,7 @@ package com.xebyte.offline;
 import com.xebyte.core.AnalysisService;
 import com.xebyte.core.BinaryComparisonService;
 import com.xebyte.core.CommentService;
+import com.xebyte.core.ControlFlowService;
 import com.xebyte.core.DataTypeService;
 import com.xebyte.core.DataRegionService;
 import com.xebyte.core.DebuggerService;
@@ -57,6 +58,8 @@ public final class ServiceFactory {
             new MemoryBlockService(provider, ts);
         DataRegionService dataRegionService =
             new DataRegionService(provider, ts);
+        ControlFlowService controlFlowService =
+            new ControlFlowService(provider, ts);
         SymbolProfileService symbolProfileService =
             new SymbolProfileService(provider, ts);
         EmulationService emulationService = new EmulationService(provider, ts);
@@ -88,6 +91,7 @@ public final class ServiceFactory {
             programScriptService,
             memoryBlockService,
             dataRegionService,
+            controlFlowService,
             symbolProfileService,
             emulationService,
             exportService,

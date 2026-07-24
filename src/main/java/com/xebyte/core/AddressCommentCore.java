@@ -185,10 +185,11 @@ final class AddressCommentCore {
         if (previous == null || previous.isEmpty()) {
             return requested;
         }
-        for (String line : previous.split("\\R", -1)) {
-            if (line.equals(requested)) {
-                return previous;
-            }
+        if (previous.equals(requested)
+                || previous.startsWith(requested + "\n")
+                || previous.endsWith("\n" + requested)
+                || previous.contains("\n" + requested + "\n")) {
+            return previous;
         }
         return previous + "\n" + requested;
     }
