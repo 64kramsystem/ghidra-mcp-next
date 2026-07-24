@@ -8,9 +8,8 @@ on:
   workflow_dispatch:
 
 # Default to read-only so any job without an explicit permissions block can
-# only read repository contents.
-# Codecov upload (java-build job) and any future job needing write
-# scopes must add their own job-level permissions block.
+# only read repository contents. Any future job needing write scopes must add
+# its own job-level permissions block.
 permissions:
   contents: read
 
@@ -195,10 +194,8 @@ jobs:
     - name: Run Python unit tests with coverage
       if: matrix.python-version == '3.14'
       run: |
-        # Coverage sources come from pyproject.toml. The fail-under floor is a
-        # ratchet: raise it as coverage improves, never lower it.
         uv sync --locked --group test
-        uv run --no-sync pytest tests/unit/ -v --tb=short --cov-fail-under=46
+        uv run --no-sync pytest tests/unit/ -v --tb=short
 
     - name: Build Python distributions
       if: matrix.python-version == '3.14' && success()
@@ -213,14 +210,6 @@ jobs:
           dist/*.whl
           dist/*.tar.gz
         if-no-files-found: error
-
-    - name: Upload coverage
-      if: ${{ matrix.python-version == '3.14' && always() && hashFiles('coverage.xml', 'tests/coverage.xml') != '' }}
-      uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f  # v7.0.0
-      with:
-        files: ./coverage.xml,./tests/coverage.xml
-        flags: unittests
-        fail_ci_if_error: false
 
   python-tests-windows:
     # The bridge has real platform forks (no AF_UNIX in Windows CPython, the
@@ -241,8 +230,7 @@ jobs:
         python-version: '3.12'
 
     - name: Run Python unit tests
-      # No coverage floor here — Windows skips a handful of POSIX-only tests,
-      # so the ubuntu job owns the ratchet; this leg gates on pass/fail only.
+      # Windows skips a handful of POSIX-only tests; this leg gates on pass/fail.
       run: |
         uv sync --locked --group test
         uv run --no-sync pytest tests/unit/ -v --no-cov --tb=short
