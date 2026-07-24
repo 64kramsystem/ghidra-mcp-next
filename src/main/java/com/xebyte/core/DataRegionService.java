@@ -22,9 +22,8 @@ import ghidra.util.task.TaskMonitor;
     value = "data",
     description = "Define fixed data ranges and generic pointer tables")
 public final class DataRegionService {
-    static final String REGIONS_SCHEMA =
-        "{\"type\":\"array\",\"minItems\":1,\"maxItems\":1024,"
-        + "\"items\":{\"oneOf\":["
+    static final String REGION_ITEM_SCHEMA =
+        "{\"oneOf\":["
         + "{\"type\":\"object\",\"additionalProperties\":false,"
         + "\"properties\":{"
         + "\"kind\":{\"const\":\"contiguous\"},"
@@ -64,7 +63,10 @@ public final class DataRegionService {
         + "\"name\":{\"type\":\"string\"},\"namespace\":{\"type\":\"string\"},"
         + "\"plate_comment\":{\"type\":\"string\"}},"
         + "\"required\":[\"kind\",\"first_start\",\"second_start\","
-        + "\"count\",\"layout\",\"target_space\"]}]}}";
+        + "\"count\",\"layout\",\"target_space\"]}]}";
+    static final String REGIONS_SCHEMA =
+        "{\"type\":\"array\",\"minItems\":1,\"maxItems\":1024,"
+        + "\"items\":" + REGION_ITEM_SCHEMA + "}";
 
     private static final Set<String> CONTIGUOUS_FIELDS = Set.of(
         "kind", "start", "end", "type_name", "stride",
@@ -132,7 +134,7 @@ public final class DataRegionService {
             if (dryRun) {
                 DataRegionCore.Plan plan = threading.executeRead(
                     () -> core.plan(program, requests, monitor));
-                return Response.ok(result(plan, false));
+                return Response.ok(renderPlan(plan, false));
             }
             return threading.executeWrite(
                 program, "Apply data regions", () -> {
@@ -140,7 +142,7 @@ public final class DataRegionService {
                         core.plan(program, requests, monitor);
                     monitor.checkCancelled();
                     core.apply(program, plan, monitor);
-                    return Response.ok(result(plan, true));
+                    return Response.ok(renderPlan(plan, true));
                 });
         }
         catch (Exception error) {
@@ -264,7 +266,7 @@ public final class DataRegionService {
             optionalString(map, "label_namespace"));
     }
 
-    private static JsonObject result(
+    static JsonObject renderPlan(
             DataRegionCore.Plan plan, boolean committed) {
         JsonObject result = new JsonObject();
         result.addProperty("committed", committed);
@@ -274,108 +276,7 @@ public final class DataRegionService {
         JsonArray symbols = new JsonArray();
         JsonArray comments = new JsonArray();
         for (DataRegionCore.RegionPlan region : plan.regions()) {
-            JsonObject item = new JsonObject();
-            item.addProperty("kind", region.kind());
-            item.addProperty("placement", region.placement().toString());
-            DataRegionCore.Metadata metadata = region.metadata();
-            addNullable(item, "name",
-                metadata == null ? null : metadata.name());
-            addNullable(item, "namespace",
-                metadata == null ? null : metadata.namespace());
-            addNullable(item, "plate_comment",
-                metadata == null ? null : metadata.plateComment());
-            item.addProperty(
-                "clear_conflicts",
-                metadata != null && metadata.clearConflicts());
-            item.addProperty(
-                "element_count",
-                "contiguous".equals(region.kind())
-                    ? region.elementAddresses().size()
-                    : region.splitFirst().size());
-            if (region.request()
-                    instanceof DataRegionCore.ContiguousRequest request) {
-                item.addProperty(
-                    "start", region.placement().toString());
-                item.addProperty(
-                    "end", contiguousEnd(region).toString());
-                item.addProperty(
-                    "type_name", region.dataType().getPathName());
-                item.addProperty("data_length", region.dataLength());
-                item.addProperty("stride", region.stride());
-                item.addProperty(
-                    "allow_trailing_bytes",
-                    request.allowTrailingBytes());
-                item.add(
-                    "pointer_options",
-                    pointerOptionsJson(region.pointerOptions()));
-            }
-            else {
-                DataRegionCore.SplitPointerRequest request =
-                    (DataRegionCore.SplitPointerRequest) region.request();
-                item.addProperty(
-                    "first_start",
-                    region.splitFirst().get(0).toString());
-                item.addProperty(
-                    "second_start",
-                    region.splitSecond().get(0).toString());
-                item.addProperty("count", request.count());
-                item.addProperty("layout", request.layout());
-                addPointerOptionsFlat(
-                    item, region.pointerOptions());
-            }
-            JsonArray addresses = new JsonArray();
-            if ("contiguous".equals(region.kind())) {
-                region.elementAddresses().forEach(
-                    address -> addresses.add(address.toString()));
-            }
-            else {
-                for (int i = 0; i < region.splitFirst().size(); i++) {
-                    JsonObject pair = new JsonObject();
-                    pair.addProperty(
-                        "first", region.splitFirst().get(i).toString());
-                    pair.addProperty(
-                        "second", region.splitSecond().get(i).toString());
-                    addresses.add(pair);
-                }
-            }
-            item.add("element_addresses", addresses);
-            if (region.trailingStart() == null) {
-                item.add("trailing_range", JsonNull.INSTANCE);
-            }
-            else {
-                JsonObject trailing = new JsonObject();
-                trailing.addProperty(
-                    "start", region.trailingStart().toString());
-                trailing.addProperty(
-                    "end", region.trailingEnd().toString());
-                item.add("trailing_range", trailing);
-            }
-            JsonArray pointerResults = new JsonArray();
-            for (DataRegionCore.PointerPlan pointer : region.pointers()) {
-                JsonObject pointerJson = new JsonObject();
-                JsonArray sources = new JsonArray();
-                pointer.sources().forEach(
-                    address -> sources.add(address.toString()));
-                pointerJson.add("sources", sources);
-                pointerJson.addProperty("decoded", pointer.decoded());
-                if (pointer.target() == null) {
-                    pointerJson.add("target", JsonNull.INSTANCE);
-                }
-                else {
-                    pointerJson.addProperty(
-                        "target", pointer.target().toString());
-                }
-                pointerJson.addProperty("valid", pointer.valid());
-                if (!pointer.valid()) {
-                    pointerJson.addProperty(
-                        "skipped", "invalid_target");
-                    pointerJson.addProperty(
-                        "invalid_reason", pointer.invalidReason());
-                }
-                pointerResults.add(pointerJson);
-            }
-            item.add("pointers", pointerResults);
-            regions.add(item);
+            regions.add(renderRegionPlan(region));
             for (DataRegionCore.DataAction action
                     : region.dataActions()) {
                 JsonObject data = new JsonObject();
@@ -507,6 +408,112 @@ public final class DataRegionService {
             result.add("clear_plan", clear);
         }
         return result;
+    }
+
+    static JsonObject renderRegionPlan(
+            DataRegionCore.RegionPlan region) {
+        JsonObject item = new JsonObject();
+        item.addProperty("kind", region.kind());
+        item.addProperty("placement", region.placement().toString());
+        DataRegionCore.Metadata metadata = region.metadata();
+        addNullable(item, "name",
+            metadata == null ? null : metadata.name());
+        addNullable(item, "namespace",
+            metadata == null ? null : metadata.namespace());
+        addNullable(item, "plate_comment",
+            metadata == null ? null : metadata.plateComment());
+        item.addProperty(
+            "clear_conflicts",
+            metadata != null && metadata.clearConflicts());
+        item.addProperty(
+            "element_count",
+            "contiguous".equals(region.kind())
+                ? region.elementAddresses().size()
+                : region.splitFirst().size());
+        if (region.request()
+                instanceof DataRegionCore.ContiguousRequest request) {
+            item.addProperty(
+                "start", region.placement().toString());
+            item.addProperty(
+                "end", contiguousEnd(region).toString());
+            item.addProperty(
+                "type_name", region.dataType().getPathName());
+            item.addProperty("data_length", region.dataLength());
+            item.addProperty("stride", region.stride());
+            item.addProperty(
+                "allow_trailing_bytes",
+                request.allowTrailingBytes());
+            item.add(
+                "pointer_options",
+                pointerOptionsJson(region.pointerOptions()));
+        }
+        else {
+            DataRegionCore.SplitPointerRequest request =
+                (DataRegionCore.SplitPointerRequest) region.request();
+            item.addProperty(
+                "first_start",
+                region.splitFirst().get(0).toString());
+            item.addProperty(
+                "second_start",
+                region.splitSecond().get(0).toString());
+            item.addProperty("count", request.count());
+            item.addProperty("layout", request.layout());
+            addPointerOptionsFlat(
+                item, region.pointerOptions());
+        }
+        JsonArray addresses = new JsonArray();
+        if ("contiguous".equals(region.kind())) {
+            region.elementAddresses().forEach(
+                address -> addresses.add(address.toString()));
+        }
+        else {
+            for (int i = 0; i < region.splitFirst().size(); i++) {
+                JsonObject pair = new JsonObject();
+                pair.addProperty(
+                    "first", region.splitFirst().get(i).toString());
+                pair.addProperty(
+                    "second", region.splitSecond().get(i).toString());
+                addresses.add(pair);
+            }
+        }
+        item.add("element_addresses", addresses);
+        if (region.trailingStart() == null) {
+            item.add("trailing_range", JsonNull.INSTANCE);
+        }
+        else {
+            JsonObject trailing = new JsonObject();
+            trailing.addProperty(
+                "start", region.trailingStart().toString());
+            trailing.addProperty(
+                "end", region.trailingEnd().toString());
+            item.add("trailing_range", trailing);
+        }
+        JsonArray pointerResults = new JsonArray();
+        for (DataRegionCore.PointerPlan pointer : region.pointers()) {
+            JsonObject pointerJson = new JsonObject();
+            JsonArray sources = new JsonArray();
+            pointer.sources().forEach(
+                address -> sources.add(address.toString()));
+            pointerJson.add("sources", sources);
+            pointerJson.addProperty("decoded", pointer.decoded());
+            if (pointer.target() == null) {
+                pointerJson.add("target", JsonNull.INSTANCE);
+            }
+            else {
+                pointerJson.addProperty(
+                    "target", pointer.target().toString());
+            }
+            pointerJson.addProperty("valid", pointer.valid());
+            if (!pointer.valid()) {
+                pointerJson.addProperty(
+                    "skipped", "invalid_target");
+                pointerJson.addProperty(
+                    "invalid_reason", pointer.invalidReason());
+            }
+            pointerResults.add(pointerJson);
+        }
+        item.add("pointers", pointerResults);
+        return item;
     }
 
     private static Address contiguousEnd(

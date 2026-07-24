@@ -599,10 +599,6 @@ public class EndpointRegistry {
             (q, b) -> functionService.setFunctionNoReturn(bodyStr(b, "function_address"),
                 bodyBool(b, "no_return"), str(q, "program")));
 
-        post("/clear_instruction_flow_override", "Clear flow override at address",
-            params(bStr("address"), pProg()),
-            (q, b) -> functionService.clearInstructionFlowOverride(bodyStr(b, "address"), str(q, "program")));
-
         post("/set_variable_storage", "Set variable storage location",
             params(bStr("function_address"), bStr("variable_name"), bStr("storage"), pProg()),
             (q, b) -> functionService.setVariableStorage(bodyStr(b, "function_address"),

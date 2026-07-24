@@ -399,6 +399,7 @@ public class GhidraMCPHeadlessServer implements GhidraLaunchable {
             endpointHandler.getMalwareSecurityService(), endpointHandler.getProgramScriptService(),
             endpointHandler.getMemoryBlockService(),
             endpointHandler.getDataRegionService(),
+            endpointHandler.getControlFlowService(),
             endpointHandler.getSymbolProfileService(),
             endpointHandler.getEmulationService(), endpointHandler.getExportService(),
             endpointHandler.getFlowDisassemblyService(),

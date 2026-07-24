@@ -73,6 +73,8 @@ public class ServerManager {
                 new MemoryBlockService(programProvider, ts);
             DataRegionService dataRegionService =
                 new DataRegionService(programProvider, ts);
+            ControlFlowService controlFlowService =
+                new ControlFlowService(programProvider, ts);
             SymbolProfileService symbolProfileService =
                 new SymbolProfileService(programProvider, ts);
             EmulationService emulationService = new EmulationService(programProvider, ts);
@@ -92,7 +94,8 @@ public class ServerManager {
                 listingService, functionService, commentService, symbolLabelService,
                 xrefCallGraphService, dataTypeService, analysisService,
                 binaryComparisonService, malwareSecurityService, programScriptService,
-                memoryBlockService, dataRegionService, symbolProfileService,
+                memoryBlockService, dataRegionService, controlFlowService,
+                symbolProfileService,
                 emulationService, exportService, flowDisassemblyService,
                 listingRangeService, listingMutationService,
                 debuggerService, guiProjectService, guiContextService);
