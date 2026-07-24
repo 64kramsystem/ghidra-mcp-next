@@ -1,7 +1,7 @@
 {
   "version": "5.15.0",
   "description": "GhidraMCP REST API Endpoint Specification",
-  "total_endpoints": 253,
+  "total_endpoints": 255,
   "categories": {
     "listing": "List program data",
     "getter": "Get specific data",
@@ -735,6 +735,18 @@
       "description": "Interrupt (break into) the running target"
     },
     {
+      "path": "/debugger/invoke_target_method",
+      "method": "POST",
+      "category": "debugger",
+      "params": [
+        "target_token",
+        "method",
+        "arguments",
+        "timeout_ms"
+      ],
+      "description": "Invoke one exact typed remote method on the active TraceRMI target"
+    },
+    {
       "path": "/debugger/launch",
       "method": "POST",
       "category": "debugger",
@@ -869,6 +881,13 @@
       "category": "debugger",
       "params": [],
       "description": "Step over the next instruction (does not follow calls)"
+    },
+    {
+      "path": "/debugger/target_methods",
+      "method": "GET",
+      "category": "debugger",
+      "params": [],
+      "description": "Discover typed remote methods exposed by the exact active TraceRMI target"
     },
     {
       "path": "/debugger/traces",

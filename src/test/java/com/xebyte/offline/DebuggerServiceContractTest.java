@@ -12,6 +12,8 @@ public class DebuggerServiceContractTest extends TestCase {
         assertTrue(source.contains("@McpToolGroup(value = \"debugger\""));
         for (String path : List.of(
                 "/debugger/launch_offers", "/debugger/status",
+                "/debugger/target_methods",
+                "/debugger/invoke_target_method",
                 "/debugger/modules", "/debugger/read_memory",
                 "/debugger/static_to_dynamic", "/debugger/dynamic_to_static")) {
             assertTrue("missing TraceRMI seam " + path,
@@ -20,6 +22,20 @@ public class DebuggerServiceContractTest extends TestCase {
         assertTrue(source.contains("launcherSvc.getOffers(program)"));
         assertTrue(source.contains("offer.supportsImage()"));
         assertTrue(source.contains("offer.requiresImage()"));
+    }
+
+    public void testTargetMethodSeamUsesExactTraceRmiOwnerAndTypedCore()
+            throws Exception {
+        String source = Files.readString(Path.of(
+                System.getProperty("user.dir"),
+                "src/main/java/com/xebyte/core/DebuggerService.java"));
+        assertTrue(source.contains("traceRmi.getAllConnections()"));
+        assertTrue(source.contains(
+                "DebuggerTargetMethodCore.selectUniqueOwner"));
+        assertTrue(source.contains("targetMethodCore.describe"));
+        assertTrue(source.contains("targetMethodCore.invoke"));
+        assertFalse(source.toLowerCase().contains(
+                "c64_vice_v1"));
     }
 
     public void testPidAttachEndpointUsesTraceRmiSelectionSeams() throws Exception {
