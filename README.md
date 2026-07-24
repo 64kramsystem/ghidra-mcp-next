@@ -1,9 +1,14 @@
-# Ghidra MCP Server
+# Ghidra MCP Next
 
-Ghidra MCP connects AI clients to Ghidra through a Java extension and a thin
-Python MCP bridge. Version 5.15.0 exposes 249 tools for local static analysis,
-multi-program work, P-code emulation, local comparison, and Ghidra's built-in
-TraceRMI debugger.
+Ghidra MCP Next is a cleaned, tested, restructured, and extended version of the
+original [Ghidra MCP](https://github.com/bethington/ghidra-mcp) project. It
+connects AI clients to Ghidra through a Java extension and a thin Python MCP
+bridge.
+
+The project preserves the original integration while simplifying its
+architecture, strengthening its test coverage, and adding tools for local
+static analysis, multi-program work, P-code emulation, program comparison, and
+Ghidra's built-in TraceRMI debugger.
 
 The maintained architecture is local-first:
 
