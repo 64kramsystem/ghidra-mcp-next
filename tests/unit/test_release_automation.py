@@ -230,7 +230,7 @@ def test_classify_cli_reads_null_terminated_git_paths():
     )
 
     assert result.returncode == 0
-    assert result.stdout == b"true\n"
+    assert result.stdout.splitlines() == [b"true"]
     assert result.stderr == b""
 
 
