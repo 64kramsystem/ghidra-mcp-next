@@ -273,7 +273,7 @@ def test_timestamp_release_workflow_contract():
     assert "github.event.before" in workflow_text
 
     python_steps = {step["name"]: step for step in jobs["python-tests"]["steps"] if "name" in step}
-    expected_condition = "matrix.python-version == '3.12' && success()"
+    expected_condition = "matrix.python-version == '3.14' && success()"
     assert python_steps["Build Python distributions"]["if"] == expected_condition
     assert python_steps["Upload release Python distributions"]["if"] == expected_condition
     assert python_steps["Upload release Python distributions"]["with"]["if-no-files-found"] == "error"
