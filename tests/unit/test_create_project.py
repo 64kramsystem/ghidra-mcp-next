@@ -464,7 +464,7 @@ def test_create_project_posts_directly_to_selected_transport(
     monkeypatch.setattr(
         static_tools.connection,
         "fetch_staged_candidate",
-        lambda _mode, _endpoint: _staged_project_manifest(),
+        lambda _mode, _endpoint, _profile: _staged_project_manifest(),
     )
     notify = mock.AsyncMock(
         return_value={"attempted": True, "sent": True, "error": None}
@@ -587,7 +587,7 @@ def test_create_project_keeps_old_state_until_candidate_publication(
             200,
         )
 
-    def fetch(mode, endpoint):
+    def fetch(mode, endpoint, _profile):
         events.append("fetch")
         assert mode == "tcp"
         assert endpoint == instance["url"]
@@ -641,7 +641,8 @@ def test_create_project_refresh_failure_clears_partial_state_and_notifies(
         "uds_request",
         mock.Mock(return_value=(response, 200)),
     )
-    def failed_fetch(_mode, _endpoint):
+
+    def failed_fetch(_mode, _endpoint, _profile):
         raise handshake.HandshakeError(
             "malformed schema", "schema exploded"
         )
@@ -692,7 +693,7 @@ def test_create_project_holds_lock_through_refresh_but_not_notification(
         assert lock.held
         return response, 200
 
-    def fetch(_mode, _endpoint):
+    def fetch(_mode, _endpoint, _profile):
         assert lock.held
         return _staged_project_manifest()
 
@@ -734,7 +735,7 @@ def test_import_file_dispatches_immediately_through_new_target(
     monkeypatch.setattr(
         static_tools.connection,
         "fetch_staged_candidate",
-        lambda _mode, _endpoint: _staged_project_manifest(),
+        lambda _mode, _endpoint, _profile: _staged_project_manifest(),
     )
     monkeypatch.setattr(
         static_tools.connection,

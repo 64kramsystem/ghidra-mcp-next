@@ -146,8 +146,21 @@ available.
 
 ## Tool groups
 
-The bridge can expose all tools eagerly or start with a smaller lazy surface.
-In lazy mode, use the management tools deliberately:
+The bridge defaults to the `core` visibility profile, which initially exposes
+the `listing`, `function`, and `program` groups plus its management tools. Use
+`minimal` for management tools only or `full` for the complete eager catalog:
+
+```bash
+uv run bridge-mcp-ghidra --tool-profile minimal
+uv run bridge-mcp-ghidra --tool-profile core
+uv run bridge-mcp-ghidra --tool-profile full
+```
+
+`GHIDRA_MCP_TOOL_PROFILE` selects the same named profiles. A custom lazy
+baseline remains available through `--default-groups listing,function`; the
+older `--lazy` and `--no-lazy` flags are aliases for `core` and `full`.
+
+With a lazy profile, use the management tools deliberately:
 
 ```text
 search_tools("rename function")
@@ -163,7 +176,8 @@ operation error; reloading a group does not change the target's state.
 Every connect, switch, reconnect, and `refresh_connection()` validates the
 selected server's `/get_version` and complete `/mcp/schema` before publishing
 any tools. Use `get_connection_info()` to report the exact plugin, bridge,
-transport, manifest digests, callable count, and connection generation.
+transport, configured profile and baseline groups, actual loaded groups,
+manifest digests, callable count, and connection generation.
 `check_tools(...)` includes the active manifest digest and generation.
 Registration failures never leave a partial tool map; a failed explicit switch
 preserves the healthy previous connection, while a failed active refresh or

@@ -468,7 +468,7 @@ def publish_staged(
     mode: str,
     endpoint: str,
     generation: int,
-    lazy: bool,
+    profile: state.ResolvedToolProfile,
 ) -> state.ConnectionBundle:
     """Commit a staged map and its matching state while the mutation lock is held."""
     identities = {
@@ -485,7 +485,9 @@ def publish_staged(
         transport=mode,
         endpoint=endpoint,
         server=deepcopy(staged.manifest.version),
-        lazy=lazy,
+        tool_profile=profile.name,
+        profile_groups=tuple(sorted(profile.groups or ())),
+        lazy=profile.lazy,
         manifest_count=staged.manifest.manifest_count,
         callable_dynamic_count=len(staged.dynamic_tools),
         loaded_groups=staged.loaded_groups,
@@ -668,8 +670,13 @@ def _load_group(group_name: str) -> list[str]:
 
 def _unload_group(group_name: str) -> int:
     """Unload tools for a specific group. Returns count of removed tools."""
-    if group_name in state._default_groups:
-        return 0  # Default groups can't be unloaded
+    profile_groups = (
+        set(state._connection.profile_groups)
+        if state._connection.connected
+        else set(state._tool_profile.groups or ())
+    )
+    if group_name in profile_groups:
+        return 0  # Profile baseline groups cannot be unloaded.
 
     to_remove = []
     for tool_def in state._full_schema:
@@ -699,6 +706,12 @@ def _unload_group(group_name: str) -> int:
 
 def _get_group_info() -> list[dict]:
     """Get info about all tool groups from cached schema."""
+    if state._connection.connected:
+        profile_groups = set(state._connection.profile_groups)
+        profile_loads_all = not state._connection.lazy
+    else:
+        profile_groups = set(state._tool_profile.groups or ())
+        profile_loads_all = not state._tool_profile.lazy
     groups: dict[str, list[str]] = {}
     descriptions: dict[str, str] = {}
     for tool_def in state._full_schema:
@@ -713,7 +726,7 @@ def _get_group_info() -> list[dict]:
             "group": name,
             "tool_count": len(tools),
             "loaded": name in state._loaded_groups,
-            "default": name in state._default_groups,
+            "default": profile_loads_all or name in profile_groups,
         }
         if name in descriptions:
             info["description"] = descriptions[name]
@@ -731,13 +744,13 @@ def _fetch_and_register_schema(load_all: bool = False) -> int:
     Returns: count of registered tools.
     """
     if not load_all:
-        load_all = not state._lazy_mode
+        load_all = not state._tool_profile.lazy
     text, status = transport.do_request("GET", "/mcp/schema", timeout=10)
     if status != 200:
         raise RuntimeError(f"Failed to fetch schema: HTTP {status}")
     raw = json.loads(text)
     schema = _parse_schema(raw)
-    groups = None if load_all else state._default_groups
+    groups = None if load_all else set(state._tool_profile.groups or ())
     return register_tools_from_schema(schema, groups=groups)
 
 

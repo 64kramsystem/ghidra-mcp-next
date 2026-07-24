@@ -79,3 +79,14 @@ STATIC_TOOL_NAMES = set(MANAGEMENT_TOOL_NAMES)
 
 # Core groups always loaded on connect (essential for basic RE workflow)
 CORE_GROUPS = {"listing", "function", "program"}
+
+# Named visibility profiles. ``None`` means eager publication of every
+# schema-discovered tool; a set means lazy publication of only those groups.
+# The complete schema is retained for search_tools/load_tool_group in either
+# mode.
+TOOL_PROFILES: dict[str, frozenset[str] | None] = {
+    "minimal": frozenset(),
+    "core": frozenset(CORE_GROUPS),
+    "full": None,
+}
+DEFAULT_TOOL_PROFILE = "core"

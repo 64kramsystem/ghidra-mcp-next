@@ -110,7 +110,7 @@ from .static_tools import (  # noqa: F401
 )
 # These two are only ever mutated in place (clear/append/add/discard), so the
 # re-exported references stay valid. Reassigned state (_transport_mode,
-# _active_socket, _full_schema, _lazy_mode, …) is intentionally NOT re-exported
+# _active_socket, _full_schema, _tool_profile, …) is intentionally NOT re-exported
 # here — read/write it through ``bridge_mcp_ghidra.state`` to avoid stale binds.
 from .state import _dynamic_tool_names, _loaded_groups  # noqa: F401
 

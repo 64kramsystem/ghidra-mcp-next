@@ -88,9 +88,12 @@ def parse_create_project_response(text: str, status: int) -> dict:
 
 
 def fetch_staged_candidate(
-    mode: str, endpoint: str
+    mode: str,
+    endpoint: str,
+    profile: state.ResolvedToolProfile | None = None,
 ) -> registry.StagedRegistry:
     """Fetch both authoritative documents from an explicit candidate."""
+    profile = profile or state._tool_profile
     try:
         version_text, version_status = transport.candidate_request(
             mode, endpoint, "GET", "/get_version", timeout=10
@@ -139,7 +142,20 @@ def fetch_staged_candidate(
             server_identity=identity,
             failures=exc.failures,
         ) from exc
-    groups = state._default_groups if state._lazy_mode else None
+    groups = None if not profile.lazy else set(profile.groups or ())
+    if profile.name == "custom":
+        available = {
+            definition.get("category", "unknown")
+            for definition in manifest.tool_defs
+        }
+        unknown = set(profile.groups or ()) - available
+        if unknown:
+            raise registry.handshake.HandshakeError(
+                "unknown tool group",
+                "custom tool profile names unavailable group(s): "
+                + ", ".join(sorted(unknown)),
+                server_identity=manifest.version,
+            )
     return registry.build_staged_registry(manifest, groups)
 
 
@@ -220,8 +236,9 @@ async def handshake_candidate(
             return result
         notify = False
         staged = None
+        profile = state._tool_profile
         try:
-            staged = fetch_staged_candidate(mode, endpoint)
+            staged = fetch_staged_candidate(mode, endpoint, profile)
             attempt["server_identity"] = dict(staged.manifest.version)
             registry.publish_staged(
                 staged,
@@ -229,7 +246,7 @@ async def handshake_candidate(
                 mode=mode,
                 endpoint=endpoint,
                 generation=previous.generation + 1,
-                lazy=state._lazy_mode,
+                profile=profile,
             )
             attempt["success"] = True
             notify = operation != "auto-connect"

@@ -8,6 +8,12 @@ Complete version history for the Ghidra MCP Server project.
 
 ### Added
 
+- Added bridge tool-visibility profiles. `core` is now the default and exposes
+  the `listing`, `function`, and `program` groups plus management tools;
+  `minimal` starts with management tools only, while `full` restores the
+  complete eager catalog. The full manifest remains searchable and loadable in
+  lazy profiles, custom baselines remain supported, and connection metadata
+  reports the configured profile separately from actual loaded groups.
 - Added GUI-only `debugger_target_methods` and
   `debugger_invoke_target_method` as a connector-neutral TraceRMI seam.
   Discovery binds an opaque token to the exact active trace and owning

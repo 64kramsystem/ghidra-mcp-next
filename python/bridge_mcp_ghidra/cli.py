@@ -7,9 +7,41 @@ import socket
 from mcp.server.transport_security import TransportSecuritySettings
 
 from . import state
-from .config import logger
+from .config import DEFAULT_TOOL_PROFILE, TOOL_PROFILES, logger
 from .server import mcp
 from .static_tools import _auto_connect
+
+
+def _parse_default_groups(value: str) -> frozenset[str]:
+    groups = frozenset(group.strip() for group in value.split(",") if group.strip())
+    if not groups:
+        raise argparse.ArgumentTypeError(
+            "--default-groups must name at least one group; use "
+            "--tool-profile minimal for no initially loaded dynamic groups"
+        )
+    return groups
+
+
+def _resolve_requested_profile(
+    parser: argparse.ArgumentParser, args: argparse.Namespace
+) -> state.ResolvedToolProfile:
+    """Resolve CLI and environment selectors with explicit CLI precedence."""
+    if args.default_groups is not None:
+        if args.tool_profile is not None:
+            parser.error("--default-groups cannot be combined with --tool-profile")
+        if args.legacy_profile == "full":
+            parser.error("--default-groups cannot be combined with --no-lazy")
+        return state.resolve_tool_profile("custom", set(args.default_groups))
+
+    selected = args.tool_profile or args.legacy_profile
+    if selected is None:
+        selected = (
+            os.getenv("GHIDRA_MCP_TOOL_PROFILE") or DEFAULT_TOOL_PROFILE
+        ).strip()
+    try:
+        return state.resolve_tool_profile(selected)
+    except ValueError as exc:
+        parser.error(str(exc))
 
 
 def _wildcard_allowed_hosts() -> list[str]:
@@ -72,36 +104,52 @@ def main():
         "streamable-http (recommended for web/HTTP clients), "
         "sse (deprecated, use streamable-http instead)",
     )
-    parser.add_argument(
-        "--lazy",
-        action="store_true",
-        default=False,
-        help="Only load default tool groups on connect (not recommended for Claude Code)",
+    profile_selectors = parser.add_mutually_exclusive_group()
+    profile_selectors.add_argument(
+        "--tool-profile",
+        choices=sorted(TOOL_PROFILES),
+        default=None,
+        help="Initial tool visibility: minimal (management only), core "
+        "(default), or full (all tools)",
     )
-    parser.add_argument(
+    profile_selectors.add_argument(
+        "--lazy",
+        dest="legacy_profile",
+        action="store_const",
+        const="core",
+        help="Compatibility alias for --tool-profile core",
+    )
+    profile_selectors.add_argument(
         "--no-lazy",
-        dest="lazy",
-        action="store_false",
-        help="Load all tool groups on connect (default)",
+        dest="legacy_profile",
+        action="store_const",
+        const="full",
+        help="Compatibility alias for --tool-profile full",
     )
     parser.add_argument(
         "--default-groups",
-        type=str,
+        type=_parse_default_groups,
         default=None,
-        help="Comma-separated list of default tool groups to load on connect "
-        "(default: listing,function,program)",
+        help="Comma-separated custom initial groups; may be combined with "
+        "--lazy for compatibility",
     )
     args = parser.parse_args()
 
-    state._lazy_mode = args.lazy
-    if args.default_groups is not None:
-        state._default_groups = {
-            g.strip() for g in args.default_groups.split(",") if g.strip()
-        }
+    profile = _resolve_requested_profile(parser, args)
+    state.configure_tool_profile(
+        profile.name,
+        set(profile.groups) if profile.name == "custom" else None,
+    )
 
-    if not state._lazy_mode:
+    if not profile.lazy:
         logger.info(
             "Loading all tool groups on startup (clients that don't support tools/list_changed need this)"
+        )
+    else:
+        logger.info(
+            "Using %s tool profile with initial groups: %s",
+            profile.name,
+            ", ".join(sorted(profile.groups or ())) or "(management tools only)",
         )
     _auto_connect()
 

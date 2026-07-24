@@ -14,7 +14,12 @@ from dataclasses import dataclass, field
 from importlib import metadata
 from typing import Any
 
-from .config import CORE_GROUPS, STATIC_TOOL_NAMES, logger
+from .config import (
+    DEFAULT_TOOL_PROFILE,
+    STATIC_TOOL_NAMES,
+    TOOL_PROFILES,
+    logger,
+)
 
 SERVER_IDENTITY_FIELDS = (
     "plugin_name",
@@ -43,6 +48,51 @@ _ghidra_lock = threading.RLock()
 
 
 @dataclass(frozen=True)
+class ResolvedToolProfile:
+    """One coherent visibility policy for the next connection."""
+
+    name: str
+    groups: frozenset[str] | None
+
+    @property
+    def lazy(self) -> bool:
+        return self.groups is not None
+
+
+def resolve_tool_profile(
+    name: str, custom_groups: set[str] | frozenset[str] | None = None
+) -> ResolvedToolProfile:
+    """Validate and resolve a named or caller-defined visibility profile."""
+    if name == "custom":
+        groups = frozenset(custom_groups or ())
+        if not groups:
+            raise ValueError(
+                "custom tool profile requires at least one tool group"
+            )
+        return ResolvedToolProfile(name="custom", groups=groups)
+    if custom_groups is not None:
+        raise ValueError(
+            f"custom groups cannot be supplied for tool profile {name!r}"
+        )
+    if name not in TOOL_PROFILES:
+        choices = ", ".join(sorted(TOOL_PROFILES))
+        raise ValueError(
+            f"unknown tool profile {name!r}; choose one of: {choices}"
+        )
+    return ResolvedToolProfile(name=name, groups=TOOL_PROFILES[name])
+
+
+def configure_tool_profile(
+    name: str, custom_groups: set[str] | frozenset[str] | None = None
+) -> ResolvedToolProfile:
+    """Atomically replace the configured visibility profile."""
+    global _tool_profile
+    profile = resolve_tool_profile(name, custom_groups)
+    _tool_profile = profile
+    return profile
+
+
+@dataclass(frozen=True)
 class ConnectionBundle:
     """One published connection generation and its complete manifest state."""
 
@@ -52,6 +102,8 @@ class ConnectionBundle:
     transport: str | None = None
     endpoint: str | None = None
     server: dict[str, Any] | None = None
+    tool_profile: str = "full"
+    profile_groups: tuple[str, ...] = ()
     lazy: bool = False
     manifest_count: int = 0
     callable_dynamic_count: int = 0
@@ -103,6 +155,8 @@ def connection_summary() -> dict[str, Any]:
                 "project": bundle.project,
                 "transport": bundle.transport,
                 "endpoint": bundle.endpoint,
+                "tool_profile": bundle.tool_profile,
+                "profile_groups": list(bundle.profile_groups),
                 "tool_loading_mode": "lazy" if bundle.lazy else "eager",
                 "lazy": bundle.lazy,
                 "manifest_count": bundle.manifest_count,
@@ -119,7 +173,7 @@ def publish_connection(bundle: ConnectionBundle) -> None:
     """Publish one bundle and update legacy in-module mirrors atomically."""
     global _connection
     global _active_socket, _active_tcp, _transport_mode, _connected_project
-    global _full_schema, _lazy_mode
+    global _full_schema
     _connection = bundle
     if bundle.connected:
         _transport_mode = bundle.transport or "none"
@@ -127,7 +181,6 @@ def publish_connection(bundle: ConnectionBundle) -> None:
         _active_tcp = bundle.endpoint if bundle.transport == "tcp" else None
         _connected_project = bundle.project
         _full_schema = list(bundle.full_schema)
-        _lazy_mode = bundle.lazy
         _dynamic_tool_names.clear()
         _dynamic_tool_names.extend(bundle.dynamic_names)
         _loaded_groups.clear()
@@ -147,6 +200,8 @@ def disconnected_bundle() -> ConnectionBundle:
     return ConnectionBundle(
         connected=False,
         generation=_connection.generation,
+        tool_profile=_connection.tool_profile,
+        profile_groups=_connection.profile_groups,
         lazy=_connection.lazy,
     )
 
@@ -181,13 +236,13 @@ _init_require_selectors()
 # --------------------------------------------------------------------------
 
 # NOTE: _dynamic_tool_names and _loaded_groups are only ever mutated in place
-# (clear/append/add/discard) so external references stay valid. _full_schema,
-# _lazy_mode, and _default_groups ARE reassigned — always read them through
-# this module.
+# (clear/append/add/discard) so external references stay valid. _full_schema
+# and _tool_profile ARE reassigned — always read them through this module.
 _dynamic_tool_names: list[str] = []
 _full_schema: list[dict] = []  # Complete parsed schema
 _loaded_groups: set[str] = set()
 
-# CLI-configurable: --lazy keeps only default groups, otherwise load all
-_lazy_mode = False  # default: eager (load all groups on connect)
-_default_groups: set[str] = set(CORE_GROUPS)
+# CLI-configurable visibility policy. Replacing this frozen value atomically
+# prevents a handshake from observing a mode/group combination from different
+# configurations.
+_tool_profile = resolve_tool_profile(DEFAULT_TOOL_PROFILE)

@@ -71,10 +71,11 @@ class TestStaticTools(unittest.TestCase):
 class TestToolGroupManagement(unittest.TestCase):
     """Test tool group management tools."""
 
-    def test_lazy_loading_disabled_by_default(self):
+    def test_core_profile_is_default(self):
         import bridge_mcp_ghidra as bridge
 
-        self.assertFalse(bridge.state._lazy_mode)
+        self.assertEqual(bridge.state._tool_profile.name, "core")
+        self.assertTrue(bridge.state._tool_profile.lazy)
 
     def test_list_tool_groups_registered(self):
         import bridge_mcp_ghidra as bridge
@@ -109,11 +110,26 @@ class TestToolGroupManagement(unittest.TestCase):
 
     def test_unload_core_group_blocked(self):
         import asyncio
-        from bridge_mcp_ghidra import unload_tool_group
+        import bridge_mcp_ghidra as bridge
 
-        result = json.loads(asyncio.run(unload_tool_group("function")))
-        self.assertIn("error", result)
-        self.assertIn("default", result["error"].lower())
+        previous = bridge.state._connection
+        try:
+            bridge.state.publish_connection(
+                bridge.state.ConnectionBundle(
+                    connected=True,
+                    tool_profile="core",
+                    profile_groups=("function", "listing", "program"),
+                    lazy=True,
+                    loaded_groups=("function", "listing", "program"),
+                )
+            )
+            result = json.loads(
+                asyncio.run(bridge.unload_tool_group("function"))
+            )
+            self.assertIn("error", result)
+            self.assertIn("profile", result["error"].lower())
+        finally:
+            bridge.state.publish_connection(previous)
 
     def test_load_group_with_schema(self):
         """Loading a group after register_tools_from_schema should work."""
@@ -223,7 +239,7 @@ class TestConnectInstance(unittest.TestCase):
             request_context=SimpleNamespace(session=session),
         )
 
-        old_lazy_mode = bridge.state._lazy_mode
+        old_profile = bridge.state._tool_profile
         old_active_socket = bridge.state._active_socket
         old_active_tcp = bridge.state._active_tcp
         old_transport_mode = bridge.state._transport_mode
@@ -235,7 +251,7 @@ class TestConnectInstance(unittest.TestCase):
         old_map = bridge.registry._adapter().snapshot()
 
         try:
-            bridge.state._lazy_mode = False
+            bridge.state.configure_tool_profile("full")
             with mock.patch.object(
                 bridge.discovery,
                 "discover_all_instances",
@@ -288,7 +304,7 @@ class TestConnectInstance(unittest.TestCase):
                 }
             )
             bridge.state.publish_connection(old_bundle)
-            bridge.state._lazy_mode = old_lazy_mode
+            bridge.state._tool_profile = old_profile
 
 
 class TestEndpointTimeouts(unittest.TestCase):

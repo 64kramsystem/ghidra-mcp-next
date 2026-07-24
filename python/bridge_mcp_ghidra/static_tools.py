@@ -156,8 +156,9 @@ async def create_and_connect_project(
         path = str(response["path"])
         had_dynamic = bool(state._connection.dynamic_names)
         staged = None
+        profile = state._tool_profile
         try:
-            staged = connection.fetch_staged_candidate(mode, endpoint)
+            staged = connection.fetch_staged_candidate(mode, endpoint, profile)
             attempt["server_identity"] = dict(staged.manifest.version)
             registry.publish_staged(
                 staged,
@@ -165,7 +166,7 @@ async def create_and_connect_project(
                 mode=mode,
                 endpoint=endpoint,
                 generation=state._connection.generation + 1,
-                lazy=state._lazy_mode,
+                profile=profile,
             )
             attempt["success"] = True
             result = {
@@ -446,19 +447,12 @@ async def load_tool_group(group: str, ctx: Context | None = None) -> str:
 @mcp.tool()
 async def unload_tool_group(group: str, ctx: Context | None = None) -> str:
     """
-    Unload all tools in a category. Default groups are protected from unloading.
+    Unload a category added after connect. Profile baseline groups are protected.
 
     Args:
         group: Category name to unload
     """
     with state._ghidra_lock:
-        if group in state._default_groups:
-            return json.dumps(
-                {
-                    "error": f"Cannot unload default group '{group}'",
-                    "default_groups": sorted(state._default_groups),
-                }
-            )
         active = state._connection
         if not active.connected:
             return json.dumps(
@@ -471,6 +465,14 @@ async def unload_tool_group(group: str, ctx: Context | None = None) -> str:
                         "Cannot unload tool groups in eager mode; every "
                         "manifest tool must remain callable."
                     )
+                }
+            )
+        if group in active.profile_groups:
+            return json.dumps(
+                {
+                    "error": f"Cannot unload profile group '{group}'",
+                    "tool_profile": active.tool_profile,
+                    "profile_groups": list(active.profile_groups),
                 }
             )
         previous = set(active.loaded_groups)
@@ -559,8 +561,9 @@ async def search_tools(query: str, limit: int = 15) -> str:
     """
     Search the full Ghidra tool catalog by keyword — including tools whose group
     is not currently loaded. Use this to discover the right tool without paying
-    the context cost of loading all groups (run the bridge with --lazy and search
-    on demand). Matches against tool name, description, and category.
+    the context cost of loading all groups (run the bridge with
+    --tool-profile core or minimal and search on demand). Matches against tool
+    name, description, and category.
 
     Each result reports whether the tool is callable right now; if not, it
     includes the exact load_tool_group(...) call needed to make it callable.

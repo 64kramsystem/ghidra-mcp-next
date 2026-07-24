@@ -6,6 +6,7 @@ tests drive main() with mcp.run and _auto_connect patched out, then assert
 the settings that would have governed the real server.
 """
 
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -21,15 +22,13 @@ class _CliHarness(unittest.TestCase):
     """Run cli.main() with side effects stubbed; restore shared state after."""
 
     def setUp(self):
-        self._saved_lazy = state._lazy_mode
-        self._saved_groups = set(state._default_groups)
+        self._saved_profile = state._tool_profile
         self._saved_security = getattr(mcp.settings, "transport_security", None)
         self._saved_host = mcp.settings.host
         self._saved_port = mcp.settings.port
 
     def tearDown(self):
-        state._lazy_mode = self._saved_lazy
-        state._default_groups = self._saved_groups
+        state._tool_profile = self._saved_profile
         mcp.settings.transport_security = self._saved_security
         mcp.settings.host = self._saved_host
         mcp.settings.port = self._saved_port
@@ -41,10 +40,9 @@ class _CliHarness(unittest.TestCase):
             patch.object(cli, "_auto_connect"),
             patch.object(mcp, "run"),
         ]
-        if env:
-            import os
-
-            patches.append(patch.dict(os.environ, env))
+        profile_env = {"GHIDRA_MCP_TOOL_PROFILE": ""}
+        profile_env.update(env or {})
+        patches.append(patch.dict(os.environ, profile_env))
         started = []
         for p in patches:
             started.append(p.start())
@@ -57,22 +55,81 @@ class _CliHarness(unittest.TestCase):
 
 
 class TestCliArguments(_CliHarness):
-    def test_defaults_stdio_and_eager_loading(self):
+    def test_defaults_stdio_and_core_profile(self):
         run = self.run_main()
         run.assert_called_once_with(transport="stdio")
-        self.assertFalse(state._lazy_mode)
+        self.assertEqual(state._tool_profile.name, "core")
+        self.assertTrue(state._tool_profile.lazy)
+        self.assertEqual(
+            state._tool_profile.groups,
+            frozenset({"listing", "function", "program"}),
+        )
 
-    def test_lazy_flag_sets_lazy_mode(self):
+    def test_named_minimal_profile(self):
+        self.run_main("--tool-profile", "minimal")
+        self.assertEqual(state._tool_profile.name, "minimal")
+        self.assertEqual(state._tool_profile.groups, frozenset())
+
+    def test_named_full_profile(self):
+        self.run_main("--tool-profile", "full")
+        self.assertEqual(state._tool_profile.name, "full")
+        self.assertFalse(state._tool_profile.lazy)
+
+    def test_lazy_flag_selects_core_profile(self):
         self.run_main("--lazy")
-        self.assertTrue(state._lazy_mode)
+        self.assertEqual(state._tool_profile.name, "core")
 
-    def test_no_lazy_overrides_lazy(self):
-        self.run_main("--lazy", "--no-lazy")
-        self.assertFalse(state._lazy_mode)
+    def test_no_lazy_selects_full_profile(self):
+        self.run_main("--no-lazy")
+        self.assertEqual(state._tool_profile.name, "full")
 
-    def test_default_groups_parsed_and_stripped(self):
+    def test_lazy_and_default_groups_select_custom_profile(self):
+        self.run_main("--lazy", "--default-groups", " function , datatype ,")
+        self.assertEqual(state._tool_profile.name, "custom")
+        self.assertEqual(
+            state._tool_profile.groups, frozenset({"function", "datatype"})
+        )
+
+    def test_default_groups_alone_selects_custom_profile(self):
         self.run_main("--default-groups", " function , datatype ,")
-        self.assertEqual(state._default_groups, {"function", "datatype"})
+        self.assertEqual(state._tool_profile.name, "custom")
+        self.assertEqual(
+            state._tool_profile.groups, frozenset({"function", "datatype"})
+        )
+
+    def test_profile_selectors_are_mutually_exclusive(self):
+        with self.assertRaises(SystemExit):
+            self.run_main("--lazy", "--no-lazy")
+
+    def test_full_and_default_groups_are_rejected(self):
+        with self.assertRaises(SystemExit):
+            self.run_main("--no-lazy", "--default-groups", "function")
+
+    def test_named_profile_and_default_groups_are_rejected(self):
+        with self.assertRaises(SystemExit):
+            self.run_main(
+                "--tool-profile", "core", "--default-groups", "function"
+            )
+
+    def test_empty_default_groups_are_rejected(self):
+        with self.assertRaises(SystemExit):
+            self.run_main("--default-groups", " , ")
+
+    def test_environment_selects_profile(self):
+        self.run_main(env={"GHIDRA_MCP_TOOL_PROFILE": "minimal"})
+        self.assertEqual(state._tool_profile.name, "minimal")
+
+    def test_invalid_environment_profile_is_rejected(self):
+        with self.assertRaises(SystemExit):
+            self.run_main(env={"GHIDRA_MCP_TOOL_PROFILE": "typo"})
+
+    def test_explicit_cli_ignores_invalid_environment_profile(self):
+        self.run_main(
+            "--tool-profile",
+            "full",
+            env={"GHIDRA_MCP_TOOL_PROFILE": "typo"},
+        )
+        self.assertEqual(state._tool_profile.name, "full")
 
     def test_transport_and_port_applied(self):
         run = self.run_main("--transport", "streamable-http", "--mcp-port", "9905")
