@@ -8,6 +8,13 @@ Complete version history for the Ghidra MCP Server project.
 
 ### Added
 
+- Added GUI-only `debugger_target_methods` and
+  `debugger_invoke_target_method` as a connector-neutral TraceRMI seam.
+  Discovery binds an opaque token to the exact active trace and owning
+  connection; invocation strictly converts Ghidra schemas, rejects stale or
+  ambiguous owners, bounds and cancels waits, and reports before/after target
+  state in structured envelopes. `debugger_status` now exposes the same
+  target identity and live-state metadata when available.
 - Added dry-run-first, function-independent manual control-flow metadata:
   `update_entry_points`, `set_instruction_flow_override`,
   `batch_update_references`, `describe_jump_table`, and

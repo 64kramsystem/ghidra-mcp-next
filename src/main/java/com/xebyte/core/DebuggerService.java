@@ -5,6 +5,7 @@ import ghidra.app.services.DebuggerLogicalBreakpointService;
 import ghidra.app.services.DebuggerStaticMappingService;
 import ghidra.app.services.DebuggerTargetService;
 import ghidra.app.services.DebuggerTraceManagerService;
+import ghidra.app.services.TraceRmiService;
 import ghidra.app.services.TraceRmiLauncherService;
 import ghidra.debug.api.ValStr;
 import ghidra.debug.api.model.DebuggerSingleObjectPathActionContext;
@@ -13,6 +14,7 @@ import ghidra.debug.api.target.Target;
 import ghidra.debug.api.tracermi.LaunchParameter;
 import ghidra.debug.api.tracermi.RemoteMethod;
 import ghidra.debug.api.tracermi.TraceRmiLaunchOffer;
+import ghidra.debug.api.tracermi.TraceRmiConnection;
 import ghidra.debug.api.tracermi.TraceRmiLaunchOffer.LaunchConfigurator;
 import ghidra.debug.api.tracermi.TraceRmiLaunchOffer.LaunchResult;
 import ghidra.debug.api.tracermi.TraceRmiLaunchOffer.RelPrompt;
@@ -81,6 +83,8 @@ public class DebuggerService {
 
     private final ProgramProvider programProvider;
     private final PluginTool frontEndTool;
+    private final DebuggerTargetMethodCore targetMethodCore =
+            new DebuggerTargetMethodCore();
 
     /** Cached reference to the tool that has debugger services. */
     private volatile PluginTool cachedDebuggerTool;
@@ -251,6 +255,98 @@ public class DebuggerService {
         }
         return new TraceContext(tool, traceMgr, trace, coords,
                 platform, coords.getThread(), coords.getSnap());
+    }
+
+    private DebuggerTargetMethodCore.TargetContext
+            getTargetMethodContext() {
+        if (getDebuggerTool() == null) {
+            throw new DebuggerTargetMethodCore.TargetMethodException(
+                    "debugger_unavailable",
+                    "no debugger tool with TraceRMI services is active");
+        }
+        TraceContext ctx = getContext();
+        if (ctx == null) {
+            throw new DebuggerTargetMethodCore.TargetMethodException(
+                    "no_active_trace",
+                    "no active debugger trace is selected");
+        }
+        Target target = getTarget(ctx);
+        if (target == null || !target.isValid()) {
+            throw new DebuggerTargetMethodCore.TargetMethodException(
+                    "no_live_target",
+                    "the active trace has no valid live target");
+        }
+        TraceRmiService traceRmi =
+                ctx.tool.getService(TraceRmiService.class);
+        if (traceRmi == null) {
+            throw new DebuggerTargetMethodCore.TargetMethodException(
+                    "trace_rmi_service_unavailable",
+                    "the active debugger tool has no TraceRMI service");
+        }
+        TraceRmiConnection owner =
+                DebuggerTargetMethodCore.selectUniqueOwner(
+                        traceRmi.getAllConnections(), ctx.trace);
+        KeyPath path =
+                ctx.coords == null ? null : ctx.coords.getPath();
+        DebuggerStateWaiter.ExecutionState state =
+                DebuggerStateWaiter.state(
+                        target, createTraceActionContext(ctx));
+        return new DebuggerTargetMethodCore.TargetContext(
+                ctx.trace, owner, ctx.trace.getName(), ctx.snap,
+                state.name(), path == null ? null : path.toString(),
+                currentProgramCounter(ctx));
+    }
+
+    private String currentProgramCounter(TraceContext ctx) {
+        if (ctx.thread == null) {
+            return null;
+        }
+        try {
+            TraceStack stack = ctx.trace.getStackManager()
+                    .getLatestStack(ctx.thread, ctx.snap);
+            if (stack == null) {
+                return null;
+            }
+            int frameLevel =
+                    ctx.coords == null ? 0 : ctx.coords.getFrame();
+            TraceStackFrame frame =
+                    stack.getFrame(
+                            ctx.snap, Math.max(0, frameLevel), false);
+            Address pc =
+                    frame == null ? null :
+                        frame.getProgramCounter(ctx.snap);
+            return pc == null ? null : pc.toString();
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    private Map<String, Object> targetState(
+            DebuggerTargetMethodCore.TargetContext context) {
+        Map<String, Object> state = new LinkedHashMap<>();
+        state.put("trace_name", context.traceName());
+        state.put("snapshot", context.snapshot());
+        state.put("execution_state", context.executionState());
+        state.put("connection_description",
+                context.owner().getDescription());
+        state.put("active_object_path", context.activeObjectPath());
+        state.put("pc", context.programCounter());
+        return state;
+    }
+
+    private Response targetMethodFailure(
+            DebuggerTargetMethodCore.TargetMethodException error) {
+        Map<String, Object> detail = new LinkedHashMap<>();
+        detail.put("code", error.code());
+        detail.put("message", error.getMessage());
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("ok", false);
+        response.put("error", detail);
+        if ("target_method_timeout".equals(error.code())) {
+            response.put("timeout_layer", "generic");
+        }
+        response.put("outcome_unknown", error.outcomeUnknown());
+        return Response.ok(response);
     }
 
     private Target getTarget(TraceContext ctx) {
@@ -718,7 +814,161 @@ public class DebuggerService {
             status.put("module_count", 0);
         }
 
+        try {
+            DebuggerTargetMethodCore.Discovery discovery =
+                    targetMethodCore.describe(
+                            getTargetMethodContext());
+            DebuggerTargetMethodCore.TargetContext targetContext =
+                    discovery.context();
+            status.put("target_valid", true);
+            status.put("target_token", discovery.targetToken());
+            status.put("snapshot", targetContext.snapshot());
+            status.put("connection_description",
+                    targetContext.owner().getDescription());
+            status.put("active_object_path",
+                    targetContext.activeObjectPath());
+            status.put("execution_state",
+                    targetContext.executionState());
+            status.put("pc", targetContext.programCounter());
+        } catch (DebuggerTargetMethodCore.TargetMethodException e) {
+            status.put("target_valid", false);
+            status.put("target_error",
+                    Map.of("code", e.code(),
+                            "message", e.getMessage()));
+        } catch (RuntimeException e) {
+            status.put("target_valid", false);
+            status.put("target_error",
+                    Map.of("code", "target_status_failed",
+                            "message",
+                            "failed to inspect active target: "
+                                    + e.getMessage()));
+        }
+
         return Response.ok(status);
+    }
+
+    @McpTool(path = "/debugger/target_methods",
+            description = "Discover typed remote methods exposed by the exact active TraceRMI target")
+    public Response targetMethods() {
+        try {
+            DebuggerTargetMethodCore.Discovery discovery =
+                    targetMethodCore.describe(
+                            getTargetMethodContext());
+            Map<String, Object> response =
+                    targetState(discovery.context());
+            response.put("ok", true);
+            response.put("target_token",
+                    discovery.targetToken());
+            List<Map<String, Object>> methods = new ArrayList<>();
+            for (DebuggerTargetMethodCore.MethodDescription method :
+                    discovery.methods()) {
+                Map<String, Object> described =
+                        new LinkedHashMap<>();
+                described.put("name", method.name());
+                described.put("action", method.action());
+                described.put("display", method.display());
+                described.put("description",
+                        method.description());
+                described.put("return_type",
+                        method.returnType());
+                List<Map<String, Object>> parameters =
+                        new ArrayList<>();
+                for (DebuggerTargetMethodCore.ParameterDescription
+                        parameter : method.parameters()) {
+                    Map<String, Object> item =
+                            new LinkedHashMap<>();
+                    item.put("name", parameter.name());
+                    item.put("type", parameter.type());
+                    item.put("required",
+                            parameter.required());
+                    item.put("default_available",
+                            parameter.defaultAvailable());
+                    item.put("default",
+                            parameter.defaultAvailable()
+                                    ? parameter.defaultValue()
+                                    : null);
+                    item.put("display",
+                            parameter.display());
+                    item.put("description",
+                            parameter.description());
+                    parameters.add(item);
+                }
+                described.put("parameters", parameters);
+                methods.add(described);
+            }
+            response.put("methods", methods);
+            return Response.ok(response);
+        } catch (DebuggerTargetMethodCore.TargetMethodException e) {
+            return targetMethodFailure(e);
+        } catch (RuntimeException e) {
+            return targetMethodFailure(
+                    new DebuggerTargetMethodCore.TargetMethodException(
+                            "target_discovery_failed",
+                            "failed to inspect active target: "
+                                    + e.getMessage(), e));
+        }
+    }
+
+    @McpTool(path = "/debugger/invoke_target_method",
+            method = "POST",
+            description = "Invoke one exact typed remote method on the active TraceRMI target")
+    public Response invokeTargetMethod(
+            @Param(value = "target_token",
+                    source = ParamSource.BODY,
+                    description = "Opaque token returned by debugger_target_methods") String targetToken,
+            @Param(value = "method",
+                    source = ParamSource.BODY,
+                    description = "Exact remote method name") String method,
+            @Param(value = "arguments",
+                    source = ParamSource.BODY,
+                    schemaFragment = "{\"type\":\"object\"}",
+                    description = "Native JSON object of typed remote-method arguments") Object arguments,
+            @Param(value = "timeout_ms",
+                    source = ParamSource.BODY,
+                    strictInteger = true,
+                    schemaFragment = "{\"minimum\":1,\"maximum\":60000}",
+                    description = "Invocation timeout from 1 through 60000 milliseconds") long timeoutMs) {
+        try {
+            DebuggerTargetMethodCore.TargetContext before =
+                    getTargetMethodContext();
+            Object result = targetMethodCore.invoke(
+                    before, targetToken, method,
+                    arguments, timeoutMs);
+            Map<String, Object> response =
+                    new LinkedHashMap<>();
+            response.put("ok", true);
+            response.put("target_token", targetToken);
+            response.put("method", method);
+            response.put("result", result);
+            response.put("before", targetState(before));
+            try {
+                DebuggerTargetMethodCore.TargetContext after =
+                        getTargetMethodContext();
+                response.put("after", targetState(after));
+            } catch (DebuggerTargetMethodCore.TargetMethodException e) {
+                response.put("after", null);
+                response.put("after_error",
+                        Map.of("code", e.code(),
+                                "message", e.getMessage()));
+            } catch (RuntimeException e) {
+                response.put("after", null);
+                response.put("after_error",
+                        Map.of("code", "target_status_failed",
+                                "message",
+                                "failed to inspect target after "
+                                        + "successful invocation: "
+                                        + e.getMessage()));
+            }
+            return Response.ok(response);
+        } catch (DebuggerTargetMethodCore.TargetMethodException e) {
+            return targetMethodFailure(e);
+        } catch (RuntimeException e) {
+            return targetMethodFailure(
+                    new DebuggerTargetMethodCore.TargetMethodException(
+                            "target_method_failed",
+                            "remote method invocation failed: "
+                                    + e.getMessage(), e));
+        }
     }
 
     @McpTool(path = "/debugger/wait_for_stop", method = "POST",

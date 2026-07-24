@@ -52,6 +52,20 @@ public class GuiTransportSchemaParityTest extends TestCase {
             "/go_to_address"), paths);
     }
 
+    public void testGenericTargetMethodsAreGuiOnly() throws IOException {
+        String tcp = Files.readString(ROOT.resolve(
+                "src/main/java/com/xebyte/GhidraMCPPlugin.java"));
+        String uds = Files.readString(ROOT.resolve(
+                "src/main/java/com/xebyte/core/ServerManager.java"));
+        String headless = Files.readString(ROOT.resolve(
+                "src/main/java/com/xebyte/headless/"
+                    + "HeadlessEndpointHandler.java"));
+
+        assertTrue(tcp.contains("debuggerService"));
+        assertTrue(uds.contains("debuggerService"));
+        assertFalse(headless.contains("DebuggerService"));
+    }
+
     public void testHeadlessImportEndpointIsAnnotationScanned() {
         AnnotationScanner scanner = new AnnotationScanner(
                 ServiceFactory.stubProvider(),

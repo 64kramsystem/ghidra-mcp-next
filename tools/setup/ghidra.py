@@ -49,6 +49,7 @@ REQUIRED_GHIDRA_JARS: tuple[tuple[str, str], ...] = (
         "Debugger-rmi-trace",
         "Ghidra/Debug/Debugger-rmi-trace/lib/Debugger-rmi-trace.jar",
     ),
+    ("ProposedUtils", "Ghidra/Debug/ProposedUtils/lib/ProposedUtils.jar"),
 )
 
 PLUGIN_CLASS = "com.xebyte.GhidraMCPPlugin"
