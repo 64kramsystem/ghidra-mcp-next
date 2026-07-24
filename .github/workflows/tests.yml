@@ -85,6 +85,8 @@ jobs:
             -DgroupId=ghidra -DartifactId=Framework-TraceModeling -Dversion=$GHIDRA_VERSION -Dpackaging=jar
         mvn -q install:install-file -Dfile="$GHIDRA_DIR/Ghidra/Debug/Debugger-rmi-trace/lib/Debugger-rmi-trace.jar" \
             -DgroupId=ghidra -DartifactId=Debugger-rmi-trace -Dversion=$GHIDRA_VERSION -Dpackaging=jar
+        mvn -q install:install-file -Dfile="$GHIDRA_DIR/Ghidra/Debug/ProposedUtils/lib/ProposedUtils.jar" \
+            -DgroupId=ghidra -DartifactId=ProposedUtils -Dversion=$GHIDRA_VERSION -Dpackaging=jar
 
         # Install Feature JARs
         mvn -q install:install-file -Dfile="$GHIDRA_DIR/Ghidra/Features/Base/lib/Base.jar" \
@@ -96,7 +98,7 @@ jobs:
         mvn -q install:install-file -Dfile="$GHIDRA_DIR/Ghidra/Features/FunctionID/lib/FunctionID.jar" \
             -DgroupId=ghidra -DartifactId=FunctionID -Dversion=$GHIDRA_VERSION -Dpackaging=jar
 
-        echo "✅ Installed Ghidra JARs to Maven local repository"
+        echo "✅ Installed 19 Ghidra JARs to Maven local repository"
 
     - name: Build extension
       run: mvn clean package assembly:single -DskipTests

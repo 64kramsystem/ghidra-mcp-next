@@ -542,6 +542,7 @@ dev = [
     { name = "requests" },
     { name = "requests-mock" },
     { name = "responses" },
+    { name = "tomli", marker = "python_full_version < '3.11'" },
 ]
 test = [
     { name = "clang" },
@@ -558,6 +559,7 @@ test = [
     { name = "requests" },
     { name = "requests-mock" },
     { name = "responses" },
+    { name = "tomli", marker = "python_full_version < '3.11'" },
 ]
 
 [package.metadata]
@@ -581,6 +583,7 @@ dev = [
     { name = "requests", specifier = ">=2.32.0,<3.0.0" },
     { name = "requests-mock", specifier = ">=1.12.1" },
     { name = "responses", specifier = ">=0.26.1" },
+    { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0.1" },
 ]
 test = [
     { name = "clang", specifier = ">=18.1.8,<22" },
@@ -597,6 +600,7 @@ test = [
     { name = "requests", specifier = ">=2.32.0,<3.0.0" },
     { name = "requests-mock", specifier = ">=1.12.1" },
     { name = "responses", specifier = ">=0.26.1" },
+    { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0.1" },
 ]
 
 [[package]]

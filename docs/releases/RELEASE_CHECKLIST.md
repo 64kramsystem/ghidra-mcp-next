@@ -125,8 +125,6 @@ git diff --cached --check
   - Tests run and live regression result.
   - Known risks or intentionally deferred items.
 - [ ] Confirm GitHub `tests.yml` checks pass.
-- [ ] For high-risk Ghidra changes, add the `live-ghidra-regression` PR label
-  if a self-hosted runner is available.
 
 ## 6. Merge and Publish
 
@@ -148,8 +146,6 @@ git tag -a vX.Y.Z -m "Release vX.Y.Z"
 git push origin vX.Y.Z
 ```
 
-- [ ] Enable `run_live_regression` in the release workflow when the
-  self-hosted Windows runner is available.
 - [ ] Verify release assets include `GhidraMCP-X.Y.Z.zip`.
 - [ ] Download the release ZIP and sanity-check that it installs or at least
   contains the expected extension payload.

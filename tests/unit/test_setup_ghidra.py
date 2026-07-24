@@ -29,6 +29,21 @@ from tools.setup.ghidra import (
 from tools.setup.versioning import VersionInfo
 
 
+def test_hosted_workflows_install_all_required_ghidra_jars():
+    root = Path(__file__).resolve().parents[2]
+    for relative_path in (
+        ".github/workflows/tests.yml",
+        ".github/workflows/release.yml",
+    ):
+        workflow = (root / relative_path).read_text(encoding="utf-8")
+        missing = [
+            artifact_id
+            for artifact_id, jar_path in REQUIRED_GHIDRA_JARS
+            if jar_path not in workflow
+        ]
+        assert missing == [], f"{relative_path} does not install {missing}"
+
+
 def test_patch_frontend_tool_config_adds_plugin_to_self_closing_utility_block():
     content = '<TOOL><PACKAGE NAME="Utility" /></TOOL>'
 
