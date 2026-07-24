@@ -1,5 +1,5 @@
 //Delete a function at a specific address
-//@author GhidraMCP
+//@author GhidraMCP-next
 //@category Functions
 //@keybinding
 //@menupath

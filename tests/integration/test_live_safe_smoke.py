@@ -68,7 +68,7 @@ class TestLiveServerSmoke:
         assert response.status_code == 200
         payload = json.loads(response.text)
         assert isinstance(payload, dict)
-        assert payload.get("plugin_name") == "GhidraMCP"
+        assert payload.get("plugin_name") == "GhidraMCP-next"
         required = {
             "plugin_version",
             "build_timestamp",

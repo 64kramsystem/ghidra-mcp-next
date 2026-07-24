@@ -1,4 +1,4 @@
-"""Command-line entry point for the GhidraMCP bridge."""
+"""Command-line entry point for the GhidraMCP-next bridge."""
 
 import argparse
 import os
@@ -84,7 +84,7 @@ def _wildcard_allowed_hosts() -> list[str]:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="GhidraMCP Bridge -- MCP<->HTTP multiplexer"
+        description="GhidraMCP-next Bridge -- MCP<->HTTP multiplexer"
     )
     parser.add_argument(
         "--mcp-host",

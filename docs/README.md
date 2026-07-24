@@ -1,6 +1,6 @@
 # Documentation
 
-This directory contains the maintained guides for the local Ghidra MCP
+This directory contains the maintained guides for the local GhidraMCP-next
 architecture.
 
 ## Start here
@@ -39,7 +39,7 @@ mvn clean package assembly:single -DskipTests
 
 ## Maintenance rules
 
-- Describe local GUI/headless projects and the current 234-endpoint catalog.
+- Describe local GUI/headless projects and the catalog of more than 250 endpoints.
 - Use exact exposed MCP names, especially the 21 `debugger_*` TraceRMI tools.
 - Clearly distinguish implemented attach/wait/map behavior from the remaining planned debugger addition.
 - Treat BSim as optional and explicitly configured.

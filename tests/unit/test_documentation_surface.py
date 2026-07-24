@@ -104,6 +104,15 @@ def test_docs_name_maven_and_local_project_workflows():
     assert "local project" in text.lower()
 
 
+def test_catalog_documentation_uses_a_stable_lower_bound():
+    for path in (
+        "CLAUDE.md",
+        "docs/README.md",
+        "docs/Context-Window-Analysis.md",
+    ):
+        assert "more than 250" in (ROOT / path).read_text(encoding="utf-8")
+
+
 def test_obsolete_document_trees_and_files_are_absent():
     for path in (
         "docs/archive/legacy-tools",

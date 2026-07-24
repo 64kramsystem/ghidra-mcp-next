@@ -1,6 +1,6 @@
 Manifest-Version: 1.0
 Plugin-Class: com.xebyte.GhidraMCPPlugin
-Plugin-Name: GhidraMCP
+Plugin-Name: GhidraMCP-next
 Plugin-Version: 5.15.0
 Plugin-Author: Ben Ethington
-Plugin-Description: GhidraMCP - HTTP server plugin with 255 MCP tools for reverse engineering automation
+Plugin-Description: GhidraMCP-next - HTTP server plugin with more than 250 MCP tools for reverse engineering automation

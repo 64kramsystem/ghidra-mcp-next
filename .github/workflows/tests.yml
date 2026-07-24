@@ -130,13 +130,13 @@ jobs:
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
       with:
         name: release-extension
-        path: target/GhidraMCP-*.zip
+        path: target/GhidraMCP-next-*.zip
         if-no-files-found: error
 
     - name: Verify build artifacts
       run: |
         echo "✅ Java compilation + offline tests passed"
-        find target -maxdepth 1 -type f -name 'GhidraMCP-*.zip' -exec ls -la {} +
+        find target -maxdepth 1 -type f -name 'GhidraMCP-next-*.zip' -exec ls -la {} +
         find target -maxdepth 1 -type f -name '*.jar' -exec ls -la {} +
 
     - name: Upload test results
@@ -162,8 +162,8 @@ jobs:
       if: always()
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
       with:
-        name: GhidraMCP-artifact
-        path: target/GhidraMCP-*.zip
+        name: GhidraMCP-next-artifact
+        path: target/GhidraMCP-next-*.zip
         if-no-files-found: warn
 
   python-tests:

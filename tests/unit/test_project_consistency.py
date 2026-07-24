@@ -101,9 +101,10 @@ class TestVersionConsistency(unittest.TestCase):
                 self.assertEqual(match.group(1), pom_version,
                     f"VersionInfo VERSION={match.group(1)} != pom.xml {pom_version}")
 
-    def test_user_visible_tool_counts_match_endpoint_catalog(self):
-        """Marketing/extension metadata should not drift from endpoints.json."""
-        expected = json.loads(ENDPOINTS_JSON.read_text())["total_endpoints"]
+    def test_user_visible_tool_counts_use_stable_lower_bound(self):
+        """User-visible descriptions should not hardcode the exact catalog size."""
+        total = json.loads(ENDPOINTS_JSON.read_text())["total_endpoints"]
+        self.assertGreater(total, 250)
         checks = {
             "README.md": PROJECT_ROOT / "README.md",
             "CLAUDE.md": PROJECT_ROOT / "CLAUDE.md",
@@ -111,14 +112,33 @@ class TestVersionConsistency(unittest.TestCase):
             "extension.properties": PROJECT_ROOT / "src" / "main" / "resources" / "extension.properties",
             "MANIFEST.MF": PROJECT_ROOT / "src" / "main" / "resources" / "META-INF" / "MANIFEST.MF",
         }
-        pattern = re.compile(r"(\d+)\s+MCP tools?", re.IGNORECASE)
-        mismatches = []
+        exact_count = re.compile(r"(?<!more than )\b\d+\s+MCP tools?", re.IGNORECASE)
+        exact_claims = []
         for name, path in checks.items():
-            for match in pattern.finditer(path.read_text(encoding="utf-8")):
-                found = int(match.group(1))
-                if found != expected:
-                    mismatches.append(f"{name}: {found} != {expected}")
-        self.assertEqual(mismatches, [])
+            if exact_count.search(path.read_text(encoding="utf-8")):
+                exact_claims.append(name)
+        self.assertEqual(exact_claims, [])
+
+        for path in (
+            checks["CLAUDE.md"],
+            checks["extension.properties"],
+            checks["MANIFEST.MF"],
+        ):
+            self.assertIn("more than 250", path.read_text(encoding="utf-8"))
+
+    def test_product_branding_is_consistent(self):
+        expected = {
+            PROJECT_ROOT / "README.md": "# GhidraMCP-next",
+            PROJECT_ROOT / "pyproject.toml": 'description = "GhidraMCP-next bridge',
+            PROJECT_ROOT / "src" / "main" / "resources" / "extension.properties":
+                "name=GhidraMCP-next",
+            PROJECT_ROOT / "src" / "main" / "resources" / "META-INF" / "MANIFEST.MF":
+                "Plugin-Name: GhidraMCP-next",
+            PROJECT_ROOT / "src" / "main" / "resources" / "com" / "xebyte" /
+                "version.properties": "app.name=GhidraMCP-next",
+        }
+        for path, branding in expected.items():
+            self.assertIn(branding, path.read_text(encoding="utf-8"))
 
 
 class TestBridgeConfiguration(unittest.TestCase):

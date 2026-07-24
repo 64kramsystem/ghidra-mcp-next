@@ -239,7 +239,7 @@ endpoint_smoke:
   - endpoint: "/check_connection"
     assert:
       type: "text"
-      contains: ["GhidraMCP plugin running"]
+      contains: ["GhidraMCP-next plugin running"]
 
   - endpoint: "/list_open_programs"
     assert:

@@ -286,10 +286,10 @@ public class ServerManager {
 
     private void stopServer() {
         if (server != null) {
-            Msg.info(this, "Stopping GhidraMCP UDS server...");
+            Msg.info(this, "Stopping GhidraMCP-next UDS server...");
             server.stop();
             server = null;
-            Msg.info(this, "GhidraMCP UDS server stopped.");
+            Msg.info(this, "GhidraMCP-next UDS server stopped.");
         }
     }
 

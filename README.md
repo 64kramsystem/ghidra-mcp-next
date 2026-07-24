@@ -1,6 +1,6 @@
-# Ghidra MCP Next
+# GhidraMCP-next
 
-Ghidra MCP Next is a cleaned, tested, restructured, and extended version of the
+GhidraMCP-next is a cleaned, tested, restructured, and extended version of the
 original [Ghidra MCP](https://github.com/bethington/ghidra-mcp) project. It
 connects AI clients to Ghidra through a Java extension and a thin Python MCP
 bridge.
@@ -81,8 +81,8 @@ For a manual build after prerequisites are available:
 mvn clean package assembly:single -DskipTests
 ```
 
-In a CodeBrowser window, enable **GhidraMCP** through **File > Configure**, then
-start the server with **Tools > GhidraMCP > Start MCP Server**. The default TCP
+In a CodeBrowser window, enable **GhidraMCP-next** through **File > Configure**, then
+start the server with **Tools > GhidraMCP-next > Start MCP Server**. The default TCP
 endpoint is `http://127.0.0.1:8089`; Unix-domain sockets are also enabled on
 supported local hosts to distinguish multiple GUI instances. The GUI TCP and
 Unix-socket transports publish the same discovered tool schema, including
@@ -224,7 +224,7 @@ For a proprietary Windows application under Wine, import the PE into a local
 project, use a suitable Ghidra launch offer for the Wine/GDB environment, break
 on the mapped runtime address, and correlate live state with the static program
 using the mapping tools. Debugging a defect in Wine's own open-source code is
-primarily a Wine source, build, GDB, and test-suite task; Ghidra MCP can provide
+primarily a Wine source, build, GDB, and test-suite task; GhidraMCP-next can provide
 supporting disassembly evidence.
 
 Generic selected-offer/PID attach is available through `debugger_attach`, `debugger_wait_for_stop` provides a bounded event-driven wait, and `debugger_memory_maps` enumerates current trace regions with optional PID filtering. Use `copy_debugger_memory_to_program` to create and populate a program block from a known range in the active trace.

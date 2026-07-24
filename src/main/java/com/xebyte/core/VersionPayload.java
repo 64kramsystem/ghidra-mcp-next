@@ -9,7 +9,7 @@ import java.util.Properties;
 /** Shared authoritative payload for every {@code GET /get_version} transport. */
 public final class VersionPayload {
     private static String version = "5.15.0";
-    private static String appName = "GhidraMCP";
+    private static String appName = "GhidraMCP-next";
     private static String ghidraVersion = "unknown";
     private static String buildTimestamp = "dev";
     private static String buildNumber = "0";

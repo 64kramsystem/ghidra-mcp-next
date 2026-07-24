@@ -1,5 +1,5 @@
 """
-Safe write operation tests for GhidraMCP.
+Safe write operation tests for GhidraMCP-next.
 
 These tests verify write endpoints work by reading existing values and writing
 them back unchanged. This tests the write path without modifying actual data.

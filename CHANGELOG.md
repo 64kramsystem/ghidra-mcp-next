@@ -1,6 +1,6 @@
-# Changelog - Ghidra MCP Server
+# Changelog - GhidraMCP-next
 
-Complete version history for the Ghidra MCP Server project.
+Complete version history for the GhidraMCP-next project.
 
 ---
 
@@ -9,6 +9,7 @@ Complete version history for the Ghidra MCP Server project.
 ### Changed
 
 - Removed the obsolete semantic-version release checklist and aligned maintained release guidance with the automatic timestamp-release workflow.
+- Renamed user-visible product, plugin, bridge, package, and release-artifact branding to `GhidraMCP-next`.
 
 ## GhidraMCP-next 20260724-165710
 

@@ -39,7 +39,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.*;
 
 /**
- * Headless Ghidra MCP Server.
+ * Headless GhidraMCP-next server.
  *
  * This server provides the same REST API as the GUI plugin but runs in
  * headless mode without requiring the Ghidra GUI. Ideal for:
@@ -49,8 +49,8 @@ import java.util.*;
  * - Server-side reverse engineering
  *
  * Usage:
- *   java -jar GhidraMCPHeadless.jar --port 8089 --project /path/to/project
- *   java -jar GhidraMCPHeadless.jar --port 8089 --file /path/to/binary.exe
+ *   java -jar GhidraMCP-next-&lt;version&gt;.jar --port 8089 --project /path/to/project
+ *   java -jar GhidraMCP-next-&lt;version&gt;.jar --port 8089 --file /path/to/binary.exe
  */
 public class GhidraMCPHeadlessServer implements GhidraLaunchable {
 
@@ -108,7 +108,7 @@ public class GhidraMCPHeadlessServer implements GhidraLaunchable {
         // Keep running until interrupted
         Runtime.getRuntime().addShutdownHook(new Thread(this::stop));
 
-        System.out.println("GhidraMCP Headless Server v" + VERSION + " running on port " + port);
+        System.out.println("GhidraMCP-next Headless Server v" + VERSION + " running on port " + port);
         System.out.println("Press Ctrl+C to stop");
 
         // Block main thread
@@ -155,7 +155,7 @@ public class GhidraMCPHeadlessServer implements GhidraLaunchable {
                     break;
                 case "--version":
                 case "-v":
-                    System.out.println("GhidraMCP Headless Server v" + VERSION);
+                    System.out.println("GhidraMCP-next Headless Server v" + VERSION);
                     System.exit(0);
                     break;
             }
@@ -163,9 +163,9 @@ public class GhidraMCPHeadlessServer implements GhidraLaunchable {
     }
 
     private void printUsage() {
-        System.out.println("GhidraMCP Headless Server v" + VERSION);
+        System.out.println("GhidraMCP-next Headless Server v" + VERSION);
         System.out.println();
-        System.out.println("Usage: java -jar GhidraMCPHeadless.jar [options]");
+        System.out.println("Usage: java -jar GhidraMCP-next-" + VERSION + ".jar [options]");
         System.out.println();
         System.out.println("Options:");
         System.out.println("  --port, -p <port>      Server port (default: 8089)");
@@ -182,13 +182,13 @@ public class GhidraMCPHeadlessServer implements GhidraLaunchable {
         System.out.println();
         System.out.println("Examples:");
         System.out.println("  # Start server with no initial program");
-        System.out.println("  java -jar GhidraMCPHeadless.jar --port 8089");
+        System.out.println("  java -jar GhidraMCP-next-" + VERSION + ".jar --port 8089");
         System.out.println();
         System.out.println("  # Start server accessible from Docker network");
-        System.out.println("  java -jar GhidraMCPHeadless.jar --bind 0.0.0.0 --port 8089");
+        System.out.println("  java -jar GhidraMCP-next-" + VERSION + ".jar --bind 0.0.0.0 --port 8089");
         System.out.println();
         System.out.println("  # Start server with a binary file");
-        System.out.println("  java -jar GhidraMCPHeadless.jar --file /path/to/binary.exe");
+        System.out.println("  java -jar GhidraMCP-next-" + VERSION + ".jar --file /path/to/binary.exe");
         System.out.println();
         System.out.println("REST API endpoints available at http://<address>:<port>/");
     }
@@ -373,7 +373,7 @@ public class GhidraMCPHeadlessServer implements GhidraLaunchable {
         // ==========================================================================
 
         safeContext("/check_connection", exchange -> {
-            sendResponse(exchange, "Connection OK - GhidraMCP Headless Server v" + VERSION);
+            sendResponse(exchange, "Connection OK - GhidraMCP-next Headless Server v" + VERSION);
         });
 
         safeContext("/health", exchange -> {

@@ -1,6 +1,6 @@
 # Multi-Program Support
 
-Ghidra MCP supports several open programs inside a local GUI or headless
+GhidraMCP-next supports several open programs inside a local GUI or headless
 project. Program routing is explicit at the endpoint boundary but remains
 compatible with single-program callers that rely on the active program.
 

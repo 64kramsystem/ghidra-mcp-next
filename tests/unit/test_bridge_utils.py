@@ -1,5 +1,5 @@
 """
-Unit tests for GhidraMCP bridge utility functions.
+Unit tests for GhidraMCP-next bridge utility functions.
 
 These tests run WITHOUT requiring a Ghidra server connection.
 They test transport utilities, timeout logic, and discovery functions.

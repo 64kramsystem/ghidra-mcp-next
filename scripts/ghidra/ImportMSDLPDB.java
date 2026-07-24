@@ -10,7 +10,7 @@
 // Installation: copy this file into your Ghidra user scripts directory:
 //   Windows: %USERPROFILE%\ghidra_scripts\
 //   macOS/Linux: ~/ghidra_scripts/
-// Then in Ghidra: Window > Script Manager > refresh > category "GhidraMCP".
+// Then in Ghidra: Window > Script Manager > refresh > category "GhidraMCP-next".
 // Symbol Server config (one-time): Edit > Symbol Server Config > point at
 // https://msdl.microsoft.com/download/symbols with a local cache dir.
 //
@@ -28,9 +28,9 @@
 // Output: Console JSON: { "applied_symbols": int, "pdb_path": str|null, "skipped": bool, "reason": str|null }
 //
 // @author Ben Ethington
-// @category GhidraMCP
+// @category GhidraMCP-next
 // @description Download + apply PDB from Microsoft symbol server
-// @menupath GhidraMCP.Import MSDL PDB
+// @menupath GhidraMCP-next.Import MSDL PDB
 
 import java.io.File;
 

@@ -1,6 +1,6 @@
 # Workflow Prompts
 
-These guides help an agent use the maintained Ghidra MCP surface. They are
+These guides help an agent use the maintained GhidraMCP-next surface. They are
 operator aids, not policy engines. The caller chooses project naming and
 comment style; Ghidra validates model constraints.
 

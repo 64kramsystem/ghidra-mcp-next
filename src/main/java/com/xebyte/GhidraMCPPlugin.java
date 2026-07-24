@@ -145,8 +145,8 @@ class VersionInfo {
     status = PluginStatus.RELEASED,
     packageName = ghidra.framework.main.UtilityPluginPackage.NAME,
     category = PluginCategoryNames.COMMON,
-    shortDescription = "GhidraMCP - HTTP server plugin",
-    description = "GhidraMCP - Starts an embedded HTTP server to expose program data via REST API and MCP bridge. " +
+    shortDescription = "GhidraMCP-next - HTTP server plugin",
+    description = "GhidraMCP-next - Starts an embedded HTTP server to expose program data via REST API and MCP bridge. " +
                   "Provides 245 endpoints for reverse engineering automation. " +
                   "Port configurable via Tool Options. " +
                   "Features: function analysis, decompilation, symbol management, cross-references, label operations, " +
@@ -171,7 +171,7 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
         new java.util.concurrent.CopyOnWriteArrayList<>();
     private boolean ownsServer = false; // true if this instance started the server
     private boolean registeredInstance = false;
-    private static final String OPTION_CATEGORY_NAME = "GhidraMCP HTTP Server";
+    private static final String OPTION_CATEGORY_NAME = "GhidraMCP-next HTTP Server";
     private static final String PORT_OPTION_NAME = "Server Port";
     private static final int DEFAULT_PORT = 8089;
     private static final String UDS_ENABLED_OPTION = "Enable UDS Transport";
@@ -185,7 +185,7 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
     // bound port via /mcp/instance_info → tcp_port for bridge discovery.
     //
     // Users who want UDS-only (no TCP listener at all) can disable TCP via
-    // Tool Options → GhidraMCP HTTP Server → "Enable TCP Transport".
+    // Tool Options → GhidraMCP-next HTTP Server → "Enable TCP Transport".
     private static final boolean DEFAULT_UDS_ENABLED = true;
     private static final boolean DEFAULT_TCP_ENABLED = true;
     // Maximum TCP port-range fallback. If the configured port is in use, the
@@ -208,7 +208,7 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
     private static final int HTTP_IDLE_TIMEOUT_SECONDS = 300;        // 5 minutes for idle connections
     private static final int BATCH_OPERATION_CHUNK_SIZE = 20;        // Process batch operations in chunks of 20
 
-    // Menu actions for Tools > GhidraMCP submenu
+    // Menu actions for Tools > GhidraMCP-next submenu
     private DockingAction startServerAction;
     private DockingAction stopServerAction;
     private DockingAction restartServerAction;
@@ -291,7 +291,7 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
                 programProvider, threadingStrategy);
         this.debuggerService = new com.xebyte.core.DebuggerService(programProvider, threadingStrategy, tool);
         Msg.info(GhidraMCPPlugin.class, "============================================");
-        Msg.info(GhidraMCPPlugin.class, "GhidraMCP " + VersionInfo.getFullVersion());
+        Msg.info(GhidraMCPPlugin.class, "GhidraMCP-next " + VersionInfo.getFullVersion());
         Msg.info(GhidraMCPPlugin.class, "Endpoints: " + VersionInfo.getEndpointCount());
         Msg.info(GhidraMCPPlugin.class, "============================================");
 
@@ -328,7 +328,7 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
                 ServerManager.getInstance().registerTool(tool);
                 udsOk = true;
                 Msg.info(this,
-                    "GhidraMCP UDS server active at " + ServerManager.getInstance().getSocketPath());
+                    "GhidraMCP-next UDS server active at " + ServerManager.getInstance().getSocketPath());
             } catch (IOException e) {
                 Msg.warn(this, "Failed to start UDS server: " + e.getMessage());
             }
@@ -337,7 +337,7 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
         // Start TCP if enabled, or as a safety net if nothing else is running.
         if (tcpEnabled || (!udsOk && !tcpEnabled)) {
             if (server != null && isServerRunning()) {
-                Msg.info(this, "GhidraMCP TCP server already running — sharing with this tool window.");
+                Msg.info(this, "GhidraMCP-next TCP server already running — sharing with this tool window.");
                 return;
             }
             try {
@@ -351,14 +351,14 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
                     : (displayedPort + " (fallback; configured " + configuredPort + " was in use)");
                 if (!tcpEnabled) {
                     Msg.warn(this,
-                        "GhidraMCP: UDS failed or disabled — started TCP on port " + portStr + " as safety net.");
+                        "GhidraMCP-next: UDS failed or disabled — started TCP on port " + portStr + " as safety net.");
                 } else {
-                    Msg.info(this, "GhidraMCP TCP server active on port " + portStr);
+                    Msg.info(this, "GhidraMCP-next TCP server active on port " + portStr);
                 }
             } catch (IOException e) {
                 Msg.error(this, "Failed to start TCP server: " + e.getMessage(), e);
                 if (!udsOk) {
-                    Msg.showError(this, null, "GhidraMCP Server Error",
+                    Msg.showError(this, null, "GhidraMCP-next Server Error",
                         "Failed to start MCP server.\n\n" +
                         "No transports are running.\n\n" +
                         "Error: " + e.getMessage());
@@ -373,7 +373,7 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
 
     private void stopServer() {
         if (server != null) {
-            Msg.info(this, "Stopping GhidraMCP HTTP server...");
+            Msg.info(this, "Stopping GhidraMCP-next HTTP server...");
             try {
                 server.stop(1);
                 Thread.sleep(100);
@@ -385,7 +385,7 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
             // report a stale port after the listener stops (Copilot #196
             // review item).
             ServerManager.getInstance().setBoundTcpPort(-1);
-            Msg.info(this, "GhidraMCP HTTP server stopped.");
+            Msg.info(this, "GhidraMCP-next HTTP server stopped.");
         }
     }
 
@@ -409,7 +409,7 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
                         ServerManager.getInstance().registerTool(tool);
                         started.append("UDS: ").append(ServerManager.getInstance().getSocketPath());
                     } catch (IOException e) {
-                        Msg.showError(getClass(), null, "GhidraMCP", "Failed to start UDS server: " + e.getMessage());
+                        Msg.showError(getClass(), null, "GhidraMCP-next", "Failed to start UDS server: " + e.getMessage());
                     }
                 }
                 if (tcp && !isServerRunning()) {
@@ -419,16 +419,16 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
                         if (started.length() > 0) started.append("\n");
                         started.append("TCP: port ").append(opts.getInt(PORT_OPTION_NAME, DEFAULT_PORT));
                     } catch (IOException e) {
-                        Msg.showError(getClass(), null, "GhidraMCP", "Failed to start TCP server: " + e.getMessage());
+                        Msg.showError(getClass(), null, "GhidraMCP-next", "Failed to start TCP server: " + e.getMessage());
                     }
                 }
                 updateMenuActionStates();
                 if (started.length() > 0) {
-                    Msg.showInfo(getClass(), null, "GhidraMCP", "Server started.\n" + started);
+                    Msg.showInfo(getClass(), null, "GhidraMCP-next", "Server started.\n" + started);
                 }
             }
         };
-        startServerAction.setMenuBarData(new MenuData(new String[]{"Tools", "GhidraMCP", "Start Server"}));
+        startServerAction.setMenuBarData(new MenuData(new String[]{"Tools", "GhidraMCP-next", "Start Server"}));
 
         stopServerAction = new DockingAction("Stop Server", getName()) {
             @Override
@@ -436,10 +436,10 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
                 stopServer();
                 ServerManager.getInstance().stopUdsServer();
                 updateMenuActionStates();
-                Msg.showInfo(getClass(), null, "GhidraMCP", "All servers stopped.");
+                Msg.showInfo(getClass(), null, "GhidraMCP-next", "All servers stopped.");
             }
         };
-        stopServerAction.setMenuBarData(new MenuData(new String[]{"Tools", "GhidraMCP", "Stop Server"}));
+        stopServerAction.setMenuBarData(new MenuData(new String[]{"Tools", "GhidraMCP-next", "Stop Server"}));
 
         restartServerAction = new DockingAction("Restart Server", getName()) {
             @Override
@@ -451,7 +451,7 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
                 startServerAction.actionPerformed(context);
             }
         };
-        restartServerAction.setMenuBarData(new MenuData(new String[]{"Tools", "GhidraMCP", "Restart Server"}));
+        restartServerAction.setMenuBarData(new MenuData(new String[]{"Tools", "GhidraMCP-next", "Restart Server"}));
 
         serverStatusAction = new DockingAction("Server Status", getName()) {
             @Override
@@ -465,15 +465,15 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
                 String tcpStatus = isServerRunning()
                     ? "Running (port " + port + ")"
                     : "Disabled";
-                String message = "GhidraMCP Server Status\n\n" +
+                String message = "GhidraMCP-next Server Status\n\n" +
                     "UDS: " + udsStatus + "\n" +
                     "TCP: " + tcpStatus + "\n" +
                     "Version: " + VersionInfo.getFullVersion() + "\n" +
                     "Endpoints: " + VersionInfo.getEndpointCount();
-                Msg.showInfo(getClass(), null, "GhidraMCP", message);
+                Msg.showInfo(getClass(), null, "GhidraMCP-next", message);
             }
         };
-        serverStatusAction.setMenuBarData(new MenuData(new String[]{"Tools", "GhidraMCP", "Server Status"}));
+        serverStatusAction.setMenuBarData(new MenuData(new String[]{"Tools", "GhidraMCP-next", "Server Status"}));
 
         tool.addAction(startServerAction);
         tool.addAction(stopServerAction);
@@ -807,7 +807,7 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
             private final AtomicInteger n = new AtomicInteger(1);
             @Override
             public Thread newThread(Runnable r) {
-                Thread t = new Thread(r, "GhidraMCP-HTTP-" + n.getAndIncrement());
+                Thread t = new Thread(r, "GhidraMCP-next-HTTP-" + n.getAndIncrement());
                 t.setDaemon(true);
                 return t;
             }
@@ -817,12 +817,12 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
         new Thread(() -> {
             try {
                 server.start();
-                Msg.info(this, "GhidraMCP HTTP server started on port " + port + " (thread pool size 3)");
+                Msg.info(this, "GhidraMCP-next HTTP server started on port " + port + " (thread pool size 3)");
             } catch (Exception e) {
                 Msg.error(this, "Failed to start HTTP server on port " + port + ". Port might be in use.", e);
                 server = null; // Ensure server isn't considered running
             }
-        }, "GhidraMCP-HTTP-Server").start();
+        }, "GhidraMCP-next-HTTP-Server").start();
     }
 
     // ----------------------------------------------------------------------------------
@@ -2129,9 +2129,9 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
     private String checkConnection() {
         Program program = getCurrentProgram();
         if (program == null) {
-            return "Connected: GhidraMCP plugin running, but no program loaded";
+            return "Connected: GhidraMCP-next plugin running, but no program loaded";
         }
-        return "Connected: GhidraMCP plugin running with program '" + program.getName() + "'";
+        return "Connected: GhidraMCP-next plugin running with program '" + program.getName() + "'";
     }
 
     /**
@@ -3248,7 +3248,7 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
         try {
             programProvider.releaseAll();
         } catch (Exception e) {
-            Msg.warn(this, "GhidraMCP: releaseAll on dispose: " + e.getMessage());
+            Msg.warn(this, "GhidraMCP-next: releaseAll on dispose: " + e.getMessage());
         }
 
         if (instanceCount <= 0) {
@@ -3260,7 +3260,7 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
             // every subsequent HTTP request would execute against stale
             // services. Hand the server to a surviving instance by
             // restarting it so the routes re-bind to live services.
-            Msg.info(this, "GhidraMCP: owning tool window closed with "
+            Msg.info(this, "GhidraMCP-next: owning tool window closed with "
                 + instanceCount + " other window(s) still active — handing "
                 + "TCP server ownership to a survivor.");
             stopServer();
@@ -3271,13 +3271,13 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
                     survivor.startServer();
                     survivor.ownsServer = true;
                 } catch (IOException e) {
-                    Msg.error(this, "GhidraMCP: failed to restart TCP server "
+                    Msg.error(this, "GhidraMCP-next: failed to restart TCP server "
                         + "on surviving tool window: " + e.getMessage()
-                        + " — use Tools > GhidraMCP > Start Server.");
+                        + " — use Tools > GhidraMCP-next > Start Server.");
                 }
             }
         } else {
-            Msg.info(this, "GhidraMCP: " + instanceCount
+            Msg.info(this, "GhidraMCP-next: " + instanceCount
                 + " tool window(s) still active, keeping server running.");
         }
         if (startServerAction != null) {

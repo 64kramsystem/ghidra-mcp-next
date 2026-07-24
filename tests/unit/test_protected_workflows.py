@@ -132,10 +132,7 @@ def test_repository_server_endpoints_are_absent():
 
 
 def test_repository_server_configuration_is_absent():
-    maintained = "\n".join(
-        (ROOT / path).read_text(encoding="utf-8")
-        for path in (".env.template", "ghidra-mcp-setup.ps1")
-    )
+    maintained = (ROOT / ".env.template").read_text(encoding="utf-8")
     for forbidden in (
         "GHIDRA_SERVER_HOST", "GHIDRA_SERVER_PORT",
         "GHIDRA_SERVER_USER", "GHIDRA_SERVER_PASSWORD", "ServerPassword",

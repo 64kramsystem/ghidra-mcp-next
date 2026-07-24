@@ -211,7 +211,7 @@ public class DebuggerService {
     }
 
     private Response noDebugger() {
-        return Response.err("Debugger not active and GhidraMCP could not auto-start a " +
+        return Response.err("Debugger not active and GhidraMCP-next could not auto-start a " +
                 "Debugger tool. Open the Debugger tool or enable Window > Debugger in CodeBrowser, " +
                 "then attach to your target process.");
     }

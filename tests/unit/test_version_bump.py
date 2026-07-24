@@ -65,7 +65,7 @@ def repo(tmp_path: Path) -> Path:
     (tmp_path / "README.md").write_text(
         f"| **Version** | {OLD} |\n"
         f"![Version](https://img.shields.io/badge/Version-{OLD}-brightgreen)\n"
-        f"GhidraMCP Headless Server v{OLD} is available\n",
+        f"GhidraMCP-next Headless Server v{OLD} is available\n",
         encoding="utf-8",
     )
 
@@ -263,7 +263,7 @@ def test_rule_readme_headless_server_title(repo: Path):
     apply_version_bump(repo, NEW, old_version=OLD)
 
     content = (repo / "README.md").read_text(encoding="utf-8")
-    assert f"GhidraMCP Headless Server v{NEW}" in content
+    assert f"GhidraMCP-next Headless Server v{NEW}" in content
 
 
 def test_rule_agents_md_version(repo: Path):
@@ -357,7 +357,7 @@ def test_build_rules_pom_version_does_not_match_dependency_version(tmp_path: Pat
     pom_content = (
         "<project>\n"
         "  <groupId>com.xebyte</groupId>\n"
-        "  <artifactId>GhidraMCP</artifactId>\n"
+        "  <artifactId>GhidraMCP-next</artifactId>\n"
         "  <packaging>jar</packaging>\n"
         f"  <version>{OLD}</version>\n"
         "  <dependencies>\n"

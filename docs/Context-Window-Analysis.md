@@ -1,7 +1,7 @@
 # MCP catalog context analysis
 
 The authoritative catalog is [`../tests/endpoints.json`](../tests/endpoints.json).
-It currently contains 234 endpoints. Do not maintain a separate hand-count in
+It contains more than 250 endpoints. Do not maintain a separate hand-count in
 analysis tooling: both context-analysis scripts read the catalog at runtime.
 
 ## Reproduce the measurement
