@@ -6,6 +6,8 @@ Complete version history for the Ghidra MCP Server project.
 
 ## Unreleased
 
+## GhidraMCP-next 20260724-165710
+
 ### Added
 
 - Added automatic timestamp publication for release-worthy, fully green `main` pushes. Releases use only timestamp and commit identity, publish the exact tested Ghidra extension ZIP, Python wheel, and source distribution, attach build metadata and SHA-256 hashes, include curated changes in the release notes, and roll those entries into a timestamped changelog section after publication.
