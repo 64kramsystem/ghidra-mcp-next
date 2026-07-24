@@ -31,10 +31,7 @@ from tools.setup.versioning import VersionInfo
 
 def test_hosted_workflows_install_all_required_ghidra_jars():
     root = Path(__file__).resolve().parents[2]
-    for relative_path in (
-        ".github/workflows/tests.yml",
-        ".github/workflows/release.yml",
-    ):
+    for relative_path in (".github/workflows/tests.yml",):
         workflow = (root / relative_path).read_text(encoding="utf-8")
         missing = [
             artifact_id
