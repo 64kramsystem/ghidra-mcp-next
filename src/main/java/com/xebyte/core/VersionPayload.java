@@ -8,7 +8,7 @@ import java.util.Properties;
 
 /** Shared authoritative payload for every {@code GET /get_version} transport. */
 public final class VersionPayload {
-    private static String version = "5.15.0";
+    private static String version = "dev";
     private static String appName = "GhidraMCP-next";
     private static String ghidraVersion = "unknown";
     private static String buildTimestamp = "dev";
@@ -58,7 +58,7 @@ public final class VersionPayload {
     }
 
     public static String getFullVersion() {
-        return version + " (build " + buildNumber + ", " + buildTimestamp + ")";
+        return appName + " " + version;
     }
 
     public static Map<String, Object> asMap(String mode, int endpointCount) {

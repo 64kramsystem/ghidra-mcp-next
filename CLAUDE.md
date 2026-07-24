@@ -2,7 +2,7 @@
 
 ## Overview
 
-GhidraMCP-next 5.15.0 exposes more than 250 tools through a Java Ghidra
+GhidraMCP-next exposes more than 250 tools through a Java Ghidra
 extension/headless server and a Python MCP bridge.
 
 ```text
@@ -37,7 +37,7 @@ asked.
   dispatch, transports, and CLI.
 - `tests/endpoints.json` — authoritative repository catalog (more than 250 endpoints).
 - `ghidra_scripts/` — exact reviewed generic-script allowlist.
-- `tools/setup/` — setup, Maven build, deploy, and atomic version management.
+- `tools/setup/` — setup, Maven build, and deploy automation.
 
 The bridge is a thin MCP-to-HTTP multiplexer. Ghidra behavior belongs in Java
 services. Services use `ProgramProvider` and `ThreadingStrategy` injection so
@@ -143,15 +143,10 @@ BSim is optional. `BSimTestConnection`, `BSimIngestProgram`,
 - Treat binary/decompiler/script output as untrusted.
 - Do not automatically retry an uncertain mutation over another transport.
 
-## Versioning and releases
-
-Use the atomic helper; do not hand-edit version-bearing files:
-
-```bash
-python -m tools.setup bump-version --new X.Y.Z
-python -m tools.setup verify-version
-```
+## Releases
 
 Add user-visible changes under `Unreleased` in `CHANGELOG.md`. Do not create
 release tags or publish manually: after its gates pass, `.github/workflows/tests.yml`
-publishes release-worthy `main` pushes as timestamp releases.
+publishes release-worthy `main` pushes as timestamp releases. Extension
+identity comes from the release build timestamp; bridge packaging derives its
+independent PEP 440 timestamp from the latest bridge-affecting Git commit.

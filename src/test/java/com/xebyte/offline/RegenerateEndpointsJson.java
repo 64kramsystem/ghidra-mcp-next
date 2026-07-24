@@ -168,9 +168,12 @@ public class RegenerateEndpointsJson extends TestCase {
             outArr.add(merged.get(p));
         }
 
-        // Preserve ordering of top-level fields: version, description, total_endpoints, categories, endpoints.
+        // Preserve ordering of top-level fields: schema version, description,
+        // total_endpoints, categories, endpoints.
         JsonObject out = new JsonObject();
-        if (root.has("version")) out.add("version", root.get("version"));
+        if (root.has("schema_version")) {
+            out.add("schema_version", root.get("schema_version"));
+        }
         if (root.has("description")) out.add("description", root.get("description"));
         out.addProperty("total_endpoints", outArr.size());
         if (root.has("categories")) out.add("categories", root.get("categories"));

@@ -291,7 +291,7 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
                 programProvider, threadingStrategy);
         this.debuggerService = new com.xebyte.core.DebuggerService(programProvider, threadingStrategy, tool);
         Msg.info(GhidraMCPPlugin.class, "============================================");
-        Msg.info(GhidraMCPPlugin.class, "GhidraMCP-next " + VersionInfo.getFullVersion());
+        Msg.info(GhidraMCPPlugin.class, VersionInfo.getFullVersion());
         Msg.info(GhidraMCPPlugin.class, "Endpoints: " + VersionInfo.getEndpointCount());
         Msg.info(GhidraMCPPlugin.class, "============================================");
 

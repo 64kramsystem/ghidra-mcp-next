@@ -20,9 +20,8 @@ from .maven import find_maven_command
 from .versioning import (
     infer_ghidra_install_meta,
     infer_ghidra_version_from_path,
-    read_pom_versions,
+    read_pom_ghidra_version,
 )
-
 
 REQUIRED_GHIDRA_JARS: tuple[tuple[str, str], ...] = (
     ("Base", "Ghidra/Features/Base/lib/Base.jar"),
@@ -127,11 +126,7 @@ TRACE_RMI_CONTRACT_TOOLS = {
     "debugger/static_to_dynamic",
     "debugger/dynamic_to_static",
 }
-RELEASE_CONTRACT_TOOLS = (
-    FILEZILLA_CONTRACT_TOOLS
-    | LOCAL_COMPARISON_CONTRACT_TOOLS
-    | TRACE_RMI_CONTRACT_TOOLS
-)
+RELEASE_CONTRACT_TOOLS = FILEZILLA_CONTRACT_TOOLS | LOCAL_COMPARISON_CONTRACT_TOOLS | TRACE_RMI_CONTRACT_TOOLS
 GENERIC_SMOKE_TOOLS = {
     "analysis_status",
     "analyze_function_completeness",
@@ -196,9 +191,7 @@ def _version_sort_key(name: str) -> tuple[int, int, int, int]:
     )
 
 
-def resolve_ghidra_user_dir(
-    ghidra_path: Path, user_base_dir: Path | None = None
-) -> Path:
+def resolve_ghidra_user_dir(ghidra_path: Path, user_base_dir: Path | None = None) -> Path:
     """Resolve the user-config dir matching a Ghidra install.
 
     Ghidra writes its per-user state under
@@ -232,9 +225,7 @@ def resolve_ghidra_user_dir(
                 if path.is_dir() and "_location_" not in path.name
             )
             if matching_dirs:
-                public_dir = next(
-                    (path for path in matching_dirs if "PUBLIC" in path.name), None
-                )
+                public_dir = next((path for path in matching_dirs if "PUBLIC" in path.name), None)
                 return public_dir or matching_dirs[0]
         return user_base_dir / f"ghidra_{target_version}_PUBLIC"
 
@@ -286,10 +277,7 @@ def patch_frontend_tool_config(content: str) -> tuple[str, bool]:
 
     utility_block = '<PACKAGE NAME="Utility">'
     if utility_block in updated:
-        replacement = (
-            '<PACKAGE NAME="Utility">\n'
-            f'                <INCLUDE CLASS="{PLUGIN_CLASS}" />'
-        )
+        replacement = '<PACKAGE NAME="Utility">\n' f'                <INCLUDE CLASS="{PLUGIN_CLASS}" />'
         updated = updated.replace(utility_block, replacement, 1)
         updated = mark_extension_known_in_tool_config(updated, PLUGIN_EXTENSION_NAME)
         return updated, True
@@ -398,9 +386,7 @@ def patch_ghidra_user_configs(
         tcd_files = sorted(user_base_dir.glob("*/tools/*.tcd"))
 
     for front_end_file in front_end_files:
-        updated, modified = patch_frontend_tool_config(
-            front_end_file.read_text(encoding="utf-8")
-        )
+        updated, modified = patch_frontend_tool_config(front_end_file.read_text(encoding="utf-8"))
         if not modified:
             continue
         if dry_run:
@@ -422,15 +408,6 @@ def patch_ghidra_user_configs(
 
 def _find_plugin_jar(repo_root: Path) -> Path | None:
     target_dir = repo_root / "target"
-    version = read_pom_versions(repo_root).project_version
-    candidates = [
-        target_dir / "GhidraMCP-next.jar",
-        target_dir / f"GhidraMCP-next-{version}.jar",
-    ]
-    for candidate in candidates:
-        if candidate.is_file():
-            return candidate
-
     jars = sorted(
         target_dir.glob("GhidraMCP-next*.jar"),
         key=lambda path: path.stat().st_mtime,
@@ -439,9 +416,7 @@ def _find_plugin_jar(repo_root: Path) -> Path | None:
     return jars[0] if jars else None
 
 
-def install_user_extension(
-    repo_root: Path, ghidra_path: Path, archive_path: Path, *, dry_run: bool = False
-) -> Path:
+def install_user_extension(repo_root: Path, ghidra_path: Path, archive_path: Path, *, dry_run: bool = False) -> Path:
     user_base_dir = ghidra_user_base_dir()
     user_version_dir = resolve_ghidra_user_dir(ghidra_path, user_base_dir)
     user_extensions_base = user_version_dir / "Extensions"
@@ -475,9 +450,7 @@ def install_user_extension(
     except Exception as exc:
         plugin_jar = _find_plugin_jar(repo_root)
         if plugin_jar is None:
-            raise RuntimeError(
-                "Extension extraction failed and no fallback plugin jar was found"
-            ) from exc
+            raise RuntimeError("Extension extraction failed and no fallback plugin jar was found") from exc
 
         fallback_destination = user_lib_dir / "GhidraMCP-next.jar"
         shutil.copy2(plugin_jar, fallback_destination)
@@ -510,16 +483,7 @@ def find_ghidra_executable(ghidra_path: Path) -> Path:
 
 
 def find_plugin_archive(repo_root: Path) -> Path:
-    version = read_pom_versions(repo_root).project_version
     target_dir = repo_root / "target"
-    candidates = [
-        target_dir / f"GhidraMCP-next-{version}.zip",
-        target_dir / "GhidraMCP-next.zip",
-    ]
-    existing_candidates = [candidate for candidate in candidates if candidate.is_file()]
-    if existing_candidates:
-        return max(existing_candidates, key=lambda path: path.stat().st_mtime)
-
     archives = sorted(
         target_dir.glob("GhidraMCP-next*.zip"),
         key=lambda path: path.stat().st_mtime,
@@ -551,11 +515,7 @@ def resolve_deploy_test_modes(repo_root: Path, cli_modes: list[str] | None) -> l
     env_values = load_env_file(repo_root / ".env")
     raw_modes = env_values.get("GHIDRA_MCP_DEPLOY_TESTS", "").strip()
     if raw_modes and raw_modes.lower() not in {"0", "false", "no", "none", "off"}:
-        modes.extend(
-            mode.strip()
-            for mode in re.split(r"[,;\s]+", raw_modes)
-            if mode.strip()
-        )
+        modes.extend(mode.strip() for mode in re.split(r"[,;\s]+", raw_modes) if mode.strip())
     return list(dict.fromkeys(modes))
 
 
@@ -617,9 +577,7 @@ def _expect_mcp_error(path: str, payload: object, required_terms: tuple[str, ...
     lowered = message.lower()
     missing = [term for term in required_terms if term.lower() not in lowered]
     if missing:
-        raise RuntimeError(
-            f"{path} error was not actionable enough; missing {missing}. Error: {message}"
-        )
+        raise RuntimeError(f"{path} error was not actionable enough; missing {missing}. Error: {message}")
 
 
 def _enumerate_ghidra_processes() -> list[dict[str, object]]:
@@ -655,9 +613,8 @@ def _enumerate_ghidra_processes() -> list[dict[str, object]]:
             cmd = str(row.get("CommandLine") or "")
             name = str(row.get("Name") or "").lower()
             cmd_lower = cmd.lower()
-            is_ghidra = (
-                name in {"java.exe", "javaw.exe", "ghidrarun.bat", "ghidrarun"}
-                and ("ghidra.ghidra" in cmd_lower or "ghidrarun" in cmd_lower)
+            is_ghidra = name in {"java.exe", "javaw.exe", "ghidrarun.bat", "ghidrarun"} and (
+                "ghidra.ghidra" in cmd_lower or "ghidrarun" in cmd_lower
             )
             if is_ghidra:
                 out.append(
@@ -692,10 +649,7 @@ def _find_matching_ghidra_processes(ghidra_path: Path) -> list[dict[str, object]
     work the operator hasn't agreed to close.
     """
     target = str(ghidra_path.resolve()).lower()
-    return [
-        proc for proc in _enumerate_ghidra_processes()
-        if target in str(proc["command"]).lower()
-    ]
+    return [proc for proc in _enumerate_ghidra_processes() if target in str(proc["command"]).lower()]
 
 
 def _find_mismatched_ghidra_processes(ghidra_path: Path) -> list[dict[str, object]]:
@@ -707,10 +661,7 @@ def _find_mismatched_ghidra_processes(ghidra_path: Path) -> list[dict[str, objec
     new version, producing confusing "wrong version" failures.
     """
     target = str(ghidra_path.resolve()).lower()
-    return [
-        proc for proc in _enumerate_ghidra_processes()
-        if target not in str(proc["command"]).lower()
-    ]
+    return [proc for proc in _enumerate_ghidra_processes() if target not in str(proc["command"]).lower()]
 
 
 def _terminate_process(pid: int) -> None:
@@ -906,9 +857,7 @@ def wait_for_project(
             if isinstance(payload, dict) and "error" not in payload:
                 print("Ghidra project is ready.")
                 return
-            last_error = RuntimeError(
-                payload.get("error", str(payload)) if isinstance(payload, dict) else str(payload)
-            )
+            last_error = RuntimeError(payload.get("error", str(payload)) if isinstance(payload, dict) else str(payload))
         except Exception as exc:
             last_error = exc
         time.sleep(2)
@@ -1061,11 +1010,7 @@ def reset_benchmark_fixture(repo_root: Path, mcp_url: str) -> None:
             )
             _ensure_mcp_ok("/analysis_status", exe_status)
             state = (status.get("state") or status.get("status")) if isinstance(status, dict) else None
-            exe_state = (
-                (exe_status.get("state") or exe_status.get("status"))
-                if isinstance(exe_status, dict)
-                else None
-            )
+            exe_state = (exe_status.get("state") or exe_status.get("status")) if isinstance(exe_status, dict) else None
             is_idle = isinstance(status, dict) and status.get("analyzing") is False
             exe_idle = isinstance(exe_status, dict) and exe_status.get("analyzing") is False
             if (is_idle or state in {"complete", "done", "idle", "finished"}) and (
@@ -1404,11 +1349,7 @@ def run_multi_program_targeting_test(repo_root: Path, mcp_url: str) -> None:
     if not isinstance(programs, dict):
         raise RuntimeError("/list_open_programs returned an unexpected payload")
     open_programs = programs.get("programs") or []
-    paths = {
-        str(program.get("path"))
-        for program in open_programs
-        if isinstance(program, dict) and program.get("path")
-    }
+    paths = {str(program.get("path")) for program in open_programs if isinstance(program, dict) and program.get("path")}
     if DEFAULT_BENCHMARK_PROGRAM not in paths:
         raise RuntimeError(f"{DEFAULT_BENCHMARK_PROGRAM} is not open; open paths: {sorted(paths)}")
 
@@ -1475,9 +1416,7 @@ _DEBUGGER_LAUNCH_SKIP_HINTS = (
 
 def run_debugger_live_test(repo_root: Path, mcp_url: str) -> None:
     if os.name != "nt":
-        raise DebuggerLiveTestSkipped(
-            "Debugger live regression is currently Windows-only."
-        )
+        raise DebuggerLiveTestSkipped("Debugger live regression is currently Windows-only.")
     benchmark_debug_exe = repo_root / DEFAULT_BENCHMARK_DEBUG_EXE
     if not benchmark_debug_exe.is_file():
         raise DebuggerLiveTestSkipped(
@@ -1487,8 +1426,7 @@ def run_debugger_live_test(repo_root: Path, mcp_url: str) -> None:
 
     env_values = load_env_file(repo_root / ".env")
     python_executable = (
-        os.environ.get("GHIDRA_DEBUGGER_PYTHON", "").strip()
-        or env_values.get("GHIDRA_DEBUGGER_PYTHON", "").strip()
+        os.environ.get("GHIDRA_DEBUGGER_PYTHON", "").strip() or env_values.get("GHIDRA_DEBUGGER_PYTHON", "").strip()
     )
     launch_data: dict[str, object] = {
         "program": DEFAULT_BENCHMARK_DEBUG_PROGRAM,
@@ -1589,9 +1527,7 @@ def run_selected_endpoint_contract_test(repo_root: Path, mcp_url: str) -> None:
     tools = _schema_tool_map(schema)
     missing_tools = sorted(RELEASE_CONTRACT_TOOLS - set(tools))
     if missing_tools:
-        raise RuntimeError(
-            f"Release schema missing selected endpoint contract tool(s): {', '.join(missing_tools)}"
-        )
+        raise RuntimeError(f"Release schema missing selected endpoint contract tool(s): {', '.join(missing_tools)}")
 
     catalog = json.loads((repo_root / "tests" / "endpoints.json").read_text(encoding="utf-8"))
     endpoints = catalog.get("endpoints", []) if isinstance(catalog, dict) else catalog
@@ -1629,14 +1565,14 @@ def _benchmark_regression_dir(repo_root: Path) -> Path:
     return repo_root / BENCHMARK_FIXTURE_ROOT / "regression"
 
 
-def _bench_get(repo_root: Path, mcp_url: str, path: str, params: dict | None = None,
-               *, timeout: int = 30) -> tuple[int, object]:
+def _bench_get(
+    repo_root: Path, mcp_url: str, path: str, params: dict | None = None, *, timeout: int = 30
+) -> tuple[int, object]:
     """GET wrapper for benchmark regression runner. Returns (status, parsed)."""
     return _mcp_request(repo_root, mcp_url, path, params=params, timeout=timeout)
 
 
-def _bench_post(repo_root: Path, mcp_url: str, path: str, body: dict,
-                *, timeout: int = 30) -> tuple[int, object]:
+def _bench_post(repo_root: Path, mcp_url: str, path: str, body: dict, *, timeout: int = 30) -> tuple[int, object]:
     return _mcp_request(repo_root, mcp_url, path, data=body, method="POST", timeout=timeout)
 
 
@@ -1656,17 +1592,22 @@ def _bench_lines(parsed: object) -> list[str]:
     return [line for line in text.splitlines() if line.strip()]
 
 
-def _bench_assert_program_block(repo_root: Path, mcp_url: str, program_path: str,
-                                 prog: dict, failures: list[str]) -> None:
+def _bench_assert_program_block(
+    repo_root: Path, mcp_url: str, program_path: str, prog: dict, failures: list[str]
+) -> None:
     """Assert binary-level fields against /get_metadata, /list_segments etc."""
     p_query = {"program": program_path}
 
     _, meta = _bench_get(repo_root, mcp_url, "/get_metadata", p_query)
     meta_text = _bench_text(meta)
     if "architecture" in prog and f"Architecture: {prog['architecture']}" not in meta_text:
-        failures.append(f"program.architecture: expected 'Architecture: {prog['architecture']}' in /get_metadata; got snippet: {meta_text[:120]!r}")
+        failures.append(
+            f"program.architecture: expected 'Architecture: {prog['architecture']}' in /get_metadata; got snippet: {meta_text[:120]!r}"
+        )
     if "language" in prog and prog["language"] not in meta_text:
-        failures.append(f"program.language: expected '{prog['language']}' in /get_metadata; got snippet: {meta_text[:120]!r}")
+        failures.append(
+            f"program.language: expected '{prog['language']}' in /get_metadata; got snippet: {meta_text[:120]!r}"
+        )
     if "compiler" in prog and f"Compiler: {prog['compiler']}" not in meta_text:
         failures.append(f"program.compiler: expected 'Compiler: {prog['compiler']}' in /get_metadata")
 
@@ -1698,8 +1639,7 @@ def _bench_assert_program_block(repo_root: Path, mcp_url: str, program_path: str
                 failures.append(f"program.must_contain_strings: expected {needle!r} in /list_strings")
 
 
-def _bench_assert_function(repo_root: Path, mcp_url: str, program_path: str,
-                            entry: dict, failures: list[str]) -> None:
+def _bench_assert_function(repo_root: Path, mcp_url: str, program_path: str, entry: dict, failures: list[str]) -> None:
     addr = entry["address"]
     p_query = {"program": program_path, "address": addr}
 
@@ -1709,7 +1649,9 @@ def _bench_assert_function(repo_root: Path, mcp_url: str, program_path: str,
     if "name" in entry:
         needle = f"Function: {entry['name']} at"
         if needle not in by_addr_text:
-            failures.append(f"function@{addr}.name: expected '{needle}' in /get_function_by_address; got: {by_addr_text[:160]!r}")
+            failures.append(
+                f"function@{addr}.name: expected '{needle}' in /get_function_by_address; got: {by_addr_text[:160]!r}"
+            )
 
     # /get_function_signature returns JSON with structural fields.
     _, sig = _bench_get(repo_root, mcp_url, "/get_function_signature", p_query)
@@ -1720,28 +1662,40 @@ def _bench_assert_function(repo_root: Path, mcp_url: str, program_path: str,
     if "param_count" in entry and sig.get("param_count") != entry["param_count"]:
         failures.append(f"function@{addr}.param_count: expected {entry['param_count']}; got {sig.get('param_count')}")
     if "basic_block_count" in entry and sig.get("basic_block_count") != entry["basic_block_count"]:
-        failures.append(f"function@{addr}.basic_block_count: expected {entry['basic_block_count']}; got {sig.get('basic_block_count')}")
+        failures.append(
+            f"function@{addr}.basic_block_count: expected {entry['basic_block_count']}; got {sig.get('basic_block_count')}"
+        )
     if "cyclomatic_complexity" in entry and sig.get("cyclomatic_complexity") != entry["cyclomatic_complexity"]:
-        failures.append(f"function@{addr}.cyclomatic_complexity: expected {entry['cyclomatic_complexity']}; got {sig.get('cyclomatic_complexity')}")
+        failures.append(
+            f"function@{addr}.cyclomatic_complexity: expected {entry['cyclomatic_complexity']}; got {sig.get('cyclomatic_complexity')}"
+        )
     if "instruction_count_min" in entry:
         ic = sig.get("instruction_count")
         if not isinstance(ic, int) or ic < entry["instruction_count_min"]:
-            failures.append(f"function@{addr}.instruction_count_min: expected >={entry['instruction_count_min']}; got {ic}")
+            failures.append(
+                f"function@{addr}.instruction_count_min: expected >={entry['instruction_count_min']}; got {ic}"
+            )
     if "immediate_values_contains" in entry:
         actual_imm = set(sig.get("immediate_values") or [])
         for v in entry["immediate_values_contains"]:
             if v not in actual_imm:
-                failures.append(f"function@{addr}.immediate_values_contains: expected {v} (0x{v:x}) in /get_function_signature.immediate_values; got {sorted(actual_imm)}")
+                failures.append(
+                    f"function@{addr}.immediate_values_contains: expected {v} (0x{v:x}) in /get_function_signature.immediate_values; got {sorted(actual_imm)}"
+                )
     if "string_constants_contains" in entry:
         actual = set(sig.get("string_constants") or [])
         for s in entry["string_constants_contains"]:
             if s not in actual:
-                failures.append(f"function@{addr}.string_constants_contains: expected {s!r} in /get_function_signature.string_constants")
+                failures.append(
+                    f"function@{addr}.string_constants_contains: expected {s!r} in /get_function_signature.string_constants"
+                )
     if "callee_names_contains" in entry:
         actual = set(sig.get("callee_names") or [])
         for s in entry["callee_names_contains"]:
             if s not in actual:
-                failures.append(f"function@{addr}.callee_names_contains: expected {s!r} in /get_function_signature.callee_names")
+                failures.append(
+                    f"function@{addr}.callee_names_contains: expected {s!r} in /get_function_signature.callee_names"
+                )
     if "return_type_contains" in entry:
         # Return type appears in the by_addr "Signature:" line.
         sig_line = ""
@@ -1750,7 +1704,9 @@ def _bench_assert_function(repo_root: Path, mcp_url: str, program_path: str,
                 sig_line = line
                 break
         if entry["return_type_contains"] not in sig_line:
-            failures.append(f"function@{addr}.return_type_contains: expected {entry['return_type_contains']!r} in 'Signature:' line; got {sig_line!r}")
+            failures.append(
+                f"function@{addr}.return_type_contains: expected {entry['return_type_contains']!r} in 'Signature:' line; got {sig_line!r}"
+            )
     if "is_thunk" in entry:
         # /get_function_by_address doesn't expose thunk explicitly in text;
         # rely on the signature presence as a proxy. Treat is_thunk:false
@@ -1775,11 +1731,14 @@ def _bench_assert_function(repo_root: Path, mcp_url: str, program_path: str,
             failures.append(f"function@{addr}.decompile_must_be_nonempty: /decompile_function returned empty")
         for needle in entry.get("decompile_contains", []):
             if needle not in dec_text:
-                failures.append(f"function@{addr}.decompile_contains: expected {needle!r} in /decompile_function output")
+                failures.append(
+                    f"function@{addr}.decompile_contains: expected {needle!r} in /decompile_function output"
+                )
 
 
-def _bench_assert_endpoint_smoke(repo_root: Path, mcp_url: str, program_path: str,
-                                  entry: dict, failures: list[str]) -> None:
+def _bench_assert_endpoint_smoke(
+    repo_root: Path, mcp_url: str, program_path: str, entry: dict, failures: list[str]
+) -> None:
     endpoint = entry["endpoint"]
     method = entry.get("method", "GET").upper()
     params = dict(entry.get("params") or {})
@@ -1789,8 +1748,14 @@ def _bench_assert_endpoint_smoke(repo_root: Path, mcp_url: str, program_path: st
 
     # Auto-add program= for endpoints that take a target program (most do).
     # Skip for genuinely program-less endpoints.
-    program_less = {"/check_connection", "/list_open_programs", "/list_calling_conventions",
-                    "/list_scripts", "/check_tools", "/list_data_type_categories"}
+    program_less = {
+        "/check_connection",
+        "/list_open_programs",
+        "/list_calling_conventions",
+        "/list_scripts",
+        "/check_tools",
+        "/list_data_type_categories",
+    }
     if endpoint not in program_less and "program" not in params:
         params["program"] = program_path
 
@@ -1799,9 +1764,9 @@ def _bench_assert_endpoint_smoke(repo_root: Path, mcp_url: str, program_path: st
             payload = body or {}
             # POST endpoints take program= as query param per project convention.
             url_params = {"program": program_path} if endpoint not in program_less else {}
-            _, parsed = _mcp_request(repo_root, mcp_url, endpoint,
-                                      data=payload, method="POST",
-                                      params=url_params or None, timeout=60)
+            _, parsed = _mcp_request(
+                repo_root, mcp_url, endpoint, data=payload, method="POST", params=url_params or None, timeout=60
+            )
         else:
             _, parsed = _bench_get(repo_root, mcp_url, endpoint, params or None)
     except Exception as exc:
@@ -1863,9 +1828,9 @@ def _bench_ensure_full_analysis(repo_root: Path, mcp_url: str, program_path: str
     `param_count: 0` / `undefined` signature failures.
     """
     try:
-        _, _ = _mcp_request(repo_root, mcp_url, "/run_analysis",
-                             params={"program": program_path},
-                             method="POST", timeout=120)
+        _, _ = _mcp_request(
+            repo_root, mcp_url, "/run_analysis", params={"program": program_path}, method="POST", timeout=120
+        )
     except Exception as exc:
         print(f"WARNING: /run_analysis on {program_path} failed: {exc}")
         return
@@ -1873,16 +1838,19 @@ def _bench_ensure_full_analysis(repo_root: Path, mcp_url: str, program_path: str
     deadline = time.monotonic() + BENCHMARK_ANALYSIS_TIMEOUT_S
     while time.monotonic() < deadline:
         try:
-            _, status = _mcp_request(repo_root, mcp_url, "/analysis_status",
-                                      params={"program": program_path}, timeout=10)
+            _, status = _mcp_request(
+                repo_root, mcp_url, "/analysis_status", params={"program": program_path}, timeout=10
+            )
         except Exception:
             time.sleep(1)
             continue
         if isinstance(status, dict) and status.get("analyzing") is False:
             return
         time.sleep(2)
-    print(f"WARNING: /analysis_status on {program_path} still busy after "
-          f"{BENCHMARK_ANALYSIS_TIMEOUT_S}s; proceeding anyway")
+    print(
+        f"WARNING: /analysis_status on {program_path} still busy after "
+        f"{BENCHMARK_ANALYSIS_TIMEOUT_S}s; proceeding anyway"
+    )
 
 
 def run_benchmark_yaml_regression(repo_root: Path, mcp_url: str) -> None:
@@ -1947,8 +1915,7 @@ def run_benchmark_yaml_regression(repo_root: Path, mcp_url: str) -> None:
         print(f"  {yaml_path.name}: {status}")
 
     if failures:
-        msg = (f"Benchmark YAML regression failed ({len(failures)} assertion(s)):\n  - "
-               + "\n  - ".join(failures))
+        msg = f"Benchmark YAML regression failed ({len(failures)} assertion(s)):\n  - " + "\n  - ".join(failures)
         raise RuntimeError(msg)
 
     print(f"Benchmark YAML regression passed: {total_assertions} assertion-blocks, {total_skipped} explicit skip(s).")
@@ -2067,7 +2034,9 @@ def install_ghidratrace_for_debugger(
     # it before the wheel so the post-install setuputils check doesn't trip.
     pb = subprocess.run(
         [str(debugger_python), "-m", "pip", "install", "--upgrade", "protobuf>=6.31.0"],
-        check=False, capture_output=True, text=True,
+        check=False,
+        capture_output=True,
+        text=True,
     )
     if pb.returncode != 0:
         print(f"  protobuf install failed: {pb.stderr.strip()[:200]}")
@@ -2075,7 +2044,9 @@ def install_ghidratrace_for_debugger(
 
     gt = subprocess.run(
         [str(debugger_python), "-m", "pip", "install", "--force-reinstall", str(wheel)],
-        check=False, capture_output=True, text=True,
+        check=False,
+        capture_output=True,
+        text=True,
     )
     if gt.returncode != 0:
         print(f"  ghidratrace install failed: {gt.stderr.strip()[:200]}")
@@ -2093,7 +2064,7 @@ def install_ghidra_dependencies(
     dry_run: bool = False,
 ) -> int:
     maven_command = str(find_maven_command())
-    ghidra_version = read_pom_versions(repo_root).ghidra_version
+    ghidra_version = read_pom_ghidra_version(repo_root)
     m2_root = Path.home() / ".m2" / "repository" / "ghidra"
 
     for artifact_id, relative_path in REQUIRED_GHIDRA_JARS:
@@ -2101,12 +2072,7 @@ def install_ghidra_dependencies(
         if not jar_path.is_file():
             raise FileNotFoundError(f"Missing required Ghidra jar: {jar_path}")
 
-        cached_jar = (
-            m2_root
-            / artifact_id
-            / ghidra_version
-            / f"{artifact_id}-{ghidra_version}.jar"
-        )
+        cached_jar = m2_root / artifact_id / ghidra_version / f"{artifact_id}-{ghidra_version}.jar"
         if cached_jar.is_file() and not force:
             print(f"Skipping already installed dependency: {artifact_id}")
             continue
@@ -2185,17 +2151,11 @@ def collect_preflight_issues(
 
     extensions_dir = ghidra_path / "Extensions" / "Ghidra"
     if not test_write_access(extensions_dir):
-        issues.append(
-            f"No write access to Ghidra extensions directory: {extensions_dir}"
-        )
+        issues.append(f"No write access to Ghidra extensions directory: {extensions_dir}")
 
-    user_extension_dir = (
-        resolve_ghidra_user_dir(ghidra_path, user_base_dir) / "Extensions"
-    )
+    user_extension_dir = resolve_ghidra_user_dir(ghidra_path, user_base_dir) / "Extensions"
     if not test_write_access(user_extension_dir):
-        issues.append(
-            f"No write access to user extension directory: {user_extension_dir}"
-        )
+        issues.append(f"No write access to user extension directory: {user_extension_dir}")
 
     if strict:
         for url in ("https://repo.maven.apache.org", "https://pypi.org"):
@@ -2224,9 +2184,7 @@ def build_bridge_wheel(repo_root: Path, *, dry_run: bool = False) -> Path | None
         return None
     uv = ensure_uv_available()
     subprocess.run([uv, "build", "--wheel"], check=True, cwd=str(repo_root))
-    wheels = sorted(
-        dist_dir.glob("ghidra_mcp_bridge-*.whl"), key=lambda p: p.stat().st_mtime
-    )
+    wheels = sorted(dist_dir.glob("ghidra_mcp_bridge-*.whl"), key=lambda p: p.stat().st_mtime)
     return wheels[-1] if wheels else None
 
 
@@ -2245,22 +2203,16 @@ def deploy_to_ghidra(
     mcp_url = resolve_mcp_url(repo_root)
     test_modes = resolve_deploy_test_modes(repo_root, test_modes)
 
-    close_running_ghidra_for_deploy(
-        repo_root, ghidra_path, mcp_url=mcp_url, dry_run=dry_run
-    )
+    close_running_ghidra_for_deploy(repo_root, ghidra_path, mcp_url=mcp_url, dry_run=dry_run)
 
     if dry_run:
         print(f"DRY RUN: ensure directory {extensions_dir}")
-        print(
-            f"DRY RUN: remove existing archives matching {extensions_dir / 'GhidraMCP-next*.zip'}"
-        )
+        print(f"DRY RUN: remove existing archives matching {extensions_dir / 'GhidraMCP-next*.zip'}")
         print(f"DRY RUN: copy {archive_path} -> {destination_archive}")
         build_bridge_wheel(repo_root, dry_run=True)
         print(f"DRY RUN: copy built bridge wheel -> {ghidra_path}")
         if dotenv_source.is_file():
-            print(
-                f"DRY RUN: copy {dotenv_source} -> {ghidra_path / dotenv_source.name}"
-            )
+            print(f"DRY RUN: copy {dotenv_source} -> {ghidra_path / dotenv_source.name}")
         install_user_extension(repo_root, ghidra_path, archive_path, dry_run=True)
         target_user_dir = resolve_ghidra_user_dir(ghidra_path, user_base_dir)
         patch_ghidra_user_configs(user_base_dir, target_user_dir, dry_run=True)

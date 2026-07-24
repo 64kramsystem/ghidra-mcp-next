@@ -39,6 +39,13 @@ public class VersionPayloadTest {
         assertEquals("headless", headless.get("mode").getAsString());
         assertEquals(17, gui.get("endpoint_count").getAsInt());
         assertEquals(19, headless.get("endpoint_count").getAsInt());
+        assertEquals(
+            gui.get("build_timestamp").getAsString(),
+            gui.get("plugin_version").getAsString());
+        assertEquals(
+            gui.get("plugin_name").getAsString() + " "
+                + gui.get("plugin_version").getAsString(),
+            gui.get("full_version").getAsString());
         for (String field : new String[] {
                 "plugin_name", "plugin_version", "build_timestamp",
                 "build_number", "full_version", "ghidra_version",

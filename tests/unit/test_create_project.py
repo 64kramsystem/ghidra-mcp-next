@@ -61,10 +61,10 @@ def clean_bridge_state():
 def _staged_project_manifest():
     version = {
         "plugin_name": "GhidraMCP-next",
-        "plugin_version": "5.15.0",
+        "plugin_version": "dev",
         "build_timestamp": "dev",
         "build_number": "0",
-        "full_version": "5.15.0 (build 0, dev)",
+        "full_version": "GhidraMCP-next dev",
         "ghidra_version": "12.1.2",
         "java_version": "21",
         "endpoint_count": 1,

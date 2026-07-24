@@ -11,7 +11,3 @@
 - Python: `uv run pytest tests/unit/ -v --no-cov`
 - Package: `mvn clean package assembly:single -DskipTests`
 - Quick compile: `mvn clean compile -q`
-
-## Versioning
-
-Use `python -m tools.setup bump-version --new X.Y.Z` for version bumps.

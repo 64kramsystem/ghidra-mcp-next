@@ -19,6 +19,7 @@ import com.xebyte.core.BinaryComparisonService;
 import com.xebyte.core.ProgramProvider;
 import com.xebyte.core.ServiceUtils;
 import com.xebyte.core.ThreadingStrategy;
+import com.xebyte.core.VersionPayload;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressSet;
 import ghidra.program.model.data.DataTypeManager;
@@ -41,7 +42,7 @@ import java.util.*;
  */
 public class HeadlessEndpointHandler {
 
-    private static final String VERSION = "5.15.0-headless";
+    private static final String VERSION = VersionPayload.getVersion();
     private final ProgramProvider programProvider;
     private final ThreadingStrategy threadingStrategy;
     private final TaskMonitor monitor;

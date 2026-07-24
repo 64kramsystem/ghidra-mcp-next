@@ -9,9 +9,14 @@ Release names use `GhidraMCP-next <UTC timestamp>` and tags use
 Ghidra extension ZIP, Python wheel, Python source distribution,
 `release-metadata.json`, and `SHA256SUMS`.
 
+The extension artifact and server identify themselves with the release build
+timestamp. The bridge has an independent PEP 440 timestamp derived
+automatically from the latest commit that changed bridge or bridge-packaging
+inputs, so extension-only changes do not alter the bridge version.
+
 Add user-visible changes under `Unreleased` in
 [`../../CHANGELOG.md`](../../CHANGELOG.md). After publication, the workflow
 moves those entries under the timestamp release heading and pushes the
 changelog update as `github-actions[bot]`.
 
-No manual release preparation, version bump, or release tag is required.
+No manual release preparation, version selection, or release tag is required.

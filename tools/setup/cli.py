@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import shutil
-import subprocess
 import sys
 from pathlib import Path
 
@@ -22,12 +21,12 @@ from .requirements import (
     make_install_plan,
     uv_sync_command,
 )
-from .version_bump import apply_version_bump
 from .versioning import (
     infer_ghidra_version_from_path,
     is_ghidra_version_compatible,
-    read_pom_versions,
+    read_pom_ghidra_version,
 )
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Cross-platform repo setup helpers")
@@ -40,15 +39,15 @@ def build_parser() -> argparse.ArgumentParser:
     install_parser.set_defaults(func=cmd_install_python_deps)
 
     verify_parser = subparsers.add_parser(
-        "verify-version",
-        help="Verify repo and optional Ghidra installation version consistency",
+        "verify-ghidra",
+        help="Verify optional Ghidra installation compatibility",
     )
     verify_parser.add_argument(
         "--ghidra-path",
         type=Path,
         help="Optional Ghidra installation path. Defaults to GHIDRA_PATH from .env when set.",
     )
-    verify_parser.set_defaults(func=cmd_verify_version)
+    verify_parser.set_defaults(func=cmd_verify_ghidra)
 
     preflight_parser = subparsers.add_parser(
         "preflight",
@@ -113,9 +112,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Reinstall jars even if already present.",
     )
-    ghidra_deps_parser.add_argument(
-        "--dry-run", action="store_true", help="Print actions without executing them."
-    )
+    ghidra_deps_parser.add_argument("--dry-run", action="store_true", help="Print actions without executing them.")
     ghidra_deps_parser.set_defaults(func=cmd_install_ghidra_deps)
 
     deploy_parser = subparsers.add_parser(
@@ -202,28 +199,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ensure_prereqs_parser.set_defaults(func=cmd_ensure_prereqs)
 
-    bump_version_parser = subparsers.add_parser(
-        "bump-version",
-        help="Update project version references across maintained files",
-    )
-    bump_version_parser.add_argument(
-        "--new", required=True, help="New semantic version in X.Y.Z form."
-    )
-    bump_version_parser.add_argument(
-        "--old", help="Override the current version if pom.xml is already bumped."
-    )
-    bump_version_parser.add_argument(
-        "--tag",
-        action="store_true",
-        help="Create an annotated git tag after updating files.",
-    )
-    bump_version_parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Print matching updates without modifying files.",
-    )
-    bump_version_parser.set_defaults(func=cmd_bump_version)
-
     return parser
 
 
@@ -253,21 +228,18 @@ def _resolve_ghidra_path(repo_root: Path, ghidra_path: Path | None) -> Path | No
 def _require_ghidra_path(repo_root: Path, ghidra_path: Path | None) -> Path:
     resolved_path = _resolve_ghidra_path(repo_root, ghidra_path)
     if resolved_path is None:
-        raise ValueError(
-            "A Ghidra path is required. Pass --ghidra-path or set GHIDRA_PATH in .env."
-        )
+        raise ValueError("A Ghidra path is required. Pass --ghidra-path or set GHIDRA_PATH in .env.")
     return resolved_path
 
 
-def cmd_verify_version(args: argparse.Namespace) -> int:
+def cmd_verify_ghidra(args: argparse.Namespace) -> int:
     repo_root = detect_repo_root()
     ghidra_path = _resolve_ghidra_path(repo_root, args.ghidra_path)
 
-    versions = read_pom_versions(repo_root)
-    print(f"Project version: {versions.project_version}")
-    print(f"Ghidra version from pom.xml: {versions.ghidra_version}")
+    ghidra_version = read_pom_ghidra_version(repo_root)
+    print(f"Ghidra version from pom.xml: {ghidra_version}")
     if ghidra_path is None:
-        print("No Ghidra path configured; pom.xml version verified.")
+        print("No Ghidra path configured; pom.xml compatibility target verified.")
         return 0
     inferred_version = infer_ghidra_version_from_path(ghidra_path)
     print(f"Ghidra path: {ghidra_path}")
@@ -275,16 +247,16 @@ def cmd_verify_version(args: argparse.Namespace) -> int:
         print("Unable to infer Ghidra version from the provided path.")
         return 1
     print(f"Ghidra version from path: {inferred_version}")
-    if not is_ghidra_version_compatible(versions.ghidra_version, inferred_version):
+    if not is_ghidra_version_compatible(ghidra_version, inferred_version):
         print(
             "Version mismatch detected between pom.xml and Ghidra path.",
             file=sys.stderr,
         )
         return 1
-    if inferred_version != versions.ghidra_version:
+    if inferred_version != ghidra_version:
         print(
             f"Note: Ghidra path is {inferred_version}, pom.xml pins "
-            f"{versions.ghidra_version} — same minor series, treated as compatible."
+            f"{ghidra_version} — same minor series, treated as compatible."
         )
     print("Version check passed.")
     return 0
@@ -311,10 +283,9 @@ def cmd_preflight(args: argparse.Namespace) -> int:
         print("Java not found on PATH.", file=sys.stderr)
         return 1
     print("Java: available on PATH")
-    repo_versions = read_pom_versions(repo_root)
+    ghidra_version = read_pom_ghidra_version(repo_root)
     ghidra_path = _resolve_ghidra_path(repo_root, args.ghidra_path)
-    print(f"Project version: {repo_versions.project_version}")
-    print(f"Ghidra version from pom.xml: {repo_versions.ghidra_version}")
+    print(f"Ghidra version from pom.xml: {ghidra_version}")
     if ghidra_path is None:
         print("No Ghidra path configured; skipped Ghidra-specific preflight checks.")
         return 0
@@ -324,16 +295,16 @@ def cmd_preflight(args: argparse.Namespace) -> int:
         print("Unable to infer Ghidra version from the provided path.", file=sys.stderr)
         return 1
     print(f"Ghidra version from path: {inferred_version}")
-    if not is_ghidra_version_compatible(repo_versions.ghidra_version, inferred_version):
+    if not is_ghidra_version_compatible(ghidra_version, inferred_version):
         print(
             "Version mismatch detected between pom.xml and Ghidra path.",
             file=sys.stderr,
         )
         return 1
-    if inferred_version != repo_versions.ghidra_version:
+    if inferred_version != ghidra_version:
         print(
             f"Note: Ghidra path is {inferred_version}, pom.xml pins "
-            f"{repo_versions.ghidra_version} — same minor series, treated as compatible."
+            f"{ghidra_version} — same minor series, treated as compatible."
         )
     issues = collect_preflight_issues(
         repo_root,
@@ -368,17 +339,13 @@ def cmd_run_tests(args: argparse.Namespace) -> int:
 def cmd_install_ghidra_deps(args: argparse.Namespace) -> int:
     repo_root = detect_repo_root()
     ghidra_path = _require_ghidra_path(repo_root, args.ghidra_path)
-    return install_ghidra_dependencies(
-        repo_root, ghidra_path, force=args.force, dry_run=args.dry_run
-    )
+    return install_ghidra_dependencies(repo_root, ghidra_path, force=args.force, dry_run=args.dry_run)
 
 
 def cmd_deploy(args: argparse.Namespace) -> int:
     repo_root = detect_repo_root()
     ghidra_path = _require_ghidra_path(repo_root, args.ghidra_path)
-    return deploy_to_ghidra(
-        repo_root, ghidra_path, dry_run=args.dry_run, test_modes=args.test
-    )
+    return deploy_to_ghidra(repo_root, ghidra_path, dry_run=args.dry_run, test_modes=args.test)
 
 
 def cmd_start_ghidra(args: argparse.Namespace) -> int:
@@ -403,20 +370,7 @@ def cmd_ensure_prereqs(args: argparse.Namespace) -> int:
         print("Python dependencies are ready.")
 
     ghidra_path = _require_ghidra_path(repo_root, args.ghidra_path)
-    return install_ghidra_dependencies(
-        repo_root, ghidra_path, force=args.force, dry_run=args.dry_run
-    )
-
-
-def cmd_bump_version(args: argparse.Namespace) -> int:
-    repo_root = detect_repo_root()
-    return apply_version_bump(
-        repo_root,
-        args.new,
-        old_version=args.old,
-        dry_run=args.dry_run,
-        tag=args.tag,
-    )
+    return install_ghidra_dependencies(repo_root, ghidra_path, force=args.force, dry_run=args.dry_run)
 
 
 def main(argv: list[str] | None = None) -> int:
