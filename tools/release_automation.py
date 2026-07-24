@@ -9,10 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterable, Sequence
 
-try:
-    import tomllib
-except ModuleNotFoundError:  # pragma: no cover - Python 3.10 compatibility
-    import tomli as tomllib
+import tomllib
 
 from tools.setup.versioning import read_pom_versions
 

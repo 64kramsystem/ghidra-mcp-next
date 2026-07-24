@@ -11,10 +11,7 @@ from pathlib import Path
 
 import pytest
 
-try:
-    import tomllib
-except ModuleNotFoundError:  # Python 3.10
-    import tomli as tomllib
+import tomllib
 
 from bridge_mcp_ghidra import handshake
 from bridge_mcp_ghidra import connection, registry, state, static_tools
