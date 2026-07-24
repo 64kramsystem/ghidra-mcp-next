@@ -112,6 +112,26 @@ public class ListingRangeServiceGhidraTest {
     }
 
     @Test
+    public void compact6502RangeRetainsVerificationAndRetrievalMetadata() {
+        JsonObject page = queryMode(
+            "0x0801", "0x080f", 100, 256, 100, true, null);
+        JsonArray units = page.getAsJsonArray("units");
+
+        assertTrue(page.get("compact").getAsBoolean());
+        assertEquals(
+            "get_listing_range",
+            page.getAsJsonObject("full_page_request")
+                .get("tool").getAsString());
+        JsonObject instruction = findKind(units, "instruction");
+        assertNotNull(instruction);
+        assertNotNull(instruction.get("mnemonic"));
+        assertEquals(1, nestedCount(units, "labels", "inside_data"));
+        JsonObject incoming = units.get(units.size() - 1).getAsJsonObject();
+        assertTrue(incoming.has("incoming_reference_groups"));
+        assertFalse(incoming.has("incoming_references"));
+    }
+
+    @Test
     public void unitPaginationCoversEffectiveRangeExactlyOnce() {
         String cursor = null;
         int expected = 0x0800;
@@ -137,8 +157,15 @@ public class ListingRangeServiceGhidraTest {
     private JsonObject query(
             String start, String end, int maxUnits, int maxBytes,
             int maxIncoming, String cursor) {
+        return queryMode(
+            start, end, maxUnits, maxBytes, maxIncoming, false, cursor);
+    }
+
+    private JsonObject queryMode(
+            String start, String end, int maxUnits, int maxBytes,
+            int maxIncoming, boolean compact, String cursor) {
         Response response = service.getListingRange(
-            start, end, maxUnits, maxBytes, maxIncoming, cursor, "");
+            start, end, maxUnits, maxBytes, maxIncoming, compact, cursor, "");
         assertFalse(response.toJson(), response instanceof Response.Err);
         return JsonParser.parseString(response.toJson()).getAsJsonObject();
     }

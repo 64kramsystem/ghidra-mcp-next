@@ -150,7 +150,7 @@ public class ListingRangeServiceTest {
         ListingRangeService secondService =
             new ListingRangeService(fixture.provider, fixture.threading);
         JsonObject second = ok(secondService.getListingRange(
-            "3000", "31ff", 1, 256, 7, cursor, "fixture"));
+            "3000", "31ff", 1, 256, 7, false, cursor, "fixture"));
         assertEquals("3004",
             second.getAsJsonArray("units").get(0).getAsJsonObject().get("start").getAsString());
         assertNoGapsOrOverlaps(second.getAsJsonArray("units"), 0x3004, 0x3103);
@@ -534,6 +534,217 @@ public class ListingRangeServiceTest {
         assertFalse(unit.get("incoming_references_complete").getAsBoolean());
         assertEquals(3, unit.getAsJsonArray("incoming_references").size());
         assertEquals(4, fixture.incomingReferenceNextCalls.get());
+    }
+
+    @Test
+    public void compactPageHasExactFullReplayRequest() throws Exception {
+        Fixture fixture = fixture(0x9800, 0x9803);
+        fixture.data(0x9800, 4, "blob", "/blob", "{ 1, 2, 3, 4 }");
+        fixture.label(
+            0x9801, "payload", "scope", SourceType.USER_DEFINED, true, false);
+        fixture.incoming(
+            0xa000, 0x9801, RefType.READ, SourceType.ANALYSIS, 0);
+
+        JsonObject compact = ok(fixture.queryMode(
+            "9800", "9803", 10, 256, 10, true, null));
+        JsonObject request = compact.getAsJsonObject("full_page_request");
+        JsonObject arguments = request.getAsJsonObject("arguments");
+
+        assertTrue(compact.get("compact").getAsBoolean());
+        assertEquals("get_listing_range", request.get("tool").getAsString());
+        assertEquals("fixture", arguments.get("program").getAsString());
+        assertEquals("9800", arguments.get("start").getAsString());
+        assertEquals("9803", arguments.get("end").getAsString());
+        assertFalse(arguments.get("compact").getAsBoolean());
+
+        JsonObject full = ok(fixture.queryMode(
+            arguments.get("start").getAsString(),
+            arguments.get("end").getAsString(),
+            arguments.get("max_units").getAsInt(),
+            arguments.get("max_bytes").getAsInt(),
+            arguments.get("max_incoming_refs_per_unit").getAsInt(),
+            false,
+            null));
+
+        assertEquals(
+            compact.getAsJsonObject("returned_range"),
+            full.getAsJsonObject("returned_range"));
+        assertFalse(full.has("compact"));
+        assertFalse(full.has("full_page_request"));
+        assertTrue(full.getAsJsonArray("units").get(0).getAsJsonObject()
+            .getAsJsonArray("incoming_references").get(0).getAsJsonObject()
+            .has("id"));
+    }
+
+    @Test
+    public void compactSummarizesLargeBytesAndCapsRichText() throws Exception {
+        Fixture fixture = fixture(0x9900, 0x9a2b);
+        String representation = "r".repeat(300);
+        String comment = "c".repeat(300);
+        fixture.data(0x9900, 300, "blob", "/blob", representation);
+        fixture.comment(0x9900, CommentType.PLATE, comment);
+
+        JsonObject unit = ok(fixture.queryMode(
+            "9900", "9a2b", 10, 512, 10, true, null))
+            .getAsJsonArray("units").get(0).getAsJsonObject();
+
+        assertFalse(unit.has("bytes"));
+        assertEquals(300, unit.get("byte_length").getAsInt());
+        assertEquals(64, unit.get("byte_sha256").getAsString().length());
+        assertEquals("fixture",
+            unit.getAsJsonObject("bytes_request").get("program").getAsString());
+        assertEquals(300,
+            unit.getAsJsonObject("bytes_request").get("length").getAsInt());
+        assertEquals(256, unit.get("representation").getAsString().length());
+        assertTrue(unit.get("representation").getAsString().endsWith("\u2026"));
+        assertEquals(300, unit.get("representation_length").getAsInt());
+        assertTrue(unit.get("representation_truncated").getAsBoolean());
+
+        JsonObject renderedComment =
+            unit.getAsJsonArray("comments").get(0).getAsJsonObject();
+        assertEquals(256, renderedComment.get("text").getAsString().length());
+        assertTrue(renderedComment.get("text").getAsString().endsWith("\u2026"));
+        assertEquals(300, renderedComment.get("text_length").getAsInt());
+        assertTrue(renderedComment.get("text_truncated").getAsBoolean());
+    }
+
+    @Test
+    public void compactUninitializedUnitKeepsExplicitNullBytes()
+            throws Exception {
+        Fixture fixture = fixture(0x9a30, 0x9a33);
+        fixture.initialized = new AddressSet();
+
+        JsonObject unit = ok(fixture.queryMode(
+            "9a30", "9a33", 10, 256, 10, true, null))
+            .getAsJsonArray("units").get(0).getAsJsonObject();
+
+        assertTrue(unit.has("bytes"));
+        assertTrue(unit.get("bytes").isJsonNull());
+        assertFalse(unit.get("bytes_complete").getAsBoolean());
+        assertFalse(unit.has("byte_length"));
+        assertFalse(unit.has("byte_sha256"));
+        assertFalse(unit.has("bytes_request"));
+    }
+
+    @Test
+    public void compactIncomingGroupsPreserveDestinationContinuation()
+            throws Exception {
+        Fixture fixture = fixture(0x9b00, 0x9b03);
+        fixture.data(0x9b00, 4, "blob", "/blob", "...");
+        fixture.incoming(
+            0xa001, 0x9b01, RefType.READ, SourceType.ANALYSIS, 0);
+        fixture.incoming(
+            0xa002, 0x9b01, RefType.READ, SourceType.ANALYSIS, 0);
+        fixture.incoming(
+            0xa003, 0x9b02, RefType.READ, SourceType.ANALYSIS, 0);
+        fixture.incoming(
+            0xa004, 0x9b02, RefType.READ, SourceType.ANALYSIS, 0);
+
+        JsonObject unit = ok(fixture.queryMode(
+            "9b00", "9b03", 10, 256, 3, true, null))
+            .getAsJsonArray("units").get(0).getAsJsonObject();
+        JsonArray groups = unit.getAsJsonArray("incoming_reference_groups");
+
+        assertFalse(unit.has("incoming_references"));
+        assertEquals(2, groups.size());
+        assertEquals("9b01",
+            groups.get(0).getAsJsonObject().get("destination").getAsString());
+        assertEquals(2,
+            groups.get(0).getAsJsonObject().get("included").getAsInt());
+        assertTrue(
+            groups.get(0).getAsJsonObject().get("complete").getAsBoolean());
+        assertEquals("9b02",
+            groups.get(1).getAsJsonObject().get("destination").getAsString());
+        assertEquals(1,
+            groups.get(1).getAsJsonObject().get("included").getAsInt());
+        assertFalse(
+            groups.get(1).getAsJsonObject().get("complete").getAsBoolean());
+        assertEquals("9b02",
+            unit.get("incoming_references_next_address").getAsString());
+        assertEquals(1,
+            unit.get("incoming_references_next_offset").getAsInt());
+    }
+
+    @Test
+    public void compactLabelsPreserveSameNameAcrossNamespaces()
+            throws Exception {
+        Fixture fixture = fixture(0x9c00, 0x9c00);
+        fixture.label(
+            0x9c00, "entry", "left", SourceType.ANALYSIS, false, false);
+        fixture.label(
+            0x9c00, "entry", "right", SourceType.USER_DEFINED, true, true);
+
+        JsonArray labels = ok(fixture.queryMode(
+            "9c00", "9c00", 10, 256, 10, true, null))
+            .getAsJsonArray("units").get(0).getAsJsonObject()
+            .getAsJsonArray("labels");
+
+        assertEquals(2, labels.size());
+        assertEquals(
+            List.of("left", "right"), strings(labels, "namespace"));
+        assertFalse(labels.get(0).getAsJsonObject().has("source_type"));
+        assertFalse(labels.get(1).getAsJsonObject().has("entry_point"));
+    }
+
+    @Test
+    public void cursorIsPresentationIndependentAcrossBothModes()
+            throws Exception {
+        Fixture fixture = fixture(0x9d00, 0x9eff);
+        fixture.data(0x9d00, 4, "head", "/head", "...");
+
+        JsonObject compactFirst = ok(fixture.queryMode(
+            "9d00", "9eff", 1, 256, 10, true, null));
+        JsonObject fullFirst = ok(fixture.queryMode(
+            "9d00", "9eff", 1, 256, 10, false, null));
+        String cursor = compactFirst.get("next_cursor").getAsString();
+
+        assertEquals(cursor, fullFirst.get("next_cursor").getAsString());
+        JsonObject fullSecond = ok(fixture.queryMode(
+            "9d00", "9eff", 1, 256, 10, false, cursor));
+        JsonObject compactSecond = ok(fixture.queryMode(
+            "9d00", "9eff", 1, 256, 10, true, cursor));
+        assertEquals(
+            fullSecond.getAsJsonObject("returned_range"),
+            compactSecond.getAsJsonObject("returned_range"));
+        assertFalse(fullSecond.has("compact"));
+        assertTrue(compactSecond.get("compact").getAsBoolean());
+
+        JsonObject replayArguments = compactSecond
+            .getAsJsonObject("full_page_request")
+            .getAsJsonObject("arguments");
+        JsonObject replay = ok(fixture.queryMode(
+            replayArguments.get("start").getAsString(),
+            replayArguments.get("end").getAsString(),
+            replayArguments.get("max_units").getAsInt(),
+            replayArguments.get("max_bytes").getAsInt(),
+            replayArguments.get("max_incoming_refs_per_unit").getAsInt(),
+            false,
+            null));
+        assertEquals(
+            fullSecond.getAsJsonObject("returned_range"),
+            replay.getAsJsonObject("returned_range"));
+        assertEquals(
+            fullSecond.getAsJsonArray("units"),
+            replay.getAsJsonArray("units"));
+    }
+
+    @Test
+    public void compactMateriallyReducesHighFanInPayload() throws Exception {
+        Fixture fixture = fixture(0x9f00, 0x9fff);
+        for (int index = 0; index < 100; index++) {
+            fixture.incoming(
+                0xa000 + index, 0x9f00,
+                RefType.READ, SourceType.ANALYSIS, index);
+        }
+
+        String compact = fixture.queryMode(
+            "9f00", "9fff", 10, 256, 100, true, null).toJson();
+        String full = fixture.queryMode(
+            "9f00", "9fff", 10, 256, 100, false, null).toJson();
+
+        assertTrue(
+            "compact=" + compact.length() + ", full=" + full.length(),
+            compact.length() * 4 < full.length());
     }
 
     @Test
@@ -929,8 +1140,16 @@ public class ListingRangeServiceTest {
 
         Response query(String start, String end, int maxUnits, int maxBytes,
                 int maxIncoming, String cursor) {
+            return queryMode(
+                start, end, maxUnits, maxBytes, maxIncoming, false, cursor);
+        }
+
+        Response queryMode(
+                String start, String end, int maxUnits, int maxBytes,
+                int maxIncoming, boolean compact, String cursor) {
             return service.getListingRange(
-                start, end, maxUnits, maxBytes, maxIncoming, cursor, "fixture");
+                start, end, maxUnits, maxBytes, maxIncoming, compact, cursor,
+                "fixture");
         }
 
         void instruction(int start, int length, String mnemonic, String operands) throws Exception {

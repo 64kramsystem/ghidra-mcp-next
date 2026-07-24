@@ -8,6 +8,11 @@ Complete version history for the Ghidra MCP Server project.
 
 ### Added
 
+- Added compact-by-default `get_listing_range` responses for high-volume
+  verification reads. Large byte payloads use length and SHA-256 summaries,
+  rich text is explicitly capped, incoming references are grouped by
+  destination, and every compact page includes an exact full-detail replay
+  request. Pagination cursors remain valid across compact and full modes.
 - Added bridge tool-visibility profiles. `core` is now the default and exposes
   the `listing`, `function`, and `program` groups plus management tools;
   `minimal` starts with management tools only, while `full` restores the

@@ -34,18 +34,20 @@ public class ListingRangeSchemaTest {
             "max_units",
             "max_bytes",
             "max_incoming_refs_per_unit",
+            "compact",
             "cursor",
             "program"),
             listing.params().stream()
                 .map(AnnotationScanner.ParamDescriptor::name)
                 .toList());
         assertEquals(List.of(
-            "query", "query", "query", "query", "query", "query", "query"),
+            "query", "query", "query", "query", "query", "query", "query",
+            "query"),
             listing.params().stream()
                 .map(AnnotationScanner.ParamDescriptor::source)
                 .toList());
         assertEquals(java.util.Arrays.asList(
-            null, null, "1000", "65536", "1000", "", ""),
+            null, null, "1000", "65536", "1000", "true", "", ""),
             listing.params().stream()
                 .map(AnnotationScanner.ParamDescriptor::defaultValue)
                 .toList());

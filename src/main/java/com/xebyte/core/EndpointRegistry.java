@@ -412,18 +412,25 @@ public class EndpointRegistry {
                 bodyBool(b, "dry_run", true),
                 str(q, "program")));
 
-        get("/get_listing_range", "Read a bounded mixed listing range",
+        get("/get_listing_range",
+            "Read an authoritative mixed instruction/data/undefined listing range "
+                + "without requiring or creating functions. Compact output is the "
+                + "default; it summarizes byte payloads above 32 bytes and truncates "
+                + "comment/data renderings above 256 characters. Pass compact=false "
+                + "for exact full records.",
             params(qStr("start", "Inclusive start address"),
                 qStr("end", "Inclusive end address"),
                 qInt("max_units", 1000),
                 qInt("max_bytes", 65536),
                 qInt("max_incoming_refs_per_unit", 1000),
+                qBool("compact", true),
                 qStrOpt("cursor"),
                 pProg()),
             (q, b) -> listingRangeService.getListingRange(
                 str(q, "start"), str(q, "end"),
                 num(q, "max_units", 1000), num(q, "max_bytes", 65536),
                 num(q, "max_incoming_refs_per_unit", 1000),
+                bool(q, "compact", true),
                 str(q, "cursor"), str(q, "program")));
 
         get("/list_methods", "List all function names with pagination",
