@@ -108,6 +108,7 @@ Complete version history for the Ghidra MCP Server project.
 - Removed the standalone CodeQL and OpenSSF Scorecard scans, unused
   pre-release workflow, and self-hosted Windows release-regression workflow.
   Stable releases no longer depend on the deleted live-regression workflow.
+  Removed the inherited GitHub Sponsors configuration as well.
 
 - Replaced the clear-only `clear_instruction_flow_override` tool with the
   canonical setter, which accepts every Ghidra flow override including
