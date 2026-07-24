@@ -6,6 +6,8 @@ Complete version history for the GhidraMCP-next project.
 
 ## Unreleased
 
+## GhidraMCP-next 20260724-175549
+
 ### Changed
 
 - Made release identities fully automatic and component-specific. Ghidra extension artifacts and server metadata now use the release build timestamp, while Python bridge wheels derive an independent PEP 440 timestamp from the latest bridge-affecting Git commit.
