@@ -539,7 +539,9 @@ public final class AddressEmulationEngine {
                 returnInjection = inject6502ReturnAddress(
                     program, request, emulator, thread);
                 callbacks.recordSyntheticReturn(
-                    returnInjection, request.returnAddress());
+                    thread,
+                    returnInjection,
+                    request.returnAddress());
             }
         }
         catch (Exception error) {
@@ -1053,15 +1055,15 @@ public final class AddressEmulationEngine {
         }
 
         void recordSyntheticReturn(
-                ReturnInjection injection, Address returnAddress) {
-            stackFrames.add(new StackFrameProvenance(
+                PcodeThread<byte[]> executionThread,
+                ReturnInjection injection,
+                Address returnAddress) {
+            recordStackFrame(new StackFrameProvenance(
                 StackFrameKind.SYNTHETIC_RETURN,
-                null,
-                null,
-                injection.lowAddress(),
-                injection.lowByte(),
-                injection.highAddress(),
-                injection.highByte(),
+                stackPointer(executionThread),
+                List.of(
+                    injection.lowAddress(),
+                    injection.highAddress()),
                 returnAddress.getAddressSpace()));
         }
 
@@ -1362,11 +1364,7 @@ public final class AddressEmulationEngine {
         private void execute6502Rts(
                 PcodeThread<byte[]> executionThread) {
             Register stack = program.getCompilerSpec().getStackPointer();
-            BigInteger stackValue = executionThread.getState()
-                .inspectRegisterValue(stack)
-                .getUnsignedValue();
-            int sp = stackValue == null
-                ? 0 : stackValue.intValue() & 0xff;
+            int sp = stackPointer(executionThread);
             AddressSpace stackSpace =
                 program.getAddressFactory().getDefaultAddressSpace();
             Address lowAddress =
@@ -1388,12 +1386,7 @@ public final class AddressEmulationEngine {
                 Set.of(
                     StackFrameKind.JSR_RETURN,
                     StackFrameKind.SYNTHETIC_RETURN),
-                null,
-                null,
-                lowAddress,
-                low,
-                highAddress,
-                high,
+                sp,
                 current.instruction().getMinAddress()
                     .getAddressSpace());
             executionThread.getState().setRegisterValue(
@@ -1414,11 +1407,7 @@ public final class AddressEmulationEngine {
                     "6502 JSR does not have one direct target");
             }
             Register stack = program.getCompilerSpec().getStackPointer();
-            BigInteger stackValue = executionThread.getState()
-                .inspectRegisterValue(stack)
-                .getUnsignedValue();
-            int sp = stackValue == null
-                ? 0 : stackValue.intValue() & 0xff;
+            int sp = stackPointer(executionThread);
             AddressSpace space =
                 program.getAddressFactory().getDefaultAddressSpace();
             Address highAddress =
@@ -1437,14 +1426,10 @@ public final class AddressEmulationEngine {
                 .setConcrete(lowAddress, new byte[]{low});
             recordAccess(
                 executionThread, AccessKind.WRITE, lowAddress, 1);
-            stackFrames.add(new StackFrameProvenance(
+            recordStackFrame(new StackFrameProvenance(
                 StackFrameKind.JSR_RETURN,
-                null,
-                null,
-                lowAddress,
-                low,
-                highAddress,
-                high,
+                (sp - 2) & 0xff,
+                List.of(lowAddress, highAddress),
                 instruction.getMinAddress().getAddressSpace()));
             executionThread.getState().setRegisterValue(
                 new RegisterValue(
@@ -1457,11 +1442,7 @@ public final class AddressEmulationEngine {
         private void execute6502Rti(
                 PcodeThread<byte[]> executionThread) {
             Register stack = program.getCompilerSpec().getStackPointer();
-            BigInteger stackValue = executionThread.getState()
-                .inspectRegisterValue(stack)
-                .getUnsignedValue();
-            int sp = stackValue == null
-                ? 0 : stackValue.intValue() & 0xff;
+            int sp = stackPointer(executionThread);
             AddressSpace stackSpace =
                 program.getAddressFactory().getDefaultAddressSpace();
             Address statusAddress =
@@ -1492,12 +1473,7 @@ public final class AddressEmulationEngine {
                 ((high & 0xff) << 8) | (low & 0xff);
             AddressSpace returnSpace = consumeStackFrame(
                 Set.of(StackFrameKind.INTERRUPT_RETURN),
-                statusAddress,
-                status,
-                lowAddress,
-                low,
-                highAddress,
-                high,
+                sp,
                 current.instruction().getMinAddress()
                     .getAddressSpace());
             executionThread.overrideCounter(
@@ -1508,11 +1484,7 @@ public final class AddressEmulationEngine {
                 PcodeThread<byte[]> executionThread,
                 Instruction instruction) {
             Register stack = program.getCompilerSpec().getStackPointer();
-            BigInteger stackValue = executionThread.getState()
-                .inspectRegisterValue(stack)
-                .getUnsignedValue();
-            int sp = stackValue == null
-                ? 0 : stackValue.intValue() & 0xff;
+            int sp = stackPointer(executionThread);
             AddressSpace space =
                 program.getAddressFactory().getDefaultAddressSpace();
             Address highAddress =
@@ -1535,14 +1507,13 @@ public final class AddressEmulationEngine {
                 executionThread, lowAddress, low);
             storeSemanticByte(
                 executionThread, statusAddress, status);
-            stackFrames.add(new StackFrameProvenance(
+            recordStackFrame(new StackFrameProvenance(
                 StackFrameKind.INTERRUPT_RETURN,
-                statusAddress,
-                status,
-                lowAddress,
-                low,
-                highAddress,
-                high,
+                (sp - 3) & 0xff,
+                List.of(
+                    statusAddress,
+                    lowAddress,
+                    highAddress),
                 instruction.getMinAddress().getAddressSpace()));
             executionThread.getState().setRegisterValue(
                 new RegisterValue(
@@ -1579,14 +1550,41 @@ public final class AddressEmulationEngine {
                 executionThread, AccessKind.WRITE, address, 1);
         }
 
+        private void recordStackFrame(
+                StackFrameProvenance frame) {
+            int lastOverwritten = -1;
+            for (int index = 0;
+                    index < stackFrames.size();
+                    index++) {
+                if (overlaps(
+                        frame.stackSlots(),
+                        stackFrames.get(index).stackSlots())) {
+                    lastOverwritten = index;
+                }
+            }
+            if (lastOverwritten >= 0) {
+                // Reusing a wrapped stack slot makes that frame and
+                // every caller below it unreachable with reliable
+                // address-space provenance.
+                stackFrames.subList(
+                    0, lastOverwritten + 1).clear();
+            }
+            stackFrames.add(frame);
+        }
+
+        private static boolean overlaps(
+                List<Address> left, List<Address> right) {
+            for (Address address : left) {
+                if (right.contains(address)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         private AddressSpace consumeStackFrame(
                 Set<StackFrameKind> kinds,
-                Address statusAddress,
-                Byte statusByte,
-                Address lowAddress,
-                byte lowByte,
-                Address highAddress,
-                byte highByte,
+                int stackPointer,
                 AddressSpace fallback) {
             for (int index = stackFrames.size() - 1;
                     index >= 0;
@@ -1594,20 +1592,31 @@ public final class AddressEmulationEngine {
                 StackFrameProvenance frame =
                     stackFrames.get(index);
                 if (!kinds.contains(frame.kind())
-                        || !Objects.equals(
-                            statusAddress, frame.statusAddress())
-                        || !Objects.equals(
-                            statusByte, frame.statusByte())
-                        || !lowAddress.equals(frame.lowAddress())
-                        || lowByte != frame.lowByte()
-                        || !highAddress.equals(frame.highAddress())
-                        || highByte != frame.highByte()) {
+                        || stackPointer
+                            != frame.expectedStackPointer()) {
                     continue;
                 }
-                stackFrames.remove(index);
+                // A caller may deliberately adjust SP to skip frames.
+                // Consume the match and invalidate every skipped child.
+                stackFrames.subList(index, stackFrames.size())
+                    .clear();
                 return frame.returnSpace();
             }
+            // An untracked pull breaks the logical relationship between
+            // all recorded frames and the live 8-bit hardware stack.
+            stackFrames.clear();
             return fallback;
+        }
+
+        private int stackPointer(
+                PcodeThread<byte[]> executionThread) {
+            Register stack =
+                program.getCompilerSpec().getStackPointer();
+            BigInteger value = executionThread.getState()
+                .inspectRegisterValue(stack)
+                .getUnsignedValue();
+            return value == null
+                ? 0 : value.intValue() & 0xff;
         }
 
         private static boolean isDirectMemory(Varnode varnode) {
@@ -1783,13 +1792,13 @@ public final class AddressEmulationEngine {
 
     private record StackFrameProvenance(
             StackFrameKind kind,
-            Address statusAddress,
-            Byte statusByte,
-            Address lowAddress,
-            byte lowByte,
-            Address highAddress,
-            byte highByte,
+            int expectedStackPointer,
+            List<Address> stackSlots,
             AddressSpace returnSpace) {
+
+        StackFrameProvenance {
+            stackSlots = List.copyOf(stackSlots);
+        }
     }
 
     static byte[] decodeBytes(JsonElement value, String field) {

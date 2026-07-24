@@ -604,6 +604,140 @@ public class AddressEmulationServiceGhidraTest {
     }
 
     @Test
+    public void skippedOverlayStackFramesCannotBecomeStaleProvenance()
+            throws Exception {
+        builder.createOverlayMemory("bank", "0x1000", 0x300);
+        builder.setBytes("bank::1100", "201011ea");
+        builder.setBytes("bank::1110", "a2fd9a60");
+        setBytes("1190", "a2fb9a60");
+
+        AddressEmulationEngine.Result skipped =
+            AddressEmulationEngine.execute(
+                program,
+                AddressEmulationEngine.parseRequest(
+                    program,
+                    "bank:1100",
+                    "{\"SP\":\"0x01fd\"}",
+                    "[]",
+                    "[\"ram:1103\"]",
+                    "[]",
+                    "ram:1190",
+                    "execute",
+                    20,
+                    30,
+                    50));
+        assertEquals(skipped.error(),
+            "stop_address", skipped.stopReason());
+        assertEquals(
+            builder.addr("1103"),
+            skipped.finalPc());
+    }
+
+    @Test
+    public void overlayStackProvenanceSurvivesLiveFrameEdits()
+            throws Exception {
+        builder.createOverlayMemory("bank", "0x1000", 0x300);
+        builder.setBytes("bank::1120", "00");
+        setBytes("11a0", "a9408dfc01a9118dfd01a9218dfb0140");
+        AddressEmulationEngine.Result edited =
+            AddressEmulationEngine.execute(
+                program,
+                AddressEmulationEngine.parseRequest(
+                    program,
+                    "bank:1120",
+                    "{\"SP\":\"0x01fd\",\"P\":\"0x20\"}",
+                    "[{\"start\":\"ram:fffe\",\"bytes\":\"a011\"}]",
+                    "[\"bank:1140\"]",
+                    "[]",
+                    null,
+                    "execute",
+                    20,
+                    30,
+                    80));
+        assertEquals(edited.error(),
+            "stop_address", edited.stopReason());
+        assertEquals(
+            builder.addr("bank::1140"),
+            edited.finalPc());
+        assertEquals(
+            BigInteger.valueOf(0x21),
+            edited.finalRegisters().get("P"));
+    }
+
+    @Test
+    public void unmatchedReturnClearsStaleOverlayStackProvenance()
+            throws Exception {
+        builder.createOverlayMemory("bank", "0x1000", 0x300);
+        builder.setBytes("bank::1150", "206011ea");
+        builder.setBytes("bank::1160", "a2f09a60");
+        builder.setBytes("bank::11b0", "00");
+        setBytes("11c0", "a2fb9a60");
+
+        AddressEmulationEngine.Result result =
+            AddressEmulationEngine.execute(
+                program,
+                AddressEmulationEngine.parseRequest(
+                    program,
+                    "bank:1150",
+                    "{\"SP\":\"0x01fd\",\"P\":\"0x20\"}",
+                    "["
+                        + "{\"start\":\"ram:01f1\","
+                        + "\"bytes\":\"af11\"},"
+                        + "{\"start\":\"ram:fffe\","
+                        + "\"bytes\":\"c011\"}"
+                        + "]",
+                    "[\"ram:1153\"]",
+                    "[]",
+                    null,
+                    "execute",
+                    20,
+                    30,
+                    80));
+
+        assertEquals(result.error(),
+            "stop_address", result.stopReason());
+        assertEquals(builder.addr("1153"), result.finalPc());
+    }
+
+    @Test
+    public void wrappedStackReuseInvalidatesOverwrittenOverlayProvenance()
+            throws Exception {
+        builder.createOverlayMemory("bank", "0x1000", 0x500);
+        for (int index = 0; index < 128; index++) {
+            int start = 0x1200 + index * 4;
+            int target = start + 4;
+            builder.setBytes(
+                Integer.toHexString(start),
+                String.format(
+                    "20%02x%02x60",
+                    target & 0xff,
+                    (target >>> 8) & 0xff));
+        }
+        setBytes("1400", "60");
+
+        AddressEmulationEngine.Result result =
+            AddressEmulationEngine.execute(
+                program,
+                AddressEmulationEngine.parseRequest(
+                    program,
+                    "ram:1200",
+                    "{\"SP\":\"0x01fd\"}",
+                    "[]",
+                    "[]",
+                    "[]",
+                    "bank:13ff",
+                    "execute",
+                    257,
+                    300,
+                    600));
+
+        assertEquals(result.error(),
+            "max_steps", result.stopReason());
+        assertEquals(257, result.steps());
+        assertEquals(builder.addr("13ff"), result.finalPc());
+    }
+
+    @Test
     public void resolvedIndirectAndDirectJumpsReachCallerStops()
             throws Exception {
         setBytes("1a00", "6c0020");
