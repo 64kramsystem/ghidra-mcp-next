@@ -344,6 +344,8 @@ public class EmulationService {
                 .getDefaultAddressSpace().getAddress(SCRATCH_BASE);
             Register inputRegister = requireRegister(
                 program, stringRegister);
+            AddressEmulationEngine.validateInputRegister(
+                inputRegister, "string_register");
             Register outputRegister = requireRegister(
                 program, resultRegister);
 
@@ -582,6 +584,8 @@ public class EmulationService {
                 : root.getAsJsonObject().entrySet()) {
             Register register =
                 requireRegister(program, entry.getKey());
+            AddressEmulationEngine.validateInputRegister(
+                register, "registers." + entry.getKey());
             BigInteger value =
                 AddressEmulationEngine.parseUnsigned(
                     entry.getValue(),

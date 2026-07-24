@@ -29,6 +29,7 @@ import ghidra.framework.ApplicationConfiguration;
 import ghidra.program.database.ProgramBuilder;
 import ghidra.program.database.ProgramDB;
 import ghidra.program.model.address.Address;
+import ghidra.program.model.lang.Register;
 import ghidra.program.model.listing.Instruction;
 import ghidra.program.model.mem.MemoryAccessException;
 import ghidra.util.classfinder.ClassSearcher;
@@ -528,6 +529,8 @@ public class AddressEmulationServiceGhidraTest {
         builder.setBytes("bank::1000", "201010ea");
         builder.setBytes("bank::1010", "60");
         builder.setBytes("bank::1020", "60");
+        builder.setBytes("bank::1040", "00");
+        setBytes("1080", "40");
 
         AddressEmulationEngine.Result nested =
             AddressEmulationEngine.execute(
@@ -539,7 +542,7 @@ public class AddressEmulationServiceGhidraTest {
                     "[]",
                     "[\"bank:1003\"]",
                     "[]",
-                    null,
+                    "1003",
                     "execute",
                     10,
                     20,
@@ -576,6 +579,28 @@ public class AddressEmulationServiceGhidraTest {
         assertEquals(
             builder.addr("bank::1030"),
             synthetic.finalPc());
+
+        AddressEmulationEngine.Result interrupt =
+            AddressEmulationEngine.execute(
+                program,
+                AddressEmulationEngine.parseRequest(
+                    program,
+                    "bank:1040",
+                    "{\"SP\":\"0x01fd\",\"P\":\"0x20\"}",
+                    "[{\"start\":\"ram:fffe\",\"bytes\":\"8010\"}]",
+                    "[\"bank:1042\"]",
+                    "[]",
+                    null,
+                    "execute",
+                    10,
+                    20,
+                    30));
+        assertEquals(interrupt.error(),
+            "stop_address", interrupt.stopReason());
+        assertEquals(
+            builder.addr("bank::1042"),
+            interrupt.finalPc());
+        assertEquals(2, interrupt.steps());
     }
 
     @Test
@@ -748,7 +773,7 @@ public class AddressEmulationServiceGhidraTest {
                     "{\"EAX\":1,\"ECX\":\"0x22\"}",
                     "",
                     20,
-                    "EAX,ECX",
+                    "EAX,ECX,EIP",
                     "").toJson()).getAsJsonObject();
             assertTrue(functionResult.toString(),
                 functionResult.get("success").getAsBoolean());
@@ -758,6 +783,9 @@ public class AddressEmulationServiceGhidraTest {
             assertEquals("0x22",
                 functionResult.getAsJsonObject("registers")
                     .get("ECX").getAsString());
+            assertEquals("0xdeadbeef",
+                functionResult.getAsJsonObject("registers")
+                    .get("EIP").getAsString());
 
             x64Builder.disassemble("1040", 6);
             x64Builder.createFunction("1040");
@@ -804,7 +832,7 @@ public class AddressEmulationServiceGhidraTest {
                 () -> AddressEmulationEngine.parseRequest(
                     x64,
                     "1000",
-                    "{\"RIP\":\"0x1000\"}",
+                    "{\"EIP\":\"0x1000\"}",
                     "[]",
                     "[]",
                     "[]",
@@ -817,6 +845,93 @@ public class AddressEmulationServiceGhidraTest {
                 pcOverride.getMessage(),
                 pcOverride.getMessage()
                     .contains("program counter"));
+
+            JsonObject functionPcInput = JsonParser.parseString(
+                service.emulateFunction(
+                    "1020",
+                    "{\"RIP\":\"0x1020\"}",
+                    "",
+                    20,
+                    "EAX",
+                    "").toJson()).getAsJsonObject();
+            assertTrue(
+                functionPcInput.toString(),
+                functionPcInput.get("error").getAsString()
+                    .contains("program counter"));
+
+            JsonObject batchPcInput = JsonParser.parseString(
+                service.emulateHashBatch(
+                    "1040",
+                    "EIP",
+                    "EAX",
+                    "0x12345678",
+                    "[\"name\"]",
+                    "",
+                    false,
+                    "").toJson()).getAsJsonObject();
+            assertTrue(
+                batchPcInput.toString(),
+                batchPcInput.get("error").getAsString()
+                    .contains("program counter"));
+
+            Register contextRegister =
+                x64.getLanguage().getRegisters().stream()
+                    .filter(register ->
+                        register.isProcessorContext()
+                            || register.getBaseRegister()
+                                .isProcessorContext())
+                    .findFirst()
+                    .orElseThrow();
+            String contextJson =
+                "{\"" + contextRegister.getName() + "\":0}";
+            IllegalArgumentException contextOverride = assertThrows(
+                IllegalArgumentException.class,
+                () -> AddressEmulationEngine.parseRequest(
+                    x64,
+                    "1000",
+                    contextJson,
+                    "[]",
+                    "[]",
+                    "[]",
+                    null,
+                    "execute",
+                    10,
+                    10,
+                    10));
+            assertTrue(
+                contextOverride.getMessage(),
+                contextOverride.getMessage()
+                    .contains("processor context"));
+
+            JsonObject functionContextInput =
+                JsonParser.parseString(
+                    service.emulateFunction(
+                        "1020",
+                        contextJson,
+                        "",
+                        20,
+                        "EAX",
+                        "").toJson()).getAsJsonObject();
+            assertTrue(
+                functionContextInput.toString(),
+                functionContextInput.get("error").getAsString()
+                    .contains("processor context"));
+
+            JsonObject batchContextInput =
+                JsonParser.parseString(
+                    service.emulateHashBatch(
+                        "1040",
+                        "ECX",
+                        "EAX",
+                        "0x12345678",
+                        "[\"name\"]",
+                        contextJson,
+                        false,
+                        "").toJson()).getAsJsonObject();
+            assertTrue(
+                batchContextInput.toString(),
+                batchContextInput.get("error").getAsString()
+                    .contains("processor context"));
         }
         finally {
             x64Builder.dispose();
