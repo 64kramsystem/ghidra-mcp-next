@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Work only in `/home/saverio/local/ghidra-mcp/.worktrees/remove-unused-subsystems` on `refactor/remove-unused-subsystems` until integration.
+- Work only in `/home/saverio/local/ghidra-mcp-next/.worktrees/remove-unused-subsystems` on `refactor/remove-unused-subsystems` until integration.
 - Preserve local `.gpr` project creation/import/persistence/switching in GUI and headless modes.
 - Preserve multi-program analysis, schema discovery, TCP/UDS transports, and GUI/headless endpoint parity.
 - Preserve the FileZilla workflow tools for strings, xrefs, bytes/operands, decompilation, flow repair, annotations, datatypes, memory blocks, and generic scripts.
