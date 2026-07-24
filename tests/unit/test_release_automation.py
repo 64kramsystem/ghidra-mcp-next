@@ -13,6 +13,7 @@ from tools.release_automation import (
     decode_changed_paths,
     path_affects_release,
     prepare_release,
+    roll_changelog,
     should_publish,
 )
 
@@ -24,7 +25,6 @@ from tools.release_automation import (
         "pyproject.toml",
         "README.md",
         "LICENSE",
-        "CHANGELOG.md",
         "python/bridge_mcp_ghidra/server.py",
         "src/main/java/com/xebyte/GhidraMCPPlugin.java",
         "src/assembly/ghidra-extension.xml",
@@ -46,6 +46,7 @@ def test_release_artifact_inputs_are_in_scope(path: str):
         "tests/unit/test_release_automation.py",
         "tools/release_automation.py",
         "uv.lock",
+        "CHANGELOG.md",
         "README.md.bak",
         "python-notes/example.txt",
     ],
@@ -66,21 +67,33 @@ def test_decode_changed_paths_supports_git_null_output():
     ]
 
 
-def _write_project(root: Path, *, maven_version: str = "1.2.3", python_version: str = "1.2.3"):
+def _write_project(root: Path):
     (root / "pom.xml").write_text(
-        f"""\
+        """\
 <project xmlns="http://maven.apache.org/POM/4.0.0">
   <modelVersion>4.0.0</modelVersion>
   <groupId>test</groupId>
   <artifactId>GhidraMCP</artifactId>
-  <version>{maven_version}</version>
+  <version>1.2.3</version>
   <properties><ghidra.version>12.1.2</ghidra.version></properties>
 </project>
 """,
         encoding="utf-8",
     )
-    (root / "pyproject.toml").write_text(
-        f'[project]\nname = "ghidra-mcp-bridge"\nversion = "{python_version}"\n',
+    (root / "CHANGELOG.md").write_text(
+        """\
+# Changelog
+
+## Unreleased
+
+### Changed
+
+- Removed semantic versions from release identities.
+
+## v1.2.3
+
+- Previous release.
+""",
         encoding="utf-8",
     )
 
@@ -109,11 +122,12 @@ def test_prepare_release_writes_verified_metadata_hashes_and_notes(tmp_path: Pat
         output_dir=output_dir,
         build_timestamp="20260724-184501",
         commit_sha=sha.upper(),
-        expected_project_version="1.2.3",
         expected_ghidra_version="12.1.2",
     )
 
-    assert metadata["tag"] == "build-v1.2.3-20260724-184501-0123456789ab"
+    assert metadata["tag"] == "build-20260724-184501-0123456789ab"
+    assert metadata["name"] == "GhidraMCP-next 20260724-184501"
+    assert "project_version" not in metadata
     assert metadata["commit_sha"] == sha
     assert [item["kind"] for item in metadata["artifacts"]] == [
         "ghidra_extension",
@@ -130,7 +144,10 @@ def test_prepare_release_writes_verified_metadata_hashes_and_notes(tmp_path: Pat
     checksum_lines = (output_dir / "SHA256SUMS").read_text().splitlines()
     assert checksum_lines == sorted(f"{digest}  {name}" for name, digest in expected_hashes.items())
     notes = (output_dir / "release-notes.md").read_text()
-    assert "20260724-184501 UTC" in notes
+    assert notes.startswith("# GhidraMCP-next 20260724-184501\n")
+    assert "Project version" not in notes
+    assert "- Removed semantic versions from release identities." in notes
+    assert "Previous release" not in notes
     assert sha in notes
     assert all(name in notes for name in expected_hashes)
     assert "| `GhidraMCP-1.2.3.zip` | 9 |" in notes
@@ -156,24 +173,6 @@ def test_prepare_release_rejects_invalid_identity(tmp_path: Path, timestamp: str
             output_dir=tmp_path / "release",
             build_timestamp=timestamp,
             commit_sha=sha,
-            expected_project_version="1.2.3",
-            expected_ghidra_version="12.1.2",
-        )
-
-
-def test_prepare_release_rejects_project_version_mismatch(tmp_path: Path):
-    _write_project(tmp_path, python_version="1.2.4")
-    extension_dir, python_dir = _write_artifacts(tmp_path)
-
-    with pytest.raises(ValueError, match="project version mismatch"):
-        prepare_release(
-            repo_root=tmp_path,
-            extension_dir=extension_dir,
-            python_dir=python_dir,
-            output_dir=tmp_path / "release",
-            build_timestamp="20260724-120000",
-            commit_sha="0" * 40,
-            expected_project_version="1.2.3",
             expected_ghidra_version="12.1.2",
         )
 
@@ -191,7 +190,6 @@ def test_prepare_release_rejects_ambiguous_artifacts(tmp_path: Path):
             output_dir=tmp_path / "release",
             build_timestamp="20260724-120000",
             commit_sha="0" * 40,
-            expected_project_version="1.2.3",
             expected_ghidra_version="12.1.2",
         )
 
@@ -208,9 +206,40 @@ def test_prepare_release_rejects_missing_artifact_directory(tmp_path: Path):
             output_dir=tmp_path / "release",
             build_timestamp="20260724-120000",
             commit_sha="0" * 40,
-            expected_project_version="1.2.3",
             expected_ghidra_version="12.1.2",
         )
+
+
+def test_roll_changelog_moves_unreleased_entries_under_release_name(tmp_path: Path):
+    _write_project(tmp_path)
+    changelog = tmp_path / "CHANGELOG.md"
+
+    assert roll_changelog(changelog, "20260724-184501")
+    assert changelog.read_text(encoding="utf-8") == """\
+# Changelog
+
+## Unreleased
+
+## GhidraMCP-next 20260724-184501
+
+### Changed
+
+- Removed semantic versions from release identities.
+
+## v1.2.3
+
+- Previous release.
+"""
+
+    assert not roll_changelog(changelog, "20260724-184501")
+
+
+def test_roll_changelog_rejects_missing_unreleased_heading(tmp_path: Path):
+    changelog = tmp_path / "CHANGELOG.md"
+    changelog.write_text("# Changelog\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="exactly one"):
+        roll_changelog(changelog, "20260724-184501")
 
 
 def test_classify_cli_reads_null_terminated_git_paths():
@@ -246,11 +275,7 @@ def test_timestamp_release_workflow_contract():
     jobs = workflow["jobs"]
     java = jobs["java-build"]
     assert "strategy" not in java
-    assert set(java["outputs"]) == {
-        "build_timestamp",
-        "project_version",
-        "ghidra_version",
-    }
+    assert set(java["outputs"]) == {"build_timestamp", "ghidra_version"}
 
     release = jobs["automatic-release"]
     assert release["permissions"] == {"contents": "write"}
@@ -271,6 +296,13 @@ def test_timestamp_release_workflow_contract():
     assert 'git diff --name-only -z "$BEFORE" "$AFTER"' in classifier
     assert "python -m tools.release_automation classify --null" in classifier
     assert "github.event.before" in workflow_text
+    prepare = steps["Prepare release metadata"]["run"]
+    assert "--project-version" not in prepare
+    create = steps["Create timestamp release"]["run"]
+    assert '--title "${{ steps.prepare.outputs.name }}"' in create
+    roll = steps["Roll released changelog entries"]["run"]
+    assert "python -m tools.release_automation roll-changelog" in roll
+    assert "git push origin HEAD:main" in roll
 
     python_steps = {step["name"]: step for step in jobs["python-tests"]["steps"] if "name" in step}
     expected_condition = "matrix.python-version == '3.14' && success()"
