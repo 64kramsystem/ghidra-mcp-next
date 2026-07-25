@@ -6,6 +6,8 @@ Complete version history for the GhidraMCP-next project.
 
 ## Unreleased
 
+## GhidraMCP-next 20260725-120446
+
 ### Fixed
 
 - Made connector-style launch offers selectable by name. `selectLaunchOffer` filtered candidates by `supportsImage()` before matching the caller's explicit `offer`, so offers that attach to an emulator rather than launching an executable — the VICE C64 debugger connector among them — could never be chosen. The explicit choice is now matched against every offer; the image filter applies only to automatic selection.
