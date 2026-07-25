@@ -1676,28 +1676,49 @@ public class ProgramScriptService {
     record DiffRun(int offset, int length) {}
 
     /**
+     * Whole-comparison totals plus at most {@code maxRuns} retained runs.
+     *
+     * <p>The totals are accumulated as the scan proceeds, so they describe the entire comparison
+     * even when the retained list is clipped. Retaining every run instead would allocate one
+     * object per run regardless of {@code maxRuns}: a 16MB input alternating equal and differing
+     * bytes yields ~8.4M runs, enough to exhaust the Ghidra heap for a response that returns one.
+     */
+    record DiffSummary(List<DiffRun> runs, int runCount, int differingBytes,
+                       int firstOffset, int lastOffset) {}
+
+    /**
      * Coalesce differing byte positions into maximal runs.
      *
      * <p>Only differences are returned: the gaps between them are equal by construction, so
      * emitting "same" runs too would double the payload and let the two disagree.
      */
-    static List<DiffRun> coalesceDifferences(byte[] a, byte[] b) {
-        List<DiffRun> runs = new ArrayList<>();
+    static DiffSummary coalesceDifferences(byte[] a, byte[] b, int maxRuns) {
+        List<DiffRun> retained = new ArrayList<>();
+        int runCount = 0;
+        int differingBytes = 0;
+        int firstOffset = -1;
+        int lastOffset = -1;
         int start = -1;
-        for (int i = 0; i < a.length; i++) {
-            boolean differs = a[i] != b[i];
+        for (int i = 0; i <= a.length; i++) {
+            boolean differs = i < a.length && a[i] != b[i];
             if (differs && start < 0) {
                 start = i;
             }
             else if (!differs && start >= 0) {
-                runs.add(new DiffRun(start, i - start));
+                int length = i - start;
+                runCount++;
+                differingBytes += length;
+                if (firstOffset < 0) {
+                    firstOffset = start;
+                }
+                lastOffset = i - 1;
+                if (retained.size() < maxRuns) {
+                    retained.add(new DiffRun(start, length));
+                }
                 start = -1;
             }
         }
-        if (start >= 0) {
-            runs.add(new DiffRun(start, a.length - start));
-        }
-        return runs;
+        return new DiffSummary(retained, runCount, differingBytes, firstOffset, lastOffset);
     }
 
     @McpTool(path = "/diff_memory", method = "POST",
@@ -1741,23 +1762,21 @@ public class ProgramScriptService {
         unreadable = readFully(memory, bStart, bBytes, "b");
         if (unreadable != null) return unreadable;
 
-        List<DiffRun> runs = coalesceDifferences(aBytes, bBytes);
-        int differingBytes = runs.stream().mapToInt(DiffRun::length).sum();
+        DiffSummary summary = coalesceDifferences(aBytes, bBytes, maxRuns);
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("a", aStart.toString(true));
         result.put("b", bStart.toString(true));
         result.put("length", length);
-        result.put("differing_bytes", differingBytes);
-        result.put("identical", differingBytes == 0);
-        result.put("difference_run_count", runs.size());
-        if (!runs.isEmpty()) {
-            result.put("first_difference_offset", runs.get(0).offset());
-            DiffRun last = runs.get(runs.size() - 1);
-            result.put("last_difference_offset", last.offset() + last.length() - 1);
+        result.put("differing_bytes", summary.differingBytes());
+        result.put("identical", summary.runCount() == 0);
+        result.put("difference_run_count", summary.runCount());
+        if (summary.runCount() > 0) {
+            result.put("first_difference_offset", summary.firstOffset());
+            result.put("last_difference_offset", summary.lastOffset());
         }
         List<Map<String, Object>> emitted = new ArrayList<>();
-        for (DiffRun run : runs.subList(0, Math.min(runs.size(), maxRuns))) {
+        for (DiffRun run : summary.runs()) {
             Map<String, Object> entry = new LinkedHashMap<>();
             entry.put("offset", run.offset());
             entry.put("length", run.length());
@@ -1766,18 +1785,30 @@ public class ProgramScriptService {
             emitted.add(entry);
         }
         result.put("difference_runs", emitted);
-        result.put("runs_truncated", runs.size() > emitted.size());
+        result.put("runs_truncated", summary.runCount() > emitted.size());
         return Response.ok(result);
     }
 
     /** @return an error Response naming the first unreadable address, or null on success. */
     private static Response readFully(Memory memory, Address start, byte[] into, String label) {
         try {
+            // addNoWrap, not add: a range ending at the address-space maximum would otherwise
+            // wrap while building the diagnostic and report a generic overflow instead of the
+            // address the caller needs.
+            try {
+                start.addNoWrap(into.length - 1L);
+            }
+            catch (ghidra.program.model.address.AddressOverflowException overflow) {
+                return Response.err(label + ": " + into.length + " bytes from "
+                    + start.toString(true) + " runs past the end of address space "
+                    + start.getAddressSpace().getName());
+            }
             int read = memory.getBytes(start, into);
             if (read != into.length) {
                 return Response.err(label + ": only " + read + " of " + into.length
                     + " bytes are readable from " + start.toString(true)
-                    + "; first unreadable address is " + start.add(read).toString(true));
+                    + "; first unreadable address is "
+                    + start.addNoWrap((long) read).toString(true));
             }
         }
         catch (Exception e) {
