@@ -10,6 +10,7 @@ import ghidra.program.model.listing.*;
 import ghidra.util.Msg;
 
 import javax.swing.SwingUtilities;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -247,7 +248,58 @@ public class CommentService {
     /**
      * Batch set multiple comments (decompiler, disassembly, and plate) in a single operation.
      */
-    @McpTool(path = "/batch_set_comments", method = "POST", description = "Set multiple comments in one operation. On programs with multiple address spaces (e.g., embedded targets), prefix addresses with the space name (mem:1000) to avoid ambiguous resolution.", category = "comment")
+    /**
+     * Rejects items the writer below would otherwise skip in silence. An item missing `comment`,
+     * carrying an unrecognised key, or naming an unresolvable address used to leave the request
+     * reporting success with a zero count, so a caller who sent the wrong shape -- {@code text}
+     * instead of {@code comment}, say -- believed the write had happened.
+     */
+    static List<String> commentItemShapeProblems(String field, List<Map<String, String>> items) {
+        List<String> problems = new ArrayList<>();
+        if (items == null) {
+            return problems;
+        }
+        for (int i = 0; i < items.size(); i++) {
+            Map<String, String> item = items.get(i);
+            String where = field + "[" + i + "]";
+            if (item == null) {
+                problems.add(where + " is null");
+                continue;
+            }
+            List<String> unknown = item.keySet().stream()
+                    .filter(k -> !"address".equals(k) && !"comment".equals(k))
+                    .sorted()
+                    .toList();
+            if (!unknown.isEmpty()) {
+                problems.add(where + " has unrecognised key(s) " + unknown);
+            }
+            if (item.get("address") == null) {
+                problems.add(where + " is missing \"address\"");
+            }
+            if (item.get("comment") == null) {
+                problems.add(where + " is missing \"comment\"");
+            }
+        }
+        return problems;
+    }
+
+    private static void validateCommentItems(String field, List<Map<String, String>> items,
+                                             Program program, List<String> problems) {
+        problems.addAll(commentItemShapeProblems(field, items));
+        if (items == null) {
+            return;
+        }
+        for (int i = 0; i < items.size(); i++) {
+            Map<String, String> item = items.get(i);
+            String addressStr = item == null ? null : item.get("address");
+            if (addressStr != null && ServiceUtils.parseAddress(program, addressStr) == null) {
+                problems.add(field + "[" + i + "] address \"" + addressStr
+                        + "\" could not be resolved");
+            }
+        }
+    }
+
+    @McpTool(path = "/batch_set_comments", method = "POST", description = "Set multiple comments in one operation. Each item in decompiler_comments/disassembly_comments must be {\"address\": \"0x...\", \"comment\": \"...\"}; unrecognised keys, missing keys and unresolvable addresses are rejected and the whole request writes nothing. On programs with multiple address spaces (e.g., embedded targets), prefix addresses with the space name (mem:1000) to avoid ambiguous resolution.", category = "comment")
     public Response batchSetComments(
             @Param(value = "address", paramType = "address", source = ParamSource.BODY,
                    description = "Address in the program. Accepts 0x<hex> (default space) or <space>:<hex> "
@@ -263,6 +315,14 @@ public class CommentService {
         ServiceUtils.ProgramOrError pe = ServiceUtils.getProgramOrError(programProvider, programName);
         if (pe.hasError()) return pe.error();
         Program program = pe.program();
+
+        List<String> itemProblems = new ArrayList<>();
+        validateCommentItems("decompiler_comments", decompilerComments, program, itemProblems);
+        validateCommentItems("disassembly_comments", disassemblyComments, program, itemProblems);
+        if (!itemProblems.isEmpty()) {
+            return Response.err("batch_set_comments wrote nothing: " + String.join("; ", itemProblems)
+                    + ". Each item must be {\"address\": \"0x...\", \"comment\": \"...\"}.");
+        }
 
         final BatchCommentOutcome outcome;
         try {
