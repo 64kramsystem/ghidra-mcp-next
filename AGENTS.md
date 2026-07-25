@@ -5,6 +5,25 @@
 - Update `CHANGELOG.md` for user-facing changes.
 - Never use conventional-commit prefixes (`feat/`, …) in commit titles or branch names
 
+## CHANGELOG and the release automation
+
+A green push to `main` triggers a release that renames the `## Unreleased` heading to
+`## GhidraMCP-next <timestamp>` and appends a fresh, empty `## Unreleased` above it. Anything
+sitting under `Unreleased` at that moment ships as part of that release.
+
+This makes the top of `CHANGELOG.md` a standing conflict point. To avoid it:
+
+- Add entries only under `## Unreleased`, never to a timestamped section — those are published
+  history.
+- Before pushing, `git fetch` and rebase. A release commit may have landed since you branched.
+- **After rebasing, re-read the top of the file.** Git resolves this one cleanly and silently in
+  the wrong way: your bullets sit at the same offset as the freshly-renamed release section, so
+  they get absorbed into it and `Unreleased` is left empty. Nothing conflicts and nothing warns.
+  Move your entries back under `## Unreleased`, recreating the `### Fixed`/`### Added` heading if
+  the rebase consumed it.
+- Sanity check: every bullet under a timestamped section must already be in that published
+  release. If you wrote it after that release was cut, it belongs under `Unreleased`.
+
 ## Verification
 
 - Java: `mvn test`

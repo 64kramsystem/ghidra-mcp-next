@@ -424,28 +424,42 @@ public class DebuggerService {
     // Session management
     // ========================================================================
 
-    private TraceRmiLaunchOffer selectLaunchOffer(Collection<TraceRmiLaunchOffer> offers,
-                                                  String preferredOffer) {
-        List<TraceRmiLaunchOffer> candidates = offers.stream()
-                .filter(TraceRmiLaunchOffer::supportsImage)
-                .toList();
-        if (candidates.isEmpty()) {
-            candidates = List.copyOf(offers);
-        }
+    /**
+     * Picks the offer to launch. An explicitly named offer is matched against <em>every</em> offer
+     * and never silently substituted; only auto-selection falls back to heuristics.
+     *
+     * @return the chosen offer, or null when an explicit name matched nothing -- callers must
+     *         report that rather than launching something else.
+     */
+    static TraceRmiLaunchOffer selectLaunchOffer(Collection<TraceRmiLaunchOffer> offers,
+                                                 String preferredOffer) {
+        // An explicit choice is honored against the full set. Connector-style offers such as the
+        // VICE C64 debugger report supportsImage()==false, so filtering first made them
+        // unreachable by name -- and the fallback below then launched an unrelated backend.
         if (preferredOffer != null && !preferredOffer.isBlank()) {
             String needle = preferredOffer.trim().toLowerCase(Locale.ROOT);
-            for (TraceRmiLaunchOffer offer : candidates) {
+            for (TraceRmiLaunchOffer offer : offers) {
                 if (offer.getTitle().equalsIgnoreCase(preferredOffer) ||
                         offer.getConfigName().equalsIgnoreCase(preferredOffer)) {
                     return offer;
                 }
             }
-            for (TraceRmiLaunchOffer offer : candidates) {
+            for (TraceRmiLaunchOffer offer : offers) {
                 if (offer.getTitle().toLowerCase(Locale.ROOT).contains(needle) ||
                         offer.getConfigName().toLowerCase(Locale.ROOT).contains(needle)) {
                     return offer;
                 }
             }
+            // Named but not found: launching an arbitrary other backend would be worse than
+            // failing, so give up and let the caller report the unmatched name.
+            return null;
+        }
+
+        List<TraceRmiLaunchOffer> candidates = offers.stream()
+                .filter(TraceRmiLaunchOffer::supportsImage)
+                .toList();
+        if (candidates.isEmpty()) {
+            candidates = List.copyOf(offers);
         }
         for (TraceRmiLaunchOffer offer : candidates) {
             if ("dbgeng".equalsIgnoreCase(offer.getTitle()) ||
@@ -565,8 +579,15 @@ public class DebuggerService {
 
             TraceRmiLaunchOffer offer = selectLaunchOffer(offers, preferredOffer);
             if (offer == null) {
-                return Response.err("No debugger launch offer could be selected. Available offers: " +
-                        offers.stream().map(TraceRmiLaunchOffer::getTitle).collect(Collectors.joining(", ")));
+                String available = offers.stream().map(TraceRmiLaunchOffer::getTitle)
+                        .collect(Collectors.joining(", "));
+                if (preferredOffer != null && !preferredOffer.isBlank()) {
+                    return Response.err("No debugger launch offer matches '" + preferredOffer +
+                            "'. Match is by exact title or config_name, then substring. " +
+                            "Available offers: " + available);
+                }
+                return Response.err("No debugger launch offer could be selected. " +
+                        "Available offers: " + available);
             }
 
             LaunchParameter<?> imageParam = offer.imageParameter();
