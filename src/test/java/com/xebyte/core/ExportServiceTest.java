@@ -89,8 +89,12 @@ public class ExportServiceTest {
         assertEquals("00001003", runner.requestedSet().getMaxAddress().toString());
         assertFalse("destination must not exist while exporter is writing",
             runner.destinationExistedDuringExport());
+        // Canonicalize both sides: the service resolves the destination through
+        // SecurityConfig, so on macOS its parent is /private/var/... while
+        // TemporaryFolder reports /var/... for the same directory.
         assertTrue("exporter must write a unique sibling temporary file",
-            runner.exportFile().getParentFile().equals(outputDir.toFile())
+            runner.exportFile().getParentFile().getCanonicalFile()
+                .equals(outputDir.toFile().getCanonicalFile())
                 && runner.exportFile().getName().startsWith(".listing.asm.tmp-"));
         assertNoTemporaryFiles(outputDir);
 
