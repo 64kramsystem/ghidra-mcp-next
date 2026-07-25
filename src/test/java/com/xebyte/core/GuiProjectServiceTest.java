@@ -92,7 +92,7 @@ public class GuiProjectServiceTest {
 
     @Test
     public void createUsesProjectLocatorNameValidation() throws Exception {
-        Path parent = temporaryFolder.newFolder("projects").toPath();
+        Path parent = newProjectsParent();
         Map<String, Object> result = createWithNoTool(parent, "bad/name");
 
         assertError(result, "invalid_project_name");
@@ -100,7 +100,7 @@ public class GuiProjectServiceTest {
 
     @Test
     public void createRequiresEachDestinationPathWithinFileRoot() throws Exception {
-        Path parent = temporaryFolder.newFolder("projects").toPath();
+        Path parent = newProjectsParent();
         ProjectLocator locator = new ProjectLocator(parent.toString(), "NewProject");
         List<String> deniedPaths = List.of(
             parent.toFile().getCanonicalPath(),
@@ -121,7 +121,7 @@ public class GuiProjectServiceTest {
 
     @Test
     public void createRejectsExistingMarkerRegardlessOfType() throws Exception {
-        Path parent = temporaryFolder.newFolder("projects").toPath();
+        Path parent = newProjectsParent();
         Files.createDirectory(parent.resolve("NewProject.gpr"));
 
         Map<String, Object> result = createWithNoTool(parent, "NewProject");
@@ -131,7 +131,7 @@ public class GuiProjectServiceTest {
 
     @Test
     public void createRejectsExistingProjectDirectoryRegardlessOfType() throws Exception {
-        Path parent = temporaryFolder.newFolder("projects").toPath();
+        Path parent = newProjectsParent();
         Files.createFile(parent.resolve("NewProject.rep"));
 
         Map<String, Object> result = createWithNoTool(parent, "NewProject");
@@ -141,7 +141,7 @@ public class GuiProjectServiceTest {
 
     @Test
     public void createRejectsDanglingMarkerSymlink() throws Exception {
-        Path parent = temporaryFolder.newFolder("projects").toPath();
+        Path parent = newProjectsParent();
         createDanglingSymlink(
             parent.resolve("NewProject.gpr"), parent.resolve("missing-marker-target"));
 
@@ -152,7 +152,7 @@ public class GuiProjectServiceTest {
 
     @Test
     public void createRejectsUnavailableProjectManager() throws Exception {
-        Path parent = temporaryFolder.newFolder("projects").toPath();
+        Path parent = newProjectsParent();
         GuiProjectService service = new GuiProjectService(() -> null, security);
 
         Map<String, Object> result = parse(service.createProject(
@@ -163,7 +163,7 @@ public class GuiProjectServiceTest {
 
     @Test
     public void createRunsLifecycleAsOneEdtTaskAndActivatesProject() throws Exception {
-        Path parent = temporaryFolder.newFolder("projects").toPath();
+        Path parent = newProjectsParent();
         ProjectManager manager = mock(ProjectManager.class);
         Project previous = mock(Project.class);
         Project created = mock(Project.class);
@@ -227,7 +227,7 @@ public class GuiProjectServiceTest {
 
     @Test
     public void createNormalizesGprSuffixInProjectAndDestination() throws Exception {
-        Path parent = temporaryFolder.newFolder("projects").toPath();
+        Path parent = newProjectsParent();
         ProjectManager manager = mock(ProjectManager.class);
         Project created = mock(Project.class);
         when(manager.createProject(any(ProjectLocator.class), isNull(), eq(true)))
@@ -251,7 +251,7 @@ public class GuiProjectServiceTest {
 
     @Test
     public void openRunsLifecycleThroughFrontEndControllerOnEdt() throws Exception {
-        Path parent = temporaryFolder.newFolder("projects").toPath();
+        Path parent = newProjectsParent();
         Path marker = Files.createFile(parent.resolve("NewProject.gpr"));
         Files.createDirectory(parent.resolve("NewProject.rep"));
         ProjectManager manager = mock(ProjectManager.class);
@@ -314,7 +314,7 @@ public class GuiProjectServiceTest {
 
     @Test
     public void openCleansManagerProjectWhenRestoreFailsBeforeReturn() throws Exception {
-        Path parent = temporaryFolder.newFolder("projects").toPath();
+        Path parent = newProjectsParent();
         Path marker = Files.createFile(parent.resolve("NewProject.gpr"));
         Files.createDirectory(parent.resolve("NewProject.rep"));
         ProjectManager manager = mock(ProjectManager.class);
@@ -354,7 +354,7 @@ public class GuiProjectServiceTest {
 
     @Test
     public void createRechecksDestinationOnEdtBeforeClosingCurrentProject() throws Exception {
-        Path parent = temporaryFolder.newFolder("projects").toPath();
+        Path parent = newProjectsParent();
         Path marker = parent.resolve("NewProject.gpr");
         ProjectManager manager = mock(ProjectManager.class);
 
@@ -377,7 +377,7 @@ public class GuiProjectServiceTest {
     @Test
     public void createRechecksProjectDirectoryOnEdtBeforeClosingCurrentProject()
             throws Exception {
-        Path parent = temporaryFolder.newFolder("projects").toPath();
+        Path parent = newProjectsParent();
         Path projectDir = parent.resolve("NewProject.rep");
         ProjectManager manager = mock(ProjectManager.class);
 
@@ -395,7 +395,7 @@ public class GuiProjectServiceTest {
 
     @Test
     public void createRechecksParentOnEdtBeforeClosingCurrentProject() throws Exception {
-        Path parent = temporaryFolder.newFolder("projects").toPath();
+        Path parent = newProjectsParent();
         ProjectManager manager = mock(ProjectManager.class);
 
         GuiProjectService service = new GuiProjectService(() -> null, security, () -> {
@@ -417,7 +417,7 @@ public class GuiProjectServiceTest {
     @Test
     public void createClosesReturnedProjectWhenActivationVerificationFails()
             throws Exception {
-        Path parent = temporaryFolder.newFolder("projects").toPath();
+        Path parent = newProjectsParent();
         ProjectManager manager = mock(ProjectManager.class);
         Project created = mock(Project.class);
         when(manager.createProject(any(ProjectLocator.class), isNull(), eq(true)))
@@ -466,7 +466,7 @@ public class GuiProjectServiceTest {
     @Test
     public void createFailureBeforeArtifactsLeavesNoActiveProjectAndDoesNotRollback()
             throws Exception {
-        Path parent = temporaryFolder.newFolder("projects").toPath();
+        Path parent = newProjectsParent();
         ProjectManager manager = mock(ProjectManager.class);
         Project previous = mock(Project.class);
         AtomicReference<Project> active = new AtomicReference<>(previous);
@@ -501,7 +501,7 @@ public class GuiProjectServiceTest {
 
     @Test
     public void createFailureClosesNewlyActiveProjectWithoutDeletingArtifacts() throws Exception {
-        Path parent = temporaryFolder.newFolder("projects").toPath();
+        Path parent = newProjectsParent();
         Path marker = parent.resolve("NewProject.gpr");
         ProjectManager manager = mock(ProjectManager.class);
         Project previous = mock(Project.class);
@@ -549,7 +549,7 @@ public class GuiProjectServiceTest {
 
     @Test
     public void udsCreateRouteParsesBodyAndSerializesServiceResponse() throws Exception {
-        Path parent = temporaryFolder.newFolder("projects").toPath();
+        Path parent = newProjectsParent();
         ProjectManager manager = mock(ProjectManager.class);
         Project created = mock(Project.class);
         when(manager.createProject(any(ProjectLocator.class), isNull(), eq(true)))
@@ -588,6 +588,16 @@ public class GuiProjectServiceTest {
             assertTrue("FrontEndTool.getListeners must retain its Iterable return type",
                 constantPool.contains("()Ljava/lang/Iterable;"));
         }
+    }
+
+    /**
+     * A canonical parent directory. The service resolves every destination path through
+     * SecurityConfig, so on macOS an uncanonicalized TemporaryFolder path (/var/folders/...)
+     * would not match the resolved form (/private/var/folders/...): assertions on the
+     * returned path fail, and activation verification takes a different branch entirely.
+     */
+    private Path newProjectsParent() throws IOException {
+        return temporaryFolder.newFolder("projects").toPath().toRealPath();
     }
 
     private Map<String, Object> createWithNoTool(Path parent, String name) {
