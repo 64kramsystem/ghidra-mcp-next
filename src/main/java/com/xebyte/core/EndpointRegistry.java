@@ -683,7 +683,7 @@ public class EndpointRegistry {
             params(bStr("address"), bArr("decompiler_comments"), bArr("disassembly_comments"),
                 bStrOpt("plate_comment"), pProg()),
             (q, b) -> commentService.batchSetComments(bodyStr(b, "address"),
-                bodyMapList(b, "decompiler_comments"), bodyMapList(b, "disassembly_comments"),
+                b.get("decompiler_comments"), b.get("disassembly_comments"),
                 bodyStr(b, "plate_comment"), str(q, "program")));
 
         post("/clear_function_comments", "Clear all comments within a function",

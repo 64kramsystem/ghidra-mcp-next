@@ -1,6 +1,10 @@
 package com.xebyte.core;
 
+import com.google.gson.Gson;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonNull;
+import com.google.gson.JsonParser;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
 
@@ -24,6 +28,8 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 @McpToolGroup(value = "comment", description = "Set/get plate, decompiler, disassembly, repeatable comments")
 public class CommentService {
+
+    private static final Gson GSON = new Gson();
 
     private final ProgramProvider programProvider;
     private final ThreadingStrategy threadingStrategy;
@@ -303,6 +309,72 @@ public class CommentService {
      * reporting success with a zero count, so a caller who sent the wrong shape -- {@code text}
      * instead of {@code comment}, say -- believed the write had happened.
      */
+    /**
+     * Decode one comment array strictly, recording every problem rather than dropping items.
+     *
+     * <p>The shared converters must stay permissive -- they also back endpoint-schema parsing,
+     * where non-string values are legitimate -- so strictness lives here, at the one endpoint
+     * whose contract is {@code {address: string, comment: string}}.
+     *
+     * <p>Direct and stringified input are normalised to the same JsonArray before inspection.
+     * Handling them separately is what let a stringified {@code [{...}, 42]} lose its malformed
+     * element while the direct form rejected it.
+     */
+    static List<Map<String, String>> decodeCommentItems(String field, Object raw,
+                                                        List<String> problems) {
+        List<Map<String, String>> decoded = new ArrayList<>();
+        if (raw == null) {
+            return decoded;
+        }
+
+        JsonElement element;
+        try {
+            element = raw instanceof String text
+                ? (text.isBlank() ? null : JsonParser.parseString(text))
+                : GSON.toJsonTree(raw);
+        }
+        catch (RuntimeException e) {
+            problems.add(field + " is not valid JSON: " + e.getMessage());
+            return decoded;
+        }
+        if (element == null || element.isJsonNull()) {
+            return decoded;
+        }
+        if (!element.isJsonArray()) {
+            problems.add(field + " must be a JSON array of objects, got "
+                + (element.isJsonObject() ? "an object" : "a scalar"));
+            return decoded;
+        }
+
+        JsonArray array = element.getAsJsonArray();
+        for (int i = 0; i < array.size(); i++) {
+            JsonElement item = array.get(i);
+            String where = field + "[" + i + "]";
+            if (item == null || !item.isJsonObject()) {
+                problems.add(where + " must be an object");
+                continue;
+            }
+            Map<String, String> entry = new LinkedHashMap<>();
+            for (Map.Entry<String, JsonElement> member : item.getAsJsonObject().entrySet()) {
+                JsonElement value = member.getValue();
+                if (value != null && !value.isJsonNull() && !value.isJsonPrimitive()) {
+                    problems.add(where + "." + member.getKey() + " must be a string, got "
+                        + (value.isJsonArray() ? "an array" : "an object"));
+                    continue;
+                }
+                if (value != null && value.isJsonPrimitive() && !value.getAsJsonPrimitive().isString()) {
+                    problems.add(where + "." + member.getKey() + " must be a string, got "
+                        + value.getAsJsonPrimitive());
+                    continue;
+                }
+                entry.put(member.getKey(),
+                    value == null || value.isJsonNull() ? null : value.getAsString());
+            }
+            decoded.add(entry);
+        }
+        return decoded;
+    }
+
     static List<String> commentItemShapeProblems(String field, List<Map<String, String>> items) {
         List<String> problems = new ArrayList<>();
         if (items == null) {
@@ -356,8 +428,8 @@ public class CommentService {
                                + "embedded/microcontroller targets — are not address-space-agnostic; "
                                + "use get_address_spaces to discover spaces before assuming a plain hex "
                                + "address is unambiguous.") String functionAddress,
-            @Param(value = "decompiler_comments", source = ParamSource.BODY, defaultValue = "[]") List<Map<String, String>> decompilerComments,
-            @Param(value = "disassembly_comments", source = ParamSource.BODY, defaultValue = "[]") List<Map<String, String>> disassemblyComments,
+            @Param(value = "decompiler_comments", source = ParamSource.BODY, defaultValue = "[]") Object decompilerCommentsRaw,
+            @Param(value = "disassembly_comments", source = ParamSource.BODY, defaultValue = "[]") Object disassemblyCommentsRaw,
             @Param(value = "plate_comment", source = ParamSource.BODY, defaultValue = "null",
                    description = "Plate comment text. Omit to leave existing plate untouched. Pass empty string to explicitly clear.") String plateComment,
             @Param(value = "program", description = "Target program name", defaultValue = "") String programName) {
@@ -366,6 +438,10 @@ public class CommentService {
         Program program = pe.program();
 
         List<String> itemProblems = new ArrayList<>();
+        List<Map<String, String>> decompilerComments =
+            decodeCommentItems("decompiler_comments", decompilerCommentsRaw, itemProblems);
+        List<Map<String, String>> disassemblyComments =
+            decodeCommentItems("disassembly_comments", disassemblyCommentsRaw, itemProblems);
         validateCommentItems("decompiler_comments", decompilerComments, program, itemProblems);
         validateCommentItems("disassembly_comments", disassemblyComments, program, itemProblems);
         if (!itemProblems.isEmpty()) {

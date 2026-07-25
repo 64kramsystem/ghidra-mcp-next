@@ -95,4 +95,88 @@ public class CommentItemShapeTest {
         assertEquals(1, problems.size());
         assertTrue(problems.get(0), problems.get(0).contains("is null"));
     }
+
+    // ---- wire-boundary decoding -------------------------------------------------------
+    // The service-level checks below were reachable only if the request survived conversion
+    // intact. It did not: the direct path dropped non-object elements and the stringified path
+    // used a different converter that still did. Both are decoded here by one strict route.
+
+    private static List<String> decodeProblems(Object raw) {
+        List<String> problems = new ArrayList<>();
+        CommentService.decodeCommentItems("disassembly_comments", raw, problems);
+        return problems;
+    }
+
+    @Test
+    public void aStringifiedArrayWithAScalarElementIsRejected() {
+        List<String> problems =
+                decodeProblems("[{\"address\":\"0x1000\",\"comment\":\"ok\"},42]");
+
+        assertEquals(problems.toString(), 1, problems.size());
+        assertTrue(problems.get(0), problems.get(0).contains("[1] must be an object"));
+    }
+
+    @Test
+    public void aDirectListWithAScalarElementIsRejected() {
+        List<Object> raw = new ArrayList<>();
+        raw.add(item("address", "0x1000", "comment", "ok"));
+        raw.add(42);
+
+        List<String> problems = decodeProblems(raw);
+
+        assertEquals(problems.toString(), 1, problems.size());
+        assertTrue(problems.get(0), problems.get(0).contains("[1] must be an object"));
+    }
+
+    @Test
+    public void aStringifiedObjectInsteadOfAnArrayIsRejected() {
+        List<String> problems = decodeProblems("{\"address\":\"0x1000\",\"comment\":\"ok\"}");
+
+        assertEquals(1, problems.size());
+        assertTrue(problems.get(0), problems.get(0).contains("must be a JSON array"));
+    }
+
+    @Test
+    public void nonStringValuesAreRejectedRatherThanStringified() {
+        // These used to become the literal comments "123.0" and "{nested=true}".
+        assertTrue(decodeProblems("[{\"address\":\"0x1000\",\"comment\":123}]").toString()
+                .contains("must be a string"));
+        assertTrue(decodeProblems("[{\"address\":\"0x1000\",\"comment\":{\"nested\":true}}]")
+                .toString().contains("must be a string"));
+        assertTrue(decodeProblems("[{\"address\":1000,\"comment\":\"ok\"}]").toString()
+                .contains("must be a string"));
+    }
+
+    @Test
+    public void wellFormedInputDecodesFromEitherForm() {
+        List<String> problems = new ArrayList<>();
+        List<Map<String, String>> fromString = CommentService.decodeCommentItems(
+                "disassembly_comments",
+                "[{\"address\":\"0x1000\",\"comment\":\"hello\"}]", problems);
+        List<Map<String, String>> fromList = CommentService.decodeCommentItems(
+                "disassembly_comments",
+                List.of(item("address", "0x1000", "comment", "hello")), problems);
+
+        assertEquals(List.of(), problems);
+        assertEquals(fromString, fromList);
+        assertEquals("hello", fromString.get(0).get("comment"));
+    }
+
+    @Test
+    public void anEmptyCommentStaysValidBecauseItClears() {
+        List<String> problems = new ArrayList<>();
+        List<Map<String, String>> decoded = CommentService.decodeCommentItems(
+                "disassembly_comments",
+                "[{\"address\":\"0x1000\",\"comment\":\"\"}]", problems);
+
+        assertEquals(List.of(), problems);
+        assertEquals("", decoded.get(0).get("comment"));
+    }
+
+    @Test
+    public void anAbsentOrBlankArrayIsNotAnError() {
+        assertEquals(List.of(), decodeProblems(null));
+        assertEquals(List.of(), decodeProblems(""));
+        assertEquals(List.of(), decodeProblems("[]"));
+    }
 }
