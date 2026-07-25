@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "description": "GhidraMCP-next REST API Endpoint Specification",
-  "total_endpoints": 256,
+  "total_endpoints": 257,
   "categories": {
     "listing": "List program data",
     "getter": "Get specific data",
@@ -2232,6 +2232,17 @@
         "program"
       ],
       "description": "Rename data symbol"
+    },
+    {
+      "path": "/rename_data_type",
+      "method": "POST",
+      "category": "datatype",
+      "params": [
+        "old_name",
+        "new_name",
+        "program"
+      ],
+      "description": "Rename a data type (struct, union, enum, typedef) in place, preserving existing applications of it"
     },
     {
       "path": "/rename_external_location",
