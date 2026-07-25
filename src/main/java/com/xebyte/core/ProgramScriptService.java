@@ -1667,6 +1667,126 @@ public class ProgramScriptService {
     /**
      * Read memory at a specific address.
      */
+    /** Same ceiling as read_memory: two ranges of this size are compared, not one. */
+    static final int MAX_DIFF_BYTES = 16 * 1024 * 1024;
+    static final int MIN_DIFF_RUNS = 1;
+    static final int MAX_DIFF_RUNS = 4096;
+
+    /** One maximal run of differing bytes, as an offset from the start of the comparison. */
+    record DiffRun(int offset, int length) {}
+
+    /**
+     * Coalesce differing byte positions into maximal runs.
+     *
+     * <p>Only differences are returned: the gaps between them are equal by construction, so
+     * emitting "same" runs too would double the payload and let the two disagree.
+     */
+    static List<DiffRun> coalesceDifferences(byte[] a, byte[] b) {
+        List<DiffRun> runs = new ArrayList<>();
+        int start = -1;
+        for (int i = 0; i < a.length; i++) {
+            boolean differs = a[i] != b[i];
+            if (differs && start < 0) {
+                start = i;
+            }
+            else if (!differs && start >= 0) {
+                runs.add(new DiffRun(start, i - start));
+                start = -1;
+            }
+        }
+        if (start >= 0) {
+            runs.add(new DiffRun(start, a.length - start));
+        }
+        return runs;
+    }
+
+    @McpTool(path = "/diff_memory", method = "POST",
+             description = "Compare two equal-length memory ranges, which may be in different address spaces (e.g. an overlay against the block it shadows), and return the differing byte runs. Answers 'where exactly do these two occupants diverge' without transferring either range.",
+             category = "program")
+    public Response diffMemory(
+            @Param(value = "a", paramType = "address", source = ParamSource.BODY,
+                   description = "First range start. Accepts 0x<hex> or <space>:<hex>, including overlay spaces (SND_PLAYER::9680).") String aText,
+            @Param(value = "b", paramType = "address", source = ParamSource.BODY,
+                   description = "Second range start, in the same or a different address space.") String bText,
+            @Param(value = "length", source = ParamSource.BODY,
+                   description = "Number of bytes to compare from each start") int length,
+            @Param(value = "max_runs", source = ParamSource.BODY, defaultValue = "256",
+                   description = "Cap on returned difference runs (1..4096). differing_bytes and difference_run_count always describe the whole comparison, even when the list is clipped.") int maxRuns,
+            @Param(value = "program", description = "Target program name (omit to use the active program)",
+                   defaultValue = "") String programName) {
+        ServiceUtils.ProgramOrError pe = ServiceUtils.getProgramOrError(programProvider, programName);
+        if (pe.hasError()) return pe.error();
+        Program program = pe.program();
+
+        if (length <= 0 || length > MAX_DIFF_BYTES) {
+            return Response.err("length must be between 1 and " + MAX_DIFF_BYTES + " bytes");
+        }
+        if (maxRuns < MIN_DIFF_RUNS || maxRuns > MAX_DIFF_RUNS) {
+            return Response.err("max_runs must be between " + MIN_DIFF_RUNS
+                + " and " + MAX_DIFF_RUNS);
+        }
+
+        Address aStart = ServiceUtils.parseAddress(program, aText);
+        if (aStart == null) return Response.err("a: " + ServiceUtils.getLastParseError());
+        Address bStart = ServiceUtils.parseAddress(program, bText);
+        if (bStart == null) return Response.err("b: " + ServiceUtils.getLastParseError());
+
+        Memory memory = program.getMemory();
+        byte[] aBytes = new byte[length];
+        byte[] bBytes = new byte[length];
+        // Read both ranges up front so a partially readable range fails naming the exact
+        // address, rather than silently comparing against zero-filled tail bytes.
+        Response unreadable = readFully(memory, aStart, aBytes, "a");
+        if (unreadable != null) return unreadable;
+        unreadable = readFully(memory, bStart, bBytes, "b");
+        if (unreadable != null) return unreadable;
+
+        List<DiffRun> runs = coalesceDifferences(aBytes, bBytes);
+        int differingBytes = runs.stream().mapToInt(DiffRun::length).sum();
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("a", aStart.toString(true));
+        result.put("b", bStart.toString(true));
+        result.put("length", length);
+        result.put("differing_bytes", differingBytes);
+        result.put("identical", differingBytes == 0);
+        result.put("difference_run_count", runs.size());
+        if (!runs.isEmpty()) {
+            result.put("first_difference_offset", runs.get(0).offset());
+            DiffRun last = runs.get(runs.size() - 1);
+            result.put("last_difference_offset", last.offset() + last.length() - 1);
+        }
+        List<Map<String, Object>> emitted = new ArrayList<>();
+        for (DiffRun run : runs.subList(0, Math.min(runs.size(), maxRuns))) {
+            Map<String, Object> entry = new LinkedHashMap<>();
+            entry.put("offset", run.offset());
+            entry.put("length", run.length());
+            entry.put("a", aStart.add(run.offset()).toString(true));
+            entry.put("b", bStart.add(run.offset()).toString(true));
+            emitted.add(entry);
+        }
+        result.put("difference_runs", emitted);
+        result.put("runs_truncated", runs.size() > emitted.size());
+        return Response.ok(result);
+    }
+
+    /** @return an error Response naming the first unreadable address, or null on success. */
+    private static Response readFully(Memory memory, Address start, byte[] into, String label) {
+        try {
+            int read = memory.getBytes(start, into);
+            if (read != into.length) {
+                return Response.err(label + ": only " + read + " of " + into.length
+                    + " bytes are readable from " + start.toString(true)
+                    + "; first unreadable address is " + start.add(read).toString(true));
+            }
+        }
+        catch (Exception e) {
+            return Response.err(label + ": cannot read " + into.length + " bytes from "
+                + start.toString(true) + ": " + e.getMessage());
+        }
+        return null;
+    }
+
     @McpTool(path = "/read_memory", description = "Read raw memory bytes. Always pass the 'program' argument to target the correct binary — especially when multiple programs are open. On programs with multiple address spaces (e.g., embedded targets), prefix addresses with the space name (mem:1000) to avoid ambiguous resolution.", category = "program")
     public Response readMemory(
             @Param(value = "address", paramType = "address",

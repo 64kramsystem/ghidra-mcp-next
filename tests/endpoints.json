@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "description": "GhidraMCP-next REST API Endpoint Specification",
-  "total_endpoints": 257,
+  "total_endpoints": 258,
   "categories": {
     "listing": "List program data",
     "getter": "Get specific data",
@@ -1054,6 +1054,19 @@
         "program_b"
       ],
       "description": "Diff two functions"
+    },
+    {
+      "path": "/diff_memory",
+      "method": "POST",
+      "category": "program",
+      "params": [
+        "a",
+        "b",
+        "length",
+        "max_runs",
+        "program"
+      ],
+      "description": "Compare two equal-length memory ranges, which may be in different address spaces (e.g. an overlay against the block it shadows), and return the differing byte runs. Answers 'where exactly do these two occupants diverge' without transferring either range."
     },
     {
       "path": "/disassemble_flow",

@@ -1250,6 +1250,11 @@ public class EndpointRegistry {
             params(qStr("address", "Start address"), qInt("length", 16, "Number of bytes"), pProg()),
             (q, b) -> programScriptService.readMemory(str(q, "address"), num(q, "length", 16), str(q, "program")));
 
+        post("/diff_memory", "Compare two equal-length memory ranges, across address spaces",
+            params(bStr("a"), bStr("b"), bInt("length", 0), bInt("max_runs", 256), pProg()),
+            (q, b) -> programScriptService.diffMemory(bodyStr(b, "a"), bodyStr(b, "b"),
+                bodyInt(b, "length", 0), bodyInt(b, "max_runs", 256), str(q, "program")));
+
         post("/set_bookmark", "Create or update a bookmark",
             params(bStr("address"), bStrOpt("category"), bStrOpt("comment"), pProg()),
             (q, b) -> programScriptService.setBookmark(bodyStr(b, "address"), bodyStr(b, "category"),
