@@ -219,6 +219,39 @@ public class CompleteListingWriterGhidraTest {
         assertTrue("the target component value must be emitted", listing.contains("1234h"));
     }
 
+    /**
+     * An array of scalars must not emit a line per element. The parent's byte column is uncapped,
+     * so {@code [3] byte 1h} restates a value already printed in full on the line above it — on
+     * the real program that was 13,800 lines of restatement, over half the artifact. A field name
+     * has no such duplicate, so structure components are still emitted, including where the
+     * structure is itself an array element: that is what keeps a record table readable.
+     */
+    @Test
+    public void scalarArrayElementsAreNotEmittedButStructureFieldsAre() throws Exception {
+        builder.setBytes("0x1080", "00 01 02 03");
+        builder.applyDataType("0x1080", new ghidra.program.model.data.ArrayDataType(
+            ghidra.program.model.data.ByteDataType.dataType, 4, 1), 1);
+
+        ghidra.program.model.data.StructureDataType record =
+            new ghidra.program.model.data.StructureDataType("Exit", 0);
+        record.add(ghidra.program.model.data.ByteDataType.dataType, "from_room", null);
+        record.add(ghidra.program.model.data.ByteDataType.dataType, "to_room", null);
+        builder.setBytes("0x1090", "03 0c 06 0a");
+        builder.applyDataType("0x1090", new ghidra.program.model.data.ArrayDataType(
+            record, 2, record.getLength()), 1);
+
+        String listing = exportWholeProgram();
+
+        assertTrue("the scalar array's own line must carry every byte",
+            listing.contains("00010203"));
+        assertFalse("a scalar array element must not get its own line",
+            listing.contains("|_00001081"));
+        assertTrue("an array element that is a structure must still be emitted",
+            listing.contains("|_00001090"));
+        assertTrue("and its field names must survive",
+            listing.contains("from_room") && listing.contains("to_room"));
+    }
+
     /** Offcut annotations: WORK_PTR on the real program reports 60 offcut references. */
     @Test
     public void offcutCommentIsEmitted() throws Exception {
