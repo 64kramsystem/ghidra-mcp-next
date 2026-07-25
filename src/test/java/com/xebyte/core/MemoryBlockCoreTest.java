@@ -208,6 +208,74 @@ public class MemoryBlockCoreTest {
                 approvedRoot, 0, 1));
     }
 
+    /**
+     * The fallback for providers without {@link java.nio.file.SecureDirectoryStream} must read
+     * the same bounded slice the secure path reads. Called directly rather than through
+     * {@code readFileRangeWithinRoot}, so the fallback is covered on providers that do offer
+     * secure traversal and would never reach it.
+     */
+    @Test
+    public void unsecuredFallbackReadsOnlyTheRequestedSlice() throws Exception {
+        Path root = Files.createTempDirectory("memory-unsecured-slice");
+        Path bank = root.resolve("bank.bin");
+        Files.write(bank, new byte[] { 1, 2, 3, 4 });
+        Path directory = Files.createDirectory(root.resolve("directory"));
+        SecurityConfig security = SecurityConfig.forFileRootTesting(root);
+
+        assertArrayEquals(new byte[] { 2, 3 },
+            security.readFileRangeWithoutSecureTraversal(
+                security.resolveWithinFileRoot(bank.toString()), 1, 2));
+        assertThrows(java.io.IOException.class, () ->
+            security.readFileRangeWithoutSecureTraversal(
+                security.resolveWithinFileRoot(bank.toString()), 3, 2));
+        assertThrows(java.io.IOException.class, () ->
+            security.readFileRangeWithoutSecureTraversal(
+                security.resolveWithinFileRoot(directory.toString()), 0, 1));
+    }
+
+    /**
+     * The fallback trades the secure path's per-component handles for canonicalization, so it
+     * has to reject every swap the secure path rejects: the file itself, a parent directory, or
+     * the configured root replaced by a symlink leading out of the allow-list.
+     */
+    @Test
+    public void unsecuredFallbackRejectsApprovedPathsReplacedBySymlinks() throws Exception {
+        Path sandbox = Files.createTempDirectory("memory-unsecured-swaps");
+        Path root = Files.createDirectory(sandbox.resolve("root"));
+        Path outside = Files.createDirectory(sandbox.resolve("outside"));
+        Path outsideFile = outside.resolve("bank.bin");
+        Files.write(outsideFile, new byte[] { 9 });
+
+        Path finalPath = root.resolve("final.bin");
+        Files.write(finalPath, new byte[] { 1 });
+        SecurityConfig finalSecurity = SecurityConfig.forFileRootTesting(root);
+        Path approvedFinal = finalSecurity.resolveWithinFileRoot(finalPath.toString());
+        Files.delete(finalPath);
+        Files.createSymbolicLink(finalPath, outsideFile);
+        assertThrows(java.io.IOException.class, () ->
+            finalSecurity.readFileRangeWithoutSecureTraversal(approvedFinal, 0, 1));
+
+        Path parent = Files.createDirectory(root.resolve("parent"));
+        Path parentFile = parent.resolve("bank.bin");
+        Files.write(parentFile, new byte[] { 2 });
+        SecurityConfig parentSecurity = SecurityConfig.forFileRootTesting(root);
+        Path approvedParent = parentSecurity.resolveWithinFileRoot(parentFile.toString());
+        Files.move(parent, root.resolve("saved-parent"), StandardCopyOption.ATOMIC_MOVE);
+        Files.createSymbolicLink(parent, outside);
+        assertThrows(java.io.IOException.class, () ->
+            parentSecurity.readFileRangeWithoutSecureTraversal(approvedParent, 0, 1));
+
+        Path rootSwap = Files.createDirectory(sandbox.resolve("root-swap"));
+        Path rootSwapFile = rootSwap.resolve("bank.bin");
+        Files.write(rootSwapFile, new byte[] { 3 });
+        SecurityConfig rootSecurity = SecurityConfig.forFileRootTesting(rootSwap);
+        Path approvedRoot = rootSecurity.resolveWithinFileRoot(rootSwapFile.toString());
+        Files.move(rootSwap, sandbox.resolve("saved-root"), StandardCopyOption.ATOMIC_MOVE);
+        Files.createSymbolicLink(rootSwap, outside);
+        assertThrows(java.io.IOException.class, () ->
+            rootSecurity.readFileRangeWithoutSecureTraversal(approvedRoot, 0, 1));
+    }
+
     @Test
     public void securedFileReadUsesPinnedSizeAndReadsOnlyTheRequestedSlice()
             throws Exception {

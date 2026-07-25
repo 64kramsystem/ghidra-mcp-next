@@ -1230,9 +1230,6 @@ public class DataTypeService {
     }
 
     /**
-     * Delete a data type from the program
-     */
-    /**
      * Resolve a type by exact category path when qualified, or by bare name when not.
      *
      * <p>ServiceUtils.findDataTypeByNameInAllCategories compares {@code getName()} only, so a
@@ -3028,10 +3025,6 @@ public class DataTypeService {
     // -----------------------------------------------------------------------
 
     /**
-     * Parse fields JSON into FieldDefinition objects using robust JSON parsing
-     * Supports array format: [{"name":"field1","type":"uint"}, {"name":"field2","type":"void*"}]
-     */
-    /**
      * Build a multi-line error message that explains what the {@code fields}
      * parameter is supposed to look like. Used by {@code create_struct} and
      * {@code create_struct_with_fields} so an agent that sends a C-style
@@ -3288,9 +3281,6 @@ public class DataTypeService {
         return pairs;
     }
 
-    /**
-     * Parse values JSON into name-value pairs (for enum creation)
-     */
     /**
      * Parse enum values from JSON string. Accepts multiple formats:
      * - {"NAME": 0, "NAME2": 1}          (standard int values)
