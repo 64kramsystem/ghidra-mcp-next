@@ -12,7 +12,9 @@ import ghidra.program.model.symbol.Reference;
 import ghidra.program.model.symbol.ReferenceIterator;
 import ghidra.app.decompiler.DecompInterface;
 import ghidra.app.decompiler.DecompileResults;
+import ghidra.util.InvalidNameException;
 import ghidra.util.Msg;
+import ghidra.util.exception.DuplicateNameException;
 import ghidra.util.task.ConsoleTaskMonitor;
 
 import javax.swing.SwingUtilities;
@@ -1230,6 +1232,123 @@ public class DataTypeService {
     /**
      * Delete a data type from the program
      */
+    /**
+     * Resolve a type by exact category path when qualified, or by bare name when not.
+     *
+     * <p>ServiceUtils.findDataTypeByNameInAllCategories compares {@code getName()} only, so a
+     * qualified name can never match it, and two same-named types in different categories
+     * resolve to whichever the iterator reaches first. Renaming the wrong type is silent and
+     * hard to notice, so this refuses to guess.
+     *
+     * @return the single match, or null with the reason appended to {@code problem}
+     */
+    static DataType resolveExactDataType(DataTypeManager dtm, String name,
+                                         StringBuilder problem) {
+        if (name.contains("/")) {
+            DataType exact = dtm.getDataType(name);
+            if (exact == null) {
+                problem.append("Data type not found at path: ").append(name);
+            }
+            return exact;
+        }
+
+        List<DataType> matches = new ArrayList<>();
+        Iterator<DataType> all = dtm.getAllDataTypes();
+        while (all.hasNext()) {
+            DataType candidate = all.next();
+            if (candidate.getName().equals(name)) {
+                matches.add(candidate);
+            }
+        }
+        if (matches.isEmpty()) {
+            problem.append("Data type not found: ").append(name);
+            return null;
+        }
+        if (matches.size() > 1) {
+            List<String> paths = matches.stream().map(DataType::getPathName).sorted().toList();
+            problem.append("Ambiguous data type name '").append(name)
+                   .append("' matches ").append(matches.size()).append(" types: ").append(paths)
+                   .append(". Pass the category-qualified path.");
+            return null;
+        }
+        return matches.get(0);
+    }
+
+    /**
+     * Rename a data type in place, preserving every existing application of it.
+     *
+     * <p>The only previous route was clone + re-apply + delete, which silently dropped the
+     * existing applications of the old type.
+     */
+    @McpTool(path = "/rename_data_type", method = "POST",
+             description = "Rename a data type (struct, union, enum, typedef) in place, preserving existing applications of it",
+             category = "datatype")
+    public Response renameDataType(
+            @Param(value = "old_name", source = ParamSource.BODY,
+                   description = "Current type name. Bare (Foo) only when unambiguous; otherwise pass the category-qualified path (/MyCat/Foo).") String oldName,
+            @Param(value = "new_name", source = ParamSource.BODY,
+                   description = "New type name. Must be unique within the type's category.") String newName,
+            @Param(value = "program", description = "Target program name", defaultValue = "") String programName) {
+        // Argument guards run before the program lookup so a malformed call reports the actual
+        // problem instead of "No program loaded".
+        if (oldName == null || oldName.isEmpty()) return Response.text("Old name is required");
+        if (newName == null || newName.isEmpty()) return Response.text("New name is required");
+
+        ServiceUtils.ProgramOrError pe = ServiceUtils.getProgramOrError(programProvider, programName);
+        if (pe.hasError()) return pe.error();
+        Program program = pe.program();
+
+        StringBuilder result = new StringBuilder();
+
+        try {
+            threadingStrategy.executeWrite(program, "Rename data type", () -> {
+                DataTypeManager dtm = program.getDataTypeManager();
+                DataType dataType = resolveExactDataType(dtm, oldName, result);
+                if (dataType == null) {
+                    return null;
+                }
+
+                // Built-in types (int, char, ...) belong to the built-in manager, not the
+                // program; setName would either fail or corrupt the shared archive.
+                if (dataType instanceof BuiltInDataType) {
+                    result.append("Cannot rename built-in data type: ").append(oldName);
+                    return null;
+                }
+
+                if (newName.equals(dataType.getName())) {
+                    result.append("Data type '").append(oldName).append("' already has that name");
+                    return null;
+                }
+
+                // A same-named sibling in the destination category would make the rename
+                // ambiguous; report it rather than letting Ghidra auto-uniquify to Foo.conflict.
+                Category category = dtm.getCategory(dataType.getCategoryPath());
+                if (category != null && category.getDataType(newName) != null) {
+                    result.append("A data type named '").append(newName)
+                          .append("' already exists in category '")
+                          .append(dataType.getCategoryPath().getPath()).append("'");
+                    return null;
+                }
+
+                String renamed = dataType.getPathName();
+                try {
+                    dataType.setName(newName);
+                } catch (InvalidNameException | DuplicateNameException e) {
+                    result.append("Error renaming data type: ").append(e.getMessage());
+                    return null;
+                }
+
+                result.append("Successfully renamed data type '").append(renamed)
+                      .append("' to '").append(newName).append("'");
+                return null;
+            });
+        } catch (Exception e) {
+            result.append("Error renaming data type: ").append(e.getMessage());
+        }
+
+        return Response.text(result.toString());
+    }
+
     @McpTool(path = "/delete_data_type", method = "POST",
             description = "Delete a data type by name. Fails if the type is referenced; use resolve_duplicate_type first to remove unused /Demangler 1-byte stubs when a full type exists.",
             category = "datatype")

@@ -1,6 +1,10 @@
 package com.xebyte.core;
 
+import com.google.gson.Gson;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonNull;
+import com.google.gson.JsonParser;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
 
@@ -10,8 +14,10 @@ import ghidra.program.model.listing.*;
 import ghidra.util.Msg;
 
 import javax.swing.SwingUtilities;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -22,6 +28,8 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 @McpToolGroup(value = "comment", description = "Set/get plate, decompiler, disassembly, repeatable comments")
 public class CommentService {
+
+    private static final Gson GSON = new Gson();
 
     private final ProgramProvider programProvider;
     private final ThreadingStrategy threadingStrategy;
@@ -170,6 +178,54 @@ public class CommentService {
     /**
      * Set a plate comment at an exact mapped program address.
      */
+    @McpTool(path = "/get_comment",
+             description = "Get every listing comment kind (plate/pre/eol/post/repeatable) at ANY address, including data addresses. Unlike get_plate_comment this does not require a function at the address. Also returns `comment`, the first non-empty kind, and a `has_comment` flag.",
+             category = "comment")
+    public Response getComment(
+            @Param(value = "address", paramType = "address",
+                   description = "Address in the program. Accepts 0x<hex> (default space) or "
+                               + "<space>:<hex> (e.g. mem:1000, SND_PLAYER::9695). Works at data "
+                               + "addresses, not just function entries.") String addressStr,
+            @Param(value = "program", description = "Target program name (omit to use the active program)",
+                   defaultValue = "") String programName) {
+        ServiceUtils.ProgramOrError pe = ServiceUtils.getProgramOrError(programProvider, programName);
+        if (pe.hasError()) return pe.error();
+        Program program = pe.program();
+
+        if (addressStr == null || addressStr.isEmpty()) {
+            return Response.err("address parameter is required");
+        }
+        Address address = ServiceUtils.parseAddress(program, addressStr);
+        if (address == null) {
+            return Response.err(ServiceUtils.getLastParseError());
+        }
+
+        // One read for all five kinds: separate reads could interleave with a write and return
+        // a torn snapshot, where `comment` names a kind whose sibling values came from a
+        // different moment. Sibling single-read getters here predate the read lock.
+        Map<String, Object> result = threadingStrategy.executeReadUnchecked(() -> {
+            Listing listing = program.getListing();
+            Map<String, Object> kinds = new LinkedHashMap<>(
+                ServiceUtils.addressToJson(address, program));
+            String first = null;
+            // Explicit precedence: CommentType.values() is declaration order, which puts EOL
+            // ahead of PLATE and made `comment` pick the wrong kind. Plate first, then
+            // narrowing scope.
+            for (CommentType type : List.of(CommentType.PLATE, CommentType.PRE, CommentType.EOL,
+                                            CommentType.POST, CommentType.REPEATABLE)) {
+                String text = listing.getComment(type, address);
+                kinds.put(type.name().toLowerCase(Locale.ROOT), text);
+                if (first == null && text != null && !text.isBlank()) {
+                    first = text;
+                }
+            }
+            kinds.put("comment", first);
+            kinds.put("has_comment", first != null);
+            return kinds;
+        });
+        return Response.ok(result);
+    }
+
     @McpTool(path = "/set_plate_comment", method = "POST", description = "Set a plate comment at any valid program address.", category = "comment")
     public Response setPlateComment(
             @Param(value = "address", paramType = "address", source = ParamSource.BODY,
@@ -247,7 +303,136 @@ public class CommentService {
     /**
      * Batch set multiple comments (decompiler, disassembly, and plate) in a single operation.
      */
-    @McpTool(path = "/batch_set_comments", method = "POST", description = "Set multiple comments in one operation. On programs with multiple address spaces (e.g., embedded targets), prefix addresses with the space name (mem:1000) to avoid ambiguous resolution.", category = "comment")
+    /**
+     * Rejects items the writer below would otherwise skip in silence. An item missing `comment`,
+     * carrying an unrecognised key, or naming an unresolvable address used to leave the request
+     * reporting success with a zero count, so a caller who sent the wrong shape -- {@code text}
+     * instead of {@code comment}, say -- believed the write had happened.
+     */
+    /**
+     * Decode one comment array strictly, recording every problem rather than dropping items.
+     *
+     * <p>The shared converters must stay permissive -- they also back endpoint-schema parsing,
+     * where non-string values are legitimate -- so strictness lives here, at the one endpoint
+     * whose contract is {@code {address: string, comment: string}}.
+     *
+     * <p>Direct and stringified input are normalised to the same JsonArray before inspection.
+     * Handling them separately is what let a stringified {@code [{...}, 42]} lose its malformed
+     * element while the direct form rejected it.
+     */
+    static List<Map<String, String>> decodeCommentItems(String field, Object raw,
+                                                        List<String> problems) {
+        List<Map<String, String>> decoded = new ArrayList<>();
+        if (raw == null) {
+            return decoded;
+        }
+
+        JsonElement element;
+        try {
+            element = raw instanceof String text
+                ? (text.isBlank() ? null : JsonParser.parseString(text))
+                : GSON.toJsonTree(raw);
+        }
+        catch (RuntimeException e) {
+            problems.add(field + " is not valid JSON: " + e.getMessage());
+            return decoded;
+        }
+        if (element == null || element.isJsonNull()) {
+            return decoded;
+        }
+        if (!element.isJsonArray()) {
+            problems.add(field + " must be a JSON array of objects, got "
+                + (element.isJsonObject() ? "an object" : "a scalar"));
+            return decoded;
+        }
+
+        JsonArray array = element.getAsJsonArray();
+        for (int i = 0; i < array.size(); i++) {
+            JsonElement item = array.get(i);
+            String where = field + "[" + i + "]";
+            if (item == null || !item.isJsonObject()) {
+                problems.add(where + " must be an object");
+                continue;
+            }
+            Map<String, String> entry = new LinkedHashMap<>();
+            for (Map.Entry<String, JsonElement> member : item.getAsJsonObject().entrySet()) {
+                JsonElement value = member.getValue();
+                if (value != null && !value.isJsonNull() && !value.isJsonPrimitive()) {
+                    problems.add(where + "." + member.getKey() + " must be a string, got "
+                        + (value.isJsonArray() ? "an array" : "an object"));
+                    continue;
+                }
+                if (value != null && value.isJsonPrimitive() && !value.getAsJsonPrimitive().isString()) {
+                    problems.add(where + "." + member.getKey() + " must be a string, got "
+                        + value.getAsJsonPrimitive());
+                    continue;
+                }
+                entry.put(member.getKey(),
+                    value == null || value.isJsonNull() ? null : value.getAsString());
+            }
+            decoded.add(entry);
+        }
+        return decoded;
+    }
+
+    static List<String> commentItemShapeProblems(String field, List<Map<String, String>> items) {
+        List<String> problems = new ArrayList<>();
+        if (items == null) {
+            return problems;
+        }
+        for (int i = 0; i < items.size(); i++) {
+            Map<String, String> item = items.get(i);
+            String where = field + "[" + i + "]";
+            if (item == null) {
+                problems.add(where + " is null");
+                continue;
+            }
+            List<String> unknown = item.keySet().stream()
+                    .filter(k -> !"address".equals(k) && !"comment".equals(k))
+                    .sorted()
+                    .toList();
+            if (!unknown.isEmpty()) {
+                problems.add(where + " has unrecognised key(s) " + unknown);
+            }
+            if (item.get("address") == null) {
+                problems.add(where + " is missing \"address\"");
+            }
+            if (item.get("comment") == null) {
+                problems.add(where + " is missing \"comment\"");
+            }
+        }
+        return problems;
+    }
+
+    private static void validateCommentItems(String field, List<Map<String, String>> items,
+                                             Program program, List<String> problems) {
+        problems.addAll(commentItemShapeProblems(field, items));
+        if (items == null) {
+            return;
+        }
+        for (int i = 0; i < items.size(); i++) {
+            Map<String, String> item = items.get(i);
+            String addressStr = item == null ? null : item.get("address");
+            if (addressStr != null && ServiceUtils.parseAddress(program, addressStr) == null) {
+                problems.add(field + "[" + i + "] address \"" + addressStr
+                        + "\" could not be resolved");
+            }
+        }
+    }
+
+    /**
+     * Advertised shape of the two comment arrays. The parameters are declared Object so the raw
+     * value reaches decodeCommentItems unconverted; without this fragment the scanner would infer
+     * "any" from that Object and the bridge would publish them as strings.
+     */
+    static final String COMMENT_ITEMS_SCHEMA =
+            "{\"type\":\"array\",\"items\":{\"type\":\"object\","
+            + "\"additionalProperties\":false,"
+            + "\"properties\":{\"address\":{\"type\":\"string\"},"
+            + "\"comment\":{\"type\":\"string\"}},"
+            + "\"required\":[\"address\",\"comment\"]}}";
+
+    @McpTool(path = "/batch_set_comments", method = "POST", description = "Set multiple comments in one operation. Each item in decompiler_comments/disassembly_comments must be {\"address\": \"0x...\", \"comment\": \"...\"}; unrecognised keys, missing keys and unresolvable addresses are rejected and the whole request writes nothing. On programs with multiple address spaces (e.g., embedded targets), prefix addresses with the space name (mem:1000) to avoid ambiguous resolution.", category = "comment")
     public Response batchSetComments(
             @Param(value = "address", paramType = "address", source = ParamSource.BODY,
                    description = "Address in the program. Accepts 0x<hex> (default space) or <space>:<hex> "
@@ -255,14 +440,30 @@ public class CommentService {
                                + "embedded/microcontroller targets — are not address-space-agnostic; "
                                + "use get_address_spaces to discover spaces before assuming a plain hex "
                                + "address is unambiguous.") String functionAddress,
-            @Param(value = "decompiler_comments", source = ParamSource.BODY, defaultValue = "[]") List<Map<String, String>> decompilerComments,
-            @Param(value = "disassembly_comments", source = ParamSource.BODY, defaultValue = "[]") List<Map<String, String>> disassemblyComments,
+            @Param(value = "decompiler_comments", source = ParamSource.BODY, defaultValue = "[]",
+                   schemaFragment = COMMENT_ITEMS_SCHEMA,
+                   description = "Native JSON array of {address, comment} objects.") Object decompilerCommentsRaw,
+            @Param(value = "disassembly_comments", source = ParamSource.BODY, defaultValue = "[]",
+                   schemaFragment = COMMENT_ITEMS_SCHEMA,
+                   description = "Native JSON array of {address, comment} objects.") Object disassemblyCommentsRaw,
             @Param(value = "plate_comment", source = ParamSource.BODY, defaultValue = "null",
                    description = "Plate comment text. Omit to leave existing plate untouched. Pass empty string to explicitly clear.") String plateComment,
             @Param(value = "program", description = "Target program name", defaultValue = "") String programName) {
         ServiceUtils.ProgramOrError pe = ServiceUtils.getProgramOrError(programProvider, programName);
         if (pe.hasError()) return pe.error();
         Program program = pe.program();
+
+        List<String> itemProblems = new ArrayList<>();
+        List<Map<String, String>> decompilerComments =
+            decodeCommentItems("decompiler_comments", decompilerCommentsRaw, itemProblems);
+        List<Map<String, String>> disassemblyComments =
+            decodeCommentItems("disassembly_comments", disassemblyCommentsRaw, itemProblems);
+        validateCommentItems("decompiler_comments", decompilerComments, program, itemProblems);
+        validateCommentItems("disassembly_comments", disassemblyComments, program, itemProblems);
+        if (!itemProblems.isEmpty()) {
+            return Response.err("batch_set_comments wrote nothing: " + String.join("; ", itemProblems)
+                    + ". Each item must be {\"address\": \"0x...\", \"comment\": \"...\"}.");
+        }
 
         final BatchCommentOutcome outcome;
         try {
@@ -375,8 +576,9 @@ public class CommentService {
         return Response.ok(resultMap);
     }
 
-    public Response batchSetComments(String functionAddress, List<Map<String, String>> decompilerComments,
-                                     List<Map<String, String>> disassemblyComments, String plateComment) {
+    /** Convenience overload. Takes the arrays raw so callers cannot pre-convert past validation. */
+    public Response batchSetComments(String functionAddress, Object decompilerComments,
+                                     Object disassemblyComments, String plateComment) {
         return batchSetComments(functionAddress, decompilerComments, disassemblyComments, plateComment, null);
     }
 

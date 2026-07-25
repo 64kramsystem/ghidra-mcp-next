@@ -123,7 +123,11 @@ jobs:
         # server. The true integration tests (GhidraMCPPluginTest,
         # EndpointRegistrationTest, AppTest) require a running Ghidra instance and are
         # excluded from this run.
-        mvn -q test -Dtest='com.xebyte.offline.*Test'
+        #
+        # com.xebyte.core is included too: those are Mockito/ProgramBuilder tests that
+        # need no Ghidra server either, but matching only com.xebyte.offline meant the
+        # test files under com.xebyte.core never ran in CI at all.
+        mvn -q test -Dtest='com.xebyte.offline.*Test,com.xebyte.core.*Test'
 
     - name: Upload release extension
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1

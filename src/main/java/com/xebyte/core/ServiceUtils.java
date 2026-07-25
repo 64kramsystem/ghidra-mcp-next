@@ -211,7 +211,11 @@ public final class ServiceUtils {
             return parsedList;
         }
 
-        return null;
+        // A non-null value that is neither a list nor a JSON string is a shape error. Returning
+        // null made it indistinguishable from "parameter absent", so passing an object where an
+        // array belongs reported success having written nothing.
+        throw new IllegalArgumentException(
+            "expected a JSON array of objects, got " + obj.getClass().getSimpleName());
     }
 
     // ========================================================================
