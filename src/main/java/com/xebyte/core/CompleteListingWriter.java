@@ -144,7 +144,13 @@ final class CompleteListingWriter {
         out.println();
     }
 
-    private void writeRange(PrintWriter out, Address rangeStart, Address rangeEnd) {
+    private void writeRange(PrintWriter out, Address requestedStart, Address requestedEnd) {
+        // Snap to whole code units. A requested bound landing inside a multi-byte instruction
+        // would otherwise make codeUnitAt return null for an address that is really part of a
+        // decoded instruction, and the walk would emit "undefined" over its bytes. A listing
+        // view shows the containing unit, so this does too.
+        Address rangeStart = containingBound(requestedStart, true);
+        Address rangeEnd = containingBound(requestedEnd, false);
         RangeIndex index = RangeIndex.build(program, rangeStart, rangeEnd);
         Address current = rangeStart;
         while (current != null && current.compareTo(rangeEnd) <= 0) {
@@ -163,28 +169,43 @@ final class CompleteListingWriter {
         }
     }
 
+    /**
+     * The containing code unit's bound, or the address itself where nothing is defined.
+     *
+     * @param start true for the unit's first address, false for its last
+     */
+    private Address containingBound(Address requested, boolean start) {
+        CodeUnit containing = program.getListing().getCodeUnitContaining(requested);
+        if (containing == null) {
+            return requested;
+        }
+        return start ? containing.getMinAddress() : containing.getMaxAddress();
+    }
+
     private void writeUnit(PrintWriter out, CodeUnit existing, Address start, Address end,
             UnitMetadata metadata, RangeIndex index) {
         tally(metadata);
 
-        writeComments(out, metadata, CommentType.PLATE, true);
-        writeComments(out, metadata, CommentType.PRE, false);
+        writeComments(out, metadata, CommentType.PLATE, true, start);
+        writeComments(out, metadata, CommentType.PRE, false, start);
         writeLabelsAndFunction(out, metadata, start);
         writeCrossReferences(out, start, end);
 
         writeCodeLine(out, existing, start, end, index, metadata);
 
-        writeComments(out, metadata, CommentType.POST, false);
-        writeComments(out, metadata, CommentType.REPEATABLE, false);
+        writeComments(out, metadata, CommentType.POST, false, start);
+        writeComments(out, metadata, CommentType.REPEATABLE, false, start);
     }
 
     private void writeComments(PrintWriter out, UnitMetadata metadata, CommentType type,
-            boolean boxed) {
+            boolean boxed, Address unitStart) {
         for (CommentRecord comment : metadata.comments()) {
             if (comment.type() != type) {
                 continue;
             }
-            boolean offcut = !comment.address().equals(firstAddress(metadata, comment));
+            // Offcut is relative to the unit start, not to the unit's other comments: a unit
+            // whose only comment sits at an interior address is still offcut.
+            boolean offcut = !comment.address().equals(unitStart);
             if (boxed) {
                 out.println(ADDRESS_INDENT + ";" + "*".repeat(70));
             }
@@ -197,18 +218,6 @@ final class CompleteListingWriter {
             }
             emittedComments.merge(type, 1, Integer::sum);
         }
-    }
-
-    private Address firstAddress(UnitMetadata metadata, CommentRecord comment) {
-        // A comment is offcut when it sits at an address other than the unit start; the
-        // unit start is the smallest address any record in this unit carries.
-        Address smallest = comment.address();
-        for (CommentRecord candidate : metadata.comments()) {
-            if (candidate.address().compareTo(smallest) < 0) {
-                smallest = candidate.address();
-            }
-        }
-        return smallest;
     }
 
     private void writeLabelsAndFunction(PrintWriter out, UnitMetadata metadata,
@@ -346,7 +355,7 @@ final class CompleteListingWriter {
             line.append(undefinedText(start, end, index));
         }
 
-        List<String> eol = eolLines(metadata);
+        List<String> eol = eolLines(metadata, start);
         if (eol.isEmpty()) {
             out.println(rstrip(line.toString()));
             return;
@@ -359,15 +368,23 @@ final class CompleteListingWriter {
         }
     }
 
-    private List<String> eolLines(UnitMetadata metadata) {
+    /**
+     * Every authored EOL line, in order. AsciiExporter stops after six.
+     *
+     * <p>EOL comments do not pass through {@link #writeComments}, so the offcut marker has to
+     * be applied here too: without it an EOL comment attached to an interior address is
+     * rendered as though the unit itself carried it.
+     */
+    private List<String> eolLines(UnitMetadata metadata, Address unitStart) {
         List<String> lines = new ArrayList<>();
         for (CommentRecord comment : metadata.comments()) {
             if (comment.type() != CommentType.EOL) {
                 continue;
             }
-            // Every authored line survives. AsciiExporter stops after six.
+            String prefix = comment.address().equals(unitStart)
+                ? "" : "[offcut " + comment.address() + "] ";
             for (String line : comment.text().split("\n", -1)) {
-                lines.add(line);
+                lines.add(prefix + line);
             }
             emittedComments.merge(CommentType.EOL, 1, Integer::sum);
         }
