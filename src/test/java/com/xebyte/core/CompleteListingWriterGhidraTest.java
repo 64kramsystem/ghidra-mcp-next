@@ -190,6 +190,30 @@ public class CompleteListingWriterGhidraTest {
             listing.contains("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"));
     }
 
+    /**
+     * A structure's own value representation is empty, so without component recursion the
+     * listing shows the type name and nothing else: field names, component types and values
+     * are all absent. AsciiExporter walks components via processSubData; this writer must too.
+     */
+    @Test
+    public void structureComponentFieldNamesAndValuesAreEmitted() throws Exception {
+        builder.setBytes("0x1080", "a5 34 12");
+        ghidra.program.model.data.StructureDataType packet =
+            new ghidra.program.model.data.StructureDataType("Packet", 0);
+        packet.add(ghidra.program.model.data.ByteDataType.dataType, "opcode", null);
+        packet.add(ghidra.program.model.data.WordDataType.dataType, "target", null);
+        builder.applyDataType("0x1080", packet, 1);
+
+        String listing = exportWholeProgram();
+
+        assertEquals("the struct must be one 3-byte code unit", 3,
+            program.getListing().getDataAt(builder.addr("0x1080")).getLength());
+        assertTrue("the opcode field name must be emitted", listing.contains("opcode"));
+        assertTrue("the target field name must be emitted", listing.contains("target"));
+        assertTrue("the opcode component value must be emitted", listing.contains("A5h"));
+        assertTrue("the target component value must be emitted", listing.contains("1234h"));
+    }
+
     /** Offcut annotations: WORK_PTR on the real program reports 60 offcut references. */
     @Test
     public void offcutCommentIsEmitted() throws Exception {
@@ -301,6 +325,16 @@ public class CompleteListingWriterGhidraTest {
             "00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f "
                 + "10 11 12 13 14 15 16 17 18 19 1a 1b 1c 1d 1e 1f");
         builder.applyDataType("0x1080", new ghidra.program.model.data.ByteDataType(), 32);
+        builder.setBytes("0x10c0", "a5 34 12 07");
+        ghidra.program.model.data.StructureDataType inner =
+            new ghidra.program.model.data.StructureDataType("Header", 0);
+        inner.add(ghidra.program.model.data.ByteDataType.dataType, "opcode", null);
+        inner.add(ghidra.program.model.data.WordDataType.dataType, "target", null);
+        ghidra.program.model.data.StructureDataType outer =
+            new ghidra.program.model.data.StructureDataType("Packet", 0);
+        outer.add(inner, "header", null);
+        outer.add(ghidra.program.model.data.ByteDataType.dataType, "checksum", null);
+        builder.applyDataType("0x10c0", outer, 1);
 
         Files.writeString(Path.of(dump), exportWholeProgram());
     }
