@@ -533,8 +533,10 @@ public class DebuggerService {
     @McpTool(path = "/debugger/launch", method = "POST",
             description = "Launch an executable through Ghidra's Trace RMI debugger launcher")
     public Response launch(
-            @Param(value = "executable_path", source = ParamSource.BODY,
-                    description = "Absolute path to the executable to launch") String executablePath,
+            @Param(value = "executable_path", source = ParamSource.BODY, defaultValue = "",
+                    description = "Absolute path to the executable to launch. Omit for connector "
+                            + "offers that attach to an already-running target and expose no "
+                            + "image parameter, such as the VICE C64 debugger.") String executablePath,
             @Param(value = "args", source = ParamSource.BODY, defaultValue = "",
                     description = "Command-line arguments to pass to the executable") String args,
             @Param(value = "cwd", source = ParamSource.BODY, defaultValue = "",
@@ -590,11 +592,19 @@ public class DebuggerService {
                         "Available offers: " + available);
             }
 
+            // Connector-style offers attach to an already-running target (an emulator, a stub) and
+            // expose no image parameter. Requiring one made every such offer unlaunchable.
             LaunchParameter<?> imageParam = offer.imageParameter();
-            if (imageParam == null) {
+            boolean haveExecutable = executablePath != null && !executablePath.isBlank();
+            if (imageParam == null && haveExecutable) {
                 return Response.err("Selected launcher '" + offer.getTitle() +
-                        "' does not expose an image/executable parameter. Available parameters: " +
+                        "' attaches to an already-running target and takes no executable, but " +
+                        "executable_path was given. Omit it. Available parameters: " +
                         offer.getParameters().keySet());
+            }
+            if (imageParam != null && !haveExecutable) {
+                return Response.err("Selected launcher '" + offer.getTitle() +
+                        "' launches an executable, so executable_path is required.");
             }
 
             int waitSeconds = Math.max(1, timeoutSeconds);
@@ -607,7 +617,10 @@ public class DebuggerService {
                                 Map<String, ValStr<?>> launchArgs,
                                 RelPrompt relPrompt) {
                             Map<String, ValStr<?>> configured = new LinkedHashMap<>(launchArgs);
-                            configured.put(imageParam.name(), decodeLaunchValue(imageParam, executablePath));
+                            if (imageParam != null) {
+                                configured.put(imageParam.name(),
+                                        decodeLaunchValue(imageParam, executablePath));
+                            }
                             if (args != null && !args.isBlank()) {
                                 setLaunchArgument(configured, launchOffer.getParameters(), "args", args);
                                 setLaunchArgument(configured, launchOffer.getParameters(), "env:OPT_TARGET_ARGS", args);
