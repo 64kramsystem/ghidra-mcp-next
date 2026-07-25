@@ -703,8 +703,4 @@ final class CompleteListingWriter {
         }
         return value.substring(0, end);
     }
-
-    int collectedReferenceCount() {
-        return collectedReferences;
-    }
 }
