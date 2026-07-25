@@ -202,6 +202,43 @@ public class CompleteListingWriterGhidraTest {
         assertTrue("an offcut comment must not vanish", listing.contains("OFFCUT_MARKER"));
     }
 
+    /**
+     * An offcut comment must be labelled offcut even when it is the unit's only comment.
+     * Comparing a comment's address against the unit's other comments rather than against
+     * the unit start silently mislabels exactly this case.
+     */
+    @Test
+    public void soleOffcutCommentIsLabelledAsOffcut() throws Exception {
+        setComment("0x1002", CommentType.EOL, "SOLE_OFFCUT");
+
+        String listing = exportWholeProgram();
+
+        assertTrue("the comment must survive", listing.contains("SOLE_OFFCUT"));
+        assertTrue("and must be marked offcut, not shown as the unit's own comment",
+            listing.contains("[offcut 00001002]"));
+    }
+
+    /**
+     * A bounded range whose start lands inside a multi-byte instruction must render that
+     * instruction, not "undefined" over its bytes.
+     */
+    @Test
+    public void rangeStartingInsideAnInstructionRendersTheContainingUnit() throws Exception {
+        Path destination = temporaryFolder.getRoot().toPath().resolve("bounded.asm");
+        ExportService service = new ExportService(provider, security);
+
+        // 0x1001 begins a 3-byte MOV, so 0x1002 is interior to it.
+        Response response = service.exportFullListing(
+            destination.toString(), "0x1002", "0x1003", true, 100, "");
+        assertTrue(response.toJson(), response instanceof Response.Ok);
+
+        String listing = Files.readString(destination.toFile().getCanonicalFile().toPath());
+        assertTrue("the containing instruction must be rendered",
+            listing.contains("MOV") && listing.contains("RBP,RSP"));
+        assertFalse("its bytes must not be reported as undefined",
+            listing.contains("undefined"));
+    }
+
     /** The provenance header identifies which binary the artifact describes. */
     @Test
     public void headerNamesProgramAndLanguageWithoutTimestamp() throws Exception {
