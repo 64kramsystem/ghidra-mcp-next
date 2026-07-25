@@ -85,6 +85,8 @@ final class CompleteListingWriter {
 
     /** Authored comment body lines that must appear in the artifact, with their multiplicity. */
     private final Map<String, Integer> expectedCommentLines = new java.util.LinkedHashMap<>();
+    /** Reference tokens that must appear in the artifact, with their multiplicity. */
+    private final Map<String, Integer> expectedReferenceTokens = new java.util.LinkedHashMap<>();
 
     private int collectedLabels;
     private int emittedLabels;
@@ -297,6 +299,7 @@ final class CompleteListingWriter {
             .comparing((Reference reference) -> reference.getFromAddress())
             .thenComparing(Reference::getToAddress));
         collectedReferences += outgoing.size();
+        expect(outgoing);
         writeReferenceGroup(out, "XREF from", outgoing);
     }
 
@@ -319,7 +322,19 @@ final class CompleteListingWriter {
             .comparing((Reference reference) -> reference.getToAddress())
             .thenComparing(Reference::getFromAddress));
         collectedReferences += collected.size();
+        expect(collected);
         return collected;
+    }
+
+    /** Records the artifact tokens these references must produce. */
+    private void expect(List<Reference> group) {
+        for (Reference reference : group) {
+            expectedReferenceTokens.merge(referenceToken(reference), 1, Integer::sum);
+        }
+    }
+
+    private String referenceToken(Reference reference) {
+        return reference.getFromAddress() + "(" + abbreviate(reference) + ")";
     }
 
     private void writeReferenceGroup(PrintWriter out, String heading,
@@ -332,8 +347,7 @@ final class CompleteListingWriter {
         StringBuilder line = new StringBuilder(label);
         boolean first = true;
         for (Reference reference : group) {
-            String item = reference.getFromAddress()
-                + "(" + abbreviate(reference) + ")";
+            String item = referenceToken(reference);
             if (!first && line.length() + item.length() + 2 > xrefWrapColumn) {
                 // Trailing comma before the break, so a wrapped list still reads as a list.
                 out.println(line.append(",").toString());
@@ -619,35 +633,45 @@ final class CompleteListingWriter {
                     + " stopped at " + (reached == null ? "nothing" : reached);
             }
         }
-        return missingCommentBody(emittedLines);
+        return missingContent(emittedLines);
     }
 
     /**
-     * Looks for every authored comment body line in the artifact itself.
+     * Looks for every authored comment body line and every reference in the artifact itself.
      *
-     * <p>The counts above prove a comment record was handed to a renderer, not that its text
-     * reached the file. A renderer that emits part of a body, or a sink that swallows a line,
-     * leaves every count in agreement — the record was counted as emitted the moment the
-     * renderer was entered.
+     * <p>The counts above prove a record was handed to a renderer, not that its text reached the
+     * file. A renderer that emits part of a body, a deleted call to the group writer, or a sink
+     * that swallows a line all leave every count in agreement — a record is counted as emitted
+     * the moment the renderer is entered.
      *
-     * <p>Bodies are matched as line suffixes rather than by parsing the {@code "; "} introducer
-     * out of a line: a data value such as {@code ds "a; b"} contains that sequence, so parsing
-     * would pick the wrong offset on exactly the lines that are hardest to check by eye.
-     * Candidates are bucketed by last character, which is shared by any line ending in a given
-     * body, so the scan stays proportional to the artifact.
+     * <p>Comment bodies are matched as line suffixes rather than by parsing the {@code "; "}
+     * introducer out of a line: a data value such as {@code ds "a; b"} contains that sequence,
+     * so parsing would pick the wrong offset on exactly the lines that are hardest to check by
+     * eye. Candidates are bucketed by last character, which any line ending in a given body
+     * shares, so the scan stays proportional to the artifact.
      *
-     * @return a description of the first body line that did not reach the output, or null
+     * @return a description of the first content that did not reach the output, or null
      */
-    private String missingCommentBody(java.util.stream.Stream<String> emittedLines) {
+    private String missingContent(java.util.stream.Stream<String> emittedLines) {
         Map<Character, List<String>> byLastCharacter = new java.util.HashMap<>();
+        Map<String, Integer> tokens = new java.util.HashMap<>();
         emittedLines.forEach(raw -> {
             String line = rstrip(raw);
-            if (!line.isEmpty()) {
-                byLastCharacter
-                    .computeIfAbsent(line.charAt(line.length() - 1), key -> new ArrayList<>())
-                    .add(line);
+            if (line.isEmpty()) {
+                return;
+            }
+            byLastCharacter
+                .computeIfAbsent(line.charAt(line.length() - 1), key -> new ArrayList<>())
+                .add(line);
+            // Reference tokens carry no spaces and are comma-separated, so splitting on those
+            // recovers them exactly, wrapped lines included.
+            for (String piece : line.split("[ ,]+")) {
+                if (piece.endsWith(")") && piece.indexOf('(') > 0) {
+                    tokens.merge(piece, 1, Integer::sum);
+                }
             }
         });
+
         for (Map.Entry<String, Integer> expected : expectedCommentLines.entrySet()) {
             String body = expected.getKey();
             int found = 0;
@@ -660,6 +684,13 @@ final class CompleteListingWriter {
             if (found < expected.getValue()) {
                 return "comment body line reached the output " + found + " of "
                     + expected.getValue() + " times: \"" + body + "\"";
+            }
+        }
+        for (Map.Entry<String, Integer> expected : expectedReferenceTokens.entrySet()) {
+            int found = tokens.getOrDefault(expected.getKey(), 0);
+            if (found < expected.getValue()) {
+                return "reference " + expected.getKey() + " reached the output "
+                    + found + " of " + expected.getValue() + " times";
             }
         }
         return null;
