@@ -229,12 +229,21 @@ public final class JsonHelper {
     public static java.util.List<Map<String, String>> toMapStringList(Object obj) {
         if (!(obj instanceof java.util.List<?> list)) return null;
         java.util.List<Map<String, String>> result = new java.util.ArrayList<>();
-        for (Object item : list) {
-            if (item instanceof Map<?, ?> map) {
-                Map<String, String> strMap = new LinkedHashMap<>();
-                map.forEach((k, v) -> strMap.put(String.valueOf(k), v != null ? String.valueOf(v) : null));
-                result.add(strMap);
+        for (int i = 0; i < list.size(); i++) {
+            Object item = list.get(i);
+            // Non-object elements used to be dropped here without a word, so a request mixing
+            // one valid entry with one malformed one arrived at the service as a single valid
+            // entry: the good half was written and the call reported success. Every index must
+            // survive to the caller's validation, so refuse instead of discarding.
+            if (!(item instanceof Map<?, ?> map)) {
+                throw new IllegalArgumentException("item[" + i + "] must be an object, got "
+                    + (item == null ? "null" : item.getClass().getSimpleName()));
             }
+            // Values stay permissive: this converter also backs endpoint-schema parsing, where
+            // booleans are legitimate, so requiring strings here breaks unrelated callers.
+            Map<String, String> strMap = new LinkedHashMap<>();
+            map.forEach((k, v) -> strMap.put(String.valueOf(k), v != null ? String.valueOf(v) : null));
+            result.add(strMap);
         }
         return result;
     }

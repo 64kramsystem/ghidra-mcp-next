@@ -89,8 +89,11 @@ def check_maven_java(repo_root: Path, maven_command: Path) -> str | None:
     Upstream's equivalent check accepts anything >= 21 and so passes the JDK that fails.
     """
     required = required_java_major(repo_root)
+    if required is None:
+        # Nothing to compare against; do not shell out to Maven just to discard the answer.
+        return None
     actual = maven_java_major(maven_command)
-    if required is None or actual is None or actual == required:
+    if actual is None or actual == required:
         return None
 
     return (

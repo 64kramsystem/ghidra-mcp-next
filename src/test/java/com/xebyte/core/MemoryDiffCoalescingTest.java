@@ -27,65 +27,61 @@ public class MemoryDiffCoalescingTest {
         return result;
     }
 
-    private static int differingBytes(List<ProgramScriptService.DiffRun> runs) {
-        return runs.stream().mapToInt(ProgramScriptService.DiffRun::length).sum();
+    private static ProgramScriptService.DiffSummary diff(byte[] a, byte[] b) {
+        return ProgramScriptService.coalesceDifferences(a, b, Integer.MAX_VALUE);
     }
 
     @Test
     public void identicalRangesProduceNoRuns() {
-        List<ProgramScriptService.DiffRun> runs = ProgramScriptService.coalesceDifferences(
-                bytes(1, 2, 3), bytes(1, 2, 3));
+        ProgramScriptService.DiffSummary summary = diff(bytes(1, 2, 3), bytes(1, 2, 3));
 
-        assertEquals(List.of(), runs);
+        assertEquals(0, summary.runCount());
+        assertEquals(0, summary.differingBytes());
+        assertEquals(List.of(), summary.runs());
     }
 
     @Test
     public void adjacentDifferencesCoalesceIntoOneRun() {
-        List<ProgramScriptService.DiffRun> runs = ProgramScriptService.coalesceDifferences(
-                bytes(0, 1, 2, 3, 4), bytes(0, 9, 9, 9, 4));
+        ProgramScriptService.DiffSummary summary = diff(bytes(0, 1, 2, 3, 4), bytes(0, 9, 9, 9, 4));
 
-        assertEquals(1, runs.size());
-        assertEquals(1, runs.get(0).offset());
-        assertEquals(3, runs.get(0).length());
+        assertEquals(1, summary.runCount());
+        assertEquals(1, summary.runs().get(0).offset());
+        assertEquals(3, summary.runs().get(0).length());
     }
 
     @Test
     public void equalBytesSplitARun() {
         // The case that makes "one run of length N" and "N differing bytes" diverge.
-        List<ProgramScriptService.DiffRun> runs = ProgramScriptService.coalesceDifferences(
-                bytes(1, 1, 1, 1, 1), bytes(9, 1, 9, 1, 9));
+        ProgramScriptService.DiffSummary summary = diff(bytes(1, 1, 1, 1, 1), bytes(9, 1, 9, 1, 9));
 
-        assertEquals(3, runs.size());
-        assertEquals(3, differingBytes(runs));
+        assertEquals(3, summary.runCount());
+        assertEquals(3, summary.differingBytes());
     }
 
     @Test
     public void aRunEndingAtTheLastByteIsClosed() {
-        List<ProgramScriptService.DiffRun> runs = ProgramScriptService.coalesceDifferences(
-                bytes(1, 2, 3), bytes(1, 9, 9));
+        ProgramScriptService.DiffSummary summary = diff(bytes(1, 2, 3), bytes(1, 9, 9));
 
-        assertEquals(1, runs.size());
-        assertEquals(1, runs.get(0).offset());
-        assertEquals(2, runs.get(0).length());
+        assertEquals(1, summary.runCount());
+        assertEquals(1, summary.runs().get(0).offset());
+        assertEquals(2, summary.runs().get(0).length());
     }
 
     @Test
     public void aRunStartingAtOffsetZeroIsFound() {
-        List<ProgramScriptService.DiffRun> runs = ProgramScriptService.coalesceDifferences(
-                bytes(9, 2, 3), bytes(1, 2, 3));
+        ProgramScriptService.DiffSummary summary = diff(bytes(9, 2, 3), bytes(1, 2, 3));
 
-        assertEquals(1, runs.size());
-        assertEquals(0, runs.get(0).offset());
+        assertEquals(1, summary.runCount());
+        assertEquals(0, summary.runs().get(0).offset());
     }
 
     @Test
     public void everyByteDifferingIsASingleRun() {
-        List<ProgramScriptService.DiffRun> runs = ProgramScriptService.coalesceDifferences(
-                bytes(1, 1, 1), bytes(2, 2, 2));
+        ProgramScriptService.DiffSummary summary = diff(bytes(1, 1, 1), bytes(2, 2, 2));
 
-        assertEquals(1, runs.size());
-        assertEquals(3, runs.get(0).length());
-        assertEquals(3, differingBytes(runs));
+        assertEquals(1, summary.runCount());
+        assertEquals(3, summary.runs().get(0).length());
+        assertEquals(3, summary.differingBytes());
     }
 
     @Test
@@ -101,14 +97,43 @@ public class MemoryDiffCoalescingTest {
         a[70] = 0x12;
         a[71] = 0x34;
 
-        List<ProgramScriptService.DiffRun> runs = ProgramScriptService.coalesceDifferences(a, b);
+        ProgramScriptService.DiffSummary summary = diff(a, b);
 
-        assertEquals(2, runs.size());
-        assertEquals(0, runs.get(0).offset());
-        assertEquals(40, runs.get(0).length());
-        assertEquals(70, runs.get(1).offset());
-        assertEquals(2, runs.get(1).length());
-        assertEquals(42, differingBytes(runs));
-        assertTrue(differingBytes(runs) < 72);
+        assertEquals(2, summary.runCount());
+        assertEquals(0, summary.runs().get(0).offset());
+        assertEquals(40, summary.runs().get(0).length());
+        assertEquals(70, summary.runs().get(1).offset());
+        assertEquals(2, summary.runs().get(1).length());
+        assertEquals(42, summary.differingBytes());
+        assertTrue(summary.differingBytes() < 72);
+    }
+
+    @Test
+    public void maxRunsCapsWhatIsRetainedButNotWhatIsCounted() {
+        // 16MB of alternating bytes would otherwise allocate ~8.4M run objects to return one.
+        byte[] a = new byte[1000];
+        byte[] b = new byte[1000];
+        for (int i = 0; i < 1000; i += 2) {
+            b[i] = 1;
+        }
+
+        ProgramScriptService.DiffSummary summary =
+                ProgramScriptService.coalesceDifferences(a, b, 3);
+
+        assertEquals(3, summary.runs().size());
+        assertEquals(500, summary.runCount());
+        assertEquals(500, summary.differingBytes());
+        assertEquals(0, summary.firstOffset());
+        assertEquals(998, summary.lastOffset());
+    }
+
+    @Test
+    public void zeroRetainedRunsStillReportsTheTotals() {
+        ProgramScriptService.DiffSummary summary =
+                ProgramScriptService.coalesceDifferences(bytes(1, 2), bytes(9, 9), 0);
+
+        assertEquals(List.of(), summary.runs());
+        assertEquals(1, summary.runCount());
+        assertEquals(2, summary.differingBytes());
     }
 }

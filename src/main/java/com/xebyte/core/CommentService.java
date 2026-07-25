@@ -194,22 +194,29 @@ public class CommentService {
             return Response.err(ServiceUtils.getLastParseError());
         }
 
-        Listing listing = program.getListing();
-        Map<String, Object> result = new LinkedHashMap<>(
-            ServiceUtils.addressToJson(address, program));
-        String best = null;
-        // Explicit precedence: CommentType.values() is declaration order, which put EOL ahead of
-        // PLATE and made `comment` pick the wrong kind. Plate first, then narrowing scope.
-        for (CommentType type : List.of(CommentType.PLATE, CommentType.PRE, CommentType.EOL,
-                                        CommentType.POST, CommentType.REPEATABLE)) {
-            String text = listing.getComment(type, address);
-            result.put(type.name().toLowerCase(Locale.ROOT), text);
-            if (best == null && text != null && !text.isBlank()) {
-                best = text;
+        // One read for all five kinds: separate reads could interleave with a write and return
+        // a torn snapshot, where `comment` names a kind whose sibling values came from a
+        // different moment. Sibling single-read getters here predate the read lock.
+        Map<String, Object> result = threadingStrategy.executeReadUnchecked(() -> {
+            Listing listing = program.getListing();
+            Map<String, Object> kinds = new LinkedHashMap<>(
+                ServiceUtils.addressToJson(address, program));
+            String first = null;
+            // Explicit precedence: CommentType.values() is declaration order, which puts EOL
+            // ahead of PLATE and made `comment` pick the wrong kind. Plate first, then
+            // narrowing scope.
+            for (CommentType type : List.of(CommentType.PLATE, CommentType.PRE, CommentType.EOL,
+                                            CommentType.POST, CommentType.REPEATABLE)) {
+                String text = listing.getComment(type, address);
+                kinds.put(type.name().toLowerCase(Locale.ROOT), text);
+                if (first == null && text != null && !text.isBlank()) {
+                    first = text;
+                }
             }
-        }
-        result.put("comment", best);
-        result.put("has_comment", best != null);
+            kinds.put("comment", first);
+            kinds.put("has_comment", first != null);
+            return kinds;
+        });
         return Response.ok(result);
     }
 
