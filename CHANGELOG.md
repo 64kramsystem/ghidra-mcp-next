@@ -6,6 +6,11 @@ Complete version history for the GhidraMCP-next project.
 
 ## Unreleased
 
+### Fixed
+
+- Made connector-style launch offers selectable by name. `selectLaunchOffer` filtered candidates by `supportsImage()` before matching the caller's explicit `offer`, so offers that attach to an emulator rather than launching an executable — the VICE C64 debugger connector among them — could never be chosen. The explicit choice is now matched against every offer; the image filter applies only to automatic selection.
+- Stopped `debugger_launch` silently substituting an unrelated backend. When an explicitly named offer matched nothing, selection fell through to `candidates.get(0)`: asking for the VICE connector started gdb-over-ssh instead. An unmatched name now fails and lists the available offers, matching the contract `DebuggerAttachSemantics.selectOffer` already enforces on the attach path.
+
 ## GhidraMCP-next 20260725-113856
 
 ### Fixed
