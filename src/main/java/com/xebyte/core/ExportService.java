@@ -247,11 +247,11 @@ public final class ExportService {
             + "field, emits every line of every comment rather than the first six, and emits "
             + "every cross-reference rather than the first twenty-one. Columns are minimum "
             + "widths, so long operands push the comment column right instead of being "
-            + "shortened, and authored newlines in comments are never re-flowed. The export "
-            + "fails without publishing if it cannot emit everything it collected. Two current "
-            + "limits: structured data components are not traversed, so a structure's field "
-            + "names and values do not appear, and data operands render numerically rather "
-            + "than through symbol resolution.",
+            + "shortened, and authored newlines in comments are never re-flowed. Structures and "
+            + "arrays are traversed, so field names, component types and values appear indented "
+            + "under their parent. The export fails without publishing if it cannot emit "
+            + "everything it collected: comment bodies and references are checked against the "
+            + "written file, and a program edit landing mid-export fails it too.",
         category = "export", supportsDryRun = false)
     public Response exportFullListing(
             @Param(value = "output_path", source = ParamSource.BODY,
