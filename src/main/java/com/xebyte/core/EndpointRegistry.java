@@ -377,6 +377,15 @@ public class EndpointRegistry {
             (q, b) -> exportService.exportAsciiListing(
                 bodyStr(b, "output_path"), bodyStr(b, "start"), bodyStr(b, "end"),
                 bodyBool(b, "overwrite", false), str(q, "program")));
+
+        post("/export_full_listing",
+            "Export a complete listing that drops nothing, unlike AsciiExporter",
+            params(bStr("output_path"), bStrOpt("start"), bStrOpt("end"),
+                bBool("overwrite", false), bInt("xref_wrap_column", 100), pProg()),
+            (q, b) -> exportService.exportFullListing(
+                bodyStr(b, "output_path"), bodyStr(b, "start"), bodyStr(b, "end"),
+                bodyBool(b, "overwrite", false),
+                bodyInt(b, "xref_wrap_column", 100), str(q, "program")));
     }
 
     // ======================================================================

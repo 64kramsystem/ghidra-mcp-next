@@ -31,6 +31,7 @@ import ghidra.program.model.mem.MemoryBlock;
 import ghidra.program.model.symbol.Reference;
 import ghidra.program.model.symbol.ReferenceManager;
 import ghidra.program.model.symbol.Symbol;
+import ghidra.app.util.template.TemplateSimplifier;
 
 /**
  * Renders a listing that never discards content.
@@ -78,6 +79,10 @@ final class CompleteListingWriter {
         new EnumMap<>(CommentType.class);
     private final Map<CommentType, Integer> emittedComments =
         new EnumMap<>(CommentType.class);
+    /** Each range the walk was asked to cover, and the last address it actually reached. */
+    private final Map<Address, Address> requiredCoverage = new java.util.LinkedHashMap<>();
+    private final Map<Address, Address> coverageReached = new java.util.LinkedHashMap<>();
+
     private int collectedLabels;
     private int emittedLabels;
     private int collectedReferences;
@@ -92,10 +97,16 @@ final class CompleteListingWriter {
         // load-bearing on programs with overlay spaces: an operand reaching into an overlay
         // must stay block-qualified. getDefaultOperandRepresentation would render a bare
         // address instead of the symbol, which is why operand_text is not reused here.
+        // The simplifier must be non-null and disabled, exactly as Ghidra's exporter builds
+        // it: CodeUnitFormatOptions.simplifyTemplate dereferences it unconditionally, so
+        // passing null throws as soon as an operand resolves to a symbol — the common case,
+        // and guaranteed for an operand reaching into an overlay.
+        TemplateSimplifier simplifier = new TemplateSimplifier();
+        simplifier.setEnabled(false);
         this.format = new CodeUnitFormat(new CodeUnitFormatOptions(
             CodeUnitFormatOptions.ShowBlockName.NON_LOCAL,
             CodeUnitFormatOptions.ShowNamespace.NON_LOCAL,
-            null, true, true, true, true, true, true, true, null));
+            null, true, true, true, true, true, true, true, simplifier));
     }
 
     /** Renders every range of {@code selection}, in address order. */
@@ -151,6 +162,7 @@ final class CompleteListingWriter {
         // view shows the containing unit, so this does too.
         Address rangeStart = containingBound(requestedStart, true);
         Address rangeEnd = containingBound(requestedEnd, false);
+        requiredCoverage.put(rangeStart, rangeEnd);
         RangeIndex index = RangeIndex.build(program, rangeStart, rangeEnd);
         Address current = rangeStart;
         while (current != null && current.compareTo(rangeEnd) <= 0) {
@@ -165,6 +177,7 @@ final class CompleteListingWriter {
                 index.collectMetadata(current, unitEnd, INCOMING_BUDGET);
             writeUnit(out, existing, current, unitEnd, metadata, index);
             codeUnits++;
+            coverageReached.put(rangeStart, unitEnd);
             current = unitEnd.equals(rangeEnd) ? null : next(unitEnd);
         }
     }
@@ -290,6 +303,7 @@ final class CompleteListingWriter {
         collected.sort(Comparator
             .comparing((Reference reference) -> reference.getToAddress())
             .thenComparing(Reference::getFromAddress));
+        collectedReferences += collected.size();
         return collected;
     }
 
@@ -396,20 +410,44 @@ final class CompleteListingWriter {
         if (!index.initialized(start, end)) {
             return "";
         }
-        StringBuilder hex = new StringBuilder();
+        int length = (int) (end.subtract(start) + 1);
+        byte[] bytes = new byte[length];
+        int read;
         try {
-            byte[] bytes = new byte[(int) (end.subtract(start) + 1)];
-            index.memory().getBytes(start, bytes);
-            for (byte value : bytes) {
-                hex.append(String.format("%02x", value));
-            }
+            read = index.memory().getBytes(start, bytes);
         }
         catch (Exception e) {
-            return "";
+            // Never swallow this. Returning an empty byte field would publish a listing
+            // that is missing bytes while every completeness counter still agreed.
+            throw new IncompleteListingException(
+                "could not read bytes at " + start + ": "
+                    + (e.getMessage() == null ? e.toString() : e.getMessage()));
+        }
+        if (read != length) {
+            // A short read would otherwise be padded with the array's zero tail and emitted
+            // as though those were real bytes.
+            throw new IncompleteListingException("short read at " + start + ": got "
+                + read + " of " + length + " bytes");
+        }
+        StringBuilder hex = new StringBuilder(length * 2);
+        for (byte value : bytes) {
+            hex.append(String.format("%02x", value));
         }
         // No clipping: a 32-byte data unit renders all 64 characters. AsciiExporter cuts
         // this column at 12.
         return hex.toString();
+    }
+
+    /**
+     * Signals that the listing could not be rendered in full. The runner turns this into a
+     * failed export, so nothing is published; the alternative is a file that looks complete.
+     */
+    static final class IncompleteListingException extends RuntimeException {
+        private static final long serialVersionUID = 1L;
+
+        IncompleteListingException(String message) {
+            super(message);
+        }
     }
 
     private String undefinedText(Address start, Address end, RangeIndex index) {
@@ -479,6 +517,20 @@ final class CompleteListingWriter {
         }
         if (collectedLabels != emittedLabels) {
             return "emitted " + emittedLabels + " of " + collectedLabels + " labels";
+        }
+        if (collectedReferences != emittedReferences) {
+            return "emitted " + emittedReferences + " of " + collectedReferences
+                + " references";
+        }
+        // Coverage, not just cardinality: without this, an unexpected next() failure ends the
+        // walk early and every count still agrees, because uncollected records are also
+        // uncounted.
+        for (Map.Entry<Address, Address> required : requiredCoverage.entrySet()) {
+            Address reached = coverageReached.get(required.getKey());
+            if (reached == null || !reached.equals(required.getValue())) {
+                return "range " + required.getKey() + " - " + required.getValue()
+                    + " stopped at " + (reached == null ? "nothing" : reached);
+            }
         }
         return null;
     }

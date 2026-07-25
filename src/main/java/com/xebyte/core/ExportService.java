@@ -143,6 +143,17 @@ public final class ExportService {
             try (PrintWriter out = new PrintWriter(
                     Files.newBufferedWriter(file.toPath()))) {
                 writer.write(out, selection);
+                out.flush();
+                // PrintWriter swallows IOExceptions. Without this a failed write publishes a
+                // truncated file while every completeness counter still agrees.
+                if (out.checkError()) {
+                    lastDiagnostic.set("writing " + file + " failed");
+                    return false;
+                }
+            }
+            catch (CompleteListingWriter.IncompleteListingException e) {
+                lastDiagnostic.set(e.getMessage());
+                return false;
             }
             String shortfall = writer.shortfall();
             if (shortfall != null) {
@@ -225,7 +236,10 @@ public final class ExportService {
             + "every cross-reference rather than the first twenty-one. Columns are minimum "
             + "widths, so long operands push the comment column right instead of being "
             + "shortened, and authored newlines in comments are never re-flowed. The export "
-            + "fails without publishing if it cannot emit everything it collected.",
+            + "fails without publishing if it cannot emit everything it collected. Two current "
+            + "limits: structured data components are not traversed, so a structure's field "
+            + "names and values do not appear, and data operands render numerically rather "
+            + "than through symbol resolution.",
         category = "export", supportsDryRun = false)
     public Response exportFullListing(
             @Param(value = "output_path", source = ParamSource.BODY,

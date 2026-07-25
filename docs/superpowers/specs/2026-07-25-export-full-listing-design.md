@@ -1,7 +1,31 @@
 # `export_full_listing`: a complete disassembly listing export
 
 Date: 2026-07-25
-Status: approved design, not yet implemented
+Status: implemented, with the known gaps listed under "Not yet delivered"
+
+## Not yet delivered
+
+Recorded here rather than left implied by the rest of this document:
+
+- **Structured data components are not traversed.** For a structure, Ghidra's top-level
+  `getDefaultValueRepresentation()` is normally empty, and the writer does not walk `Data`
+  components, so field names, component types and component values are absent. Ghidra's own
+  exporter recurses (`ProgramTextWriter.processSubData`). Until this is fixed, "drops nothing"
+  is accurate for instructions, comments, labels, references and flat data, **not** for
+  structured data. Relevant to C64 vector tables and structured register data.
+- **Data operands** use `Data.getDefaultValueRepresentation()` rather than `CodeUnitFormat`,
+  so a pointer or vector may render numerically even where an overlay label exists.
+- **No program modification-number guard.** `ListingRangeService` pins one; this writer does
+  not, so a concurrent edit mid-export is neither detected nor rejected. It takes no read lock
+  either, matching `export_ascii_listing`.
+- **Outgoing references** are not emitted; only incoming ones, direct and offcut.
+- **Comment-body integrity is not checked**, only per-record cardinality: a record whose text
+  was mangled or partially emitted still counts as one emitted record.
+- Tests not yet written: end-of-address-space bounds, base and overlay units at the same
+  numeric offset, more than 64 incoming references, injected reference omission, short memory
+  read, output-stream failure, PETSCII/control-character rendering.
+- The whole-program run against `neverending_story.bin` through the deployed plugin is
+  **unverified**; it needs a Ghidra restart to load the new jar.
 
 ## Problem, measured on a real program
 
