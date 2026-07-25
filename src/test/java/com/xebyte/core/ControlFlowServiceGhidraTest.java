@@ -480,4 +480,49 @@ public class ControlFlowServiceGhidraTest {
         table.put("pointers", pointers);
         return table;
     }
+
+    @Test
+    public void removalAcceptsATargetOutsideMappedMemory() throws Exception {
+        // Ghidra creates such edges itself: a `JMP $ffff` whose operand is patched at runtime
+        // leaves a reference to an address no block covers. batch_update_references used to
+        // refuse to delete them while remove_reference accepted them, so a caller cleaning up
+        // a batch had to switch tools midway.
+        int tx = program.startTransaction("stale reference to unmapped memory");
+        try {
+            program.getReferenceManager().addMemoryReference(
+                builder.addr("0x1010"), builder.addr("0xffff"),
+                RefType.UNCONDITIONAL_JUMP, SourceType.ANALYSIS, 0);
+        }
+        finally {
+            program.endTransaction(tx, true);
+        }
+        assertNotNull(program.getReferenceManager().getReference(
+            builder.addr("0x1010"), builder.addr("0xffff"), 0));
+
+        ok(service.batchUpdateReferences(
+            List.of(),
+            List.of(reference("0x1010", "0xffff", "jump", 0)),
+            true, false, ""));
+
+        assertNull(program.getReferenceManager().getReference(
+            builder.addr("0x1010"), builder.addr("0xffff"), 0));
+    }
+
+    @Test
+    public void unmatchedRemovalReportsWhatIsActuallyPresent() throws Exception {
+        ok(service.batchUpdateReferences(
+            List.of(reference("0x1010", "0x3000", "write", 0)),
+            List.of(), false, false, ""));
+
+        // Same slot, wrong type: "(actual: absent)" alone would not say why.
+        Response denied = service.batchUpdateReferences(
+            List.of(),
+            List.of(reference("0x1010", "0x3000", "jump", 0)),
+            true, false, "");
+
+        assertTrue(denied.toJson(), denied instanceof Response.Err);
+        String message = denied.toJson();
+        assertTrue(message, message.contains("operand_index=0"));
+        assertTrue(message, message.contains("3000"));
+    }
 }
