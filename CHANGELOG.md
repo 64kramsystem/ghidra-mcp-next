@@ -6,6 +6,8 @@ Complete version history for the GhidraMCP-next project.
 
 ## Unreleased
 
+## GhidraMCP-next 20260725-113856
+
 ### Fixed
 
 - Made Debugger tool auto-start actually reachable. `debugger_launch_offers` now starts a Debugger tool when none is running, matching `debugger_launch` and `debugger_attach`; previously the natural first call of a debug session failed whenever the tool was not already open, leaving no way to bootstrap it over MCP.
