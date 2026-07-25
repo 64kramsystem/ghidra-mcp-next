@@ -913,6 +913,11 @@ public class EndpointRegistry {
             (q, b) -> dataTypeService.deleteDataType(bodyStr(b, "type_name"),
                 bodyBool(b, "resolve_demangler_duplicate", false), str(q, "program")));
 
+        post("/rename_data_type", "Rename a data type in place, preserving its applications",
+            params(bStr("old_name"), bStr("new_name"), pProg()),
+            (q, b) -> dataTypeService.renameDataType(bodyStr(b, "old_name"),
+                bodyStr(b, "new_name"), str(q, "program")));
+
         post("/resolve_duplicate_type", "Remove /Demangler 1-byte stub when canonical type exists",
             params(bStr("type_name"), bBool("delete_demangler_stub", true), pProg()),
             (q, b) -> dataTypeService.resolveDuplicateType(bodyStr(b, "type_name"),
