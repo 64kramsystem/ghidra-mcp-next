@@ -1243,9 +1243,6 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
     }
 
     /**
-     * Escape special characters in a string for display
-     */
-    /**
      * Maps common C type names to Ghidra built-in DataType instances.
      * These types exist as Java classes but may not be in the per-program DTM.
      */
@@ -1556,9 +1553,6 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
         return com.xebyte.core.JsonHelper.toMapStringList(obj);
     }
 
-    /**
-     * Convert a list of strings into one big newline-delimited string, applying offset & limit.
-     */
     /**
      * Parse an integer from a string, or return defaultValue if null/invalid.
      */
@@ -2183,12 +2177,6 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
     // ----------------------------------------------------------------------------------
 
     /**
-     * Create a union data type with simplified approach for testing
-     */
-    /**
-     * Create a union data type directly from fields object
-     */
-    /**
      * Create a union data type (legacy method)
      */
     private String createUnion(String name, String fieldsJson) {
@@ -2263,12 +2251,6 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
         return dataTypeService.importDataTypes(source, format).toJson();
     }
 
-    /**
-     * Helper method to extract JSON values from simple JSON strings
-     */
-    /**
-     * Convert an object to JSON string format
-     */
     // ===================================================================================
     // NEW DATA STRUCTURE MANAGEMENT METHODS
     // ===================================================================================
@@ -2419,9 +2401,7 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
         return dataTypeService.applyDataClassification(addressStr, classification, name, comment, typeDefinitionObj).toJson();
     }
 
-    /**
-     * === FIELD-LEVEL ANALYSIS IMPLEMENTATIONS (v1.4.0) ===
-     */
+    // === FIELD-LEVEL ANALYSIS IMPLEMENTATIONS (v1.4.0) ===
 
     /**
      * ANALYZE_STRUCT_FIELD_USAGE - Analyze how structure fields are accessed in decompiled code
@@ -2879,16 +2859,13 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
     }
 
     /**
-     * v1.5.0: Batch set variable types
-     */
-    @SuppressWarnings("deprecation")
-    /**
      * Individual variable type setting using setLocalVariableType (fallback method)
      * NOW USES OPTIMIZED SINGLE-DECOMPILE METHOD
      * This method was refactored to use batchSetVariableTypesOptimized() which decompiles
      * the function ONCE and applies all type changes within that single decompilation,
      * avoiding the repeated decompilation timeout issues that plagued the previous approach.
      */
+    @SuppressWarnings("deprecation")
     private String batchSetVariableTypesIndividual(String functionAddress, Map<String, String> variableTypes) {
         // Delegate to the optimized batch method that decompiles once
         // This fixes the issue where each setLocalVariableType() call caused its own decompilation

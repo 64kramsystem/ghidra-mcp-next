@@ -676,9 +676,6 @@ public class XrefCallGraphService {
     }
 
     /**
-     * Helper method to build call graph for callees (what this function calls)
-     */
-    /**
      * Graph-identity key for a function. Namespace-qualified name plus entry
      * address — unique across namespaces, overloads, and overlay spaces while
      * keeping text-format output (dot/mermaid/adjacency) human-readable.
