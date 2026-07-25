@@ -239,6 +239,25 @@ public class CompleteListingWriterGhidraTest {
             listing.contains("undefined"));
     }
 
+    /**
+     * A symbolized operand must render as the symbol, and must not throw.
+     *
+     * <p>CodeUnitFormatOptions.simplifyTemplate dereferences its TemplateSimplifier
+     * unconditionally, so passing null there throws as soon as an operand resolves to a
+     * symbol. Nothing else in this fixture resolves to one, which is how that stayed latent.
+     */
+    @Test
+    public void symbolizedOperandRendersAsSymbolAndDoesNotThrow() throws Exception {
+        // JMP rel32 at 0x1010 targeting 0x1000: 0x1015 + (-0x15) == 0x1000.
+        builder.setBytes("0x1010", "e9 eb ff ff ff");
+        builder.disassemble("0x1010", 5);
+
+        String listing = exportWholeProgram();
+
+        assertTrue("the operand must resolve to the function symbol, not a bare address",
+            listing.contains("JMP") && listing.contains("FUN_00001000"));
+    }
+
     /** The provenance header identifies which binary the artifact describes. */
     @Test
     public void headerNamesProgramAndLanguageWithoutTimestamp() throws Exception {
