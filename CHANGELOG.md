@@ -21,9 +21,14 @@ Complete version history for the GhidraMCP-next project.
 - `check_tools` distinguishes "no schema loaded" from "no such tool". Every Ghidra tool was previously reported `not_found` when no instance was connected; unconnected lookups now return `unknown` and name the fix.
 - The Maven build fails immediately when run on a JDK that cannot build the project, naming both the running and required versions. Previously JDK 26 produced a wall of compiler output ending in `warnings found and -Werror specified`, with nothing indicating the JDK was at fault. The required version is read from the pom rather than hardcoded.
 - CI now runs the `com.xebyte.core` Java tests, which no test-selector matched and which therefore never executed.
+- Allowed `debugger_launch` to use connector offers that take no executable. `executable_path` is now optional: offers exposing no image parameter — connectors that attach to an already-running emulator or stub — previously failed outright, since the launcher unconditionally required one. Supplying a path to such an offer, or omitting it for an offer that does launch an executable, is reported explicitly rather than ignored. With this the VICE C64 connector launches end to end over MCP.
+
+## GhidraMCP-next 20260725-120446
+
+### Fixed
+
 - Made connector-style launch offers selectable by name. `selectLaunchOffer` filtered candidates by `supportsImage()` before matching the caller's explicit `offer`, so offers that attach to an emulator rather than launching an executable — the VICE C64 debugger connector among them — could never be chosen. The explicit choice is now matched against every offer; the image filter applies only to automatic selection.
 - Stopped `debugger_launch` silently substituting an unrelated backend. When an explicitly named offer matched nothing, selection fell through to `candidates.get(0)`: asking for the VICE connector started gdb-over-ssh instead. An unmatched name now fails and lists the available offers, matching the contract `DebuggerAttachSemantics.selectOffer` already enforces on the attach path.
-- Allowed `debugger_launch` to use connector offers that take no executable. `executable_path` is now optional: offers exposing no image parameter — connectors that attach to an already-running emulator or stub — previously failed outright, since the launcher unconditionally required one. Supplying a path to such an offer, or omitting it for an offer that does launch an executable, is reported explicitly rather than ignored. With this the VICE C64 connector launches end to end over MCP.
 
 ## GhidraMCP-next 20260725-113856
 
