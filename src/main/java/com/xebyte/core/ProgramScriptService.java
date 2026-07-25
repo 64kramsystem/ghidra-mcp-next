@@ -1664,9 +1664,6 @@ public class ProgramScriptService {
     // Memory Operations
     // ========================================================================
 
-    /**
-     * Read memory at a specific address.
-     */
     /** Same ceiling as read_memory: two ranges of this size are compared, not one. */
     static final int MAX_DIFF_BYTES = 16 * 1024 * 1024;
     static final int MIN_DIFF_RUNS = 1;

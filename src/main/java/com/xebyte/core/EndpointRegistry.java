@@ -73,7 +73,6 @@ public class EndpointRegistry {
     }
 
     /** Returns an unmodifiable view of all registered endpoints. */
-    /** Returns an unmodifiable view of all registered endpoints. */
     public List<EndpointDef> getEndpoints() {
         return Collections.unmodifiableList(endpoints);
     }
