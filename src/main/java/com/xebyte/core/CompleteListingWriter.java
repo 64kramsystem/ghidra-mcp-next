@@ -205,6 +205,9 @@ final class CompleteListingWriter {
         writeCrossReferences(out, start, end, metadata);
 
         writeCodeLine(out, existing, start, end, index, metadata);
+        if (existing instanceof Data data) {
+            writeDataComponents(out, data, 1);
+        }
 
         writeComments(out, metadata, CommentType.POST, false, start);
         writeComments(out, metadata, CommentType.REPEATABLE, false, start);
@@ -378,12 +381,7 @@ final class CompleteListingWriter {
         }
         else if (existing instanceof Data data) {
             line.append(pad(data.getDataType().getDisplayName(), 10));
-            // Through CodeUnitFormat, not getDefaultValueRepresentation: the latter renders a
-            // pointer or vector numerically even where a symbol (including an overlay-
-            // qualified one) exists for its target.
-            String rendered = format.getOperandRepresentationString(data, 0);
-            line.append(rendered == null || rendered.isBlank()
-                ? data.getDefaultValueRepresentation() : rendered);
+            line.append(valueText(data));
         }
         else {
             line.append(pad("??", 10));
@@ -401,6 +399,50 @@ final class CompleteListingWriter {
         for (int index2 = 1; index2 < eol.size(); index2++) {
             out.println(rstrip(continuation + eol.get(index2)));
         }
+    }
+
+    /**
+     * Emits one line per component of a structure or array, recursing into nested ones.
+     *
+     * <p>A structure's own {@code getDefaultValueRepresentation()} is empty, so without this
+     * the unit contributes a type name and no content at all: field names, component types and
+     * component values are absent. This mirrors {@code ProgramTextWriter.processSubData},
+     * including its {@code |_} prefix and three-space indent per level, so a reader used to
+     * Ghidra's export recognises the shape.
+     */
+    private void writeDataComponents(PrintWriter out, Data data, int depth) {
+        int components = data.getNumComponents();
+        for (int index = 0; index < components; index++) {
+            Data component = data.getComponent(index);
+            if (component == null) {
+                // Ghidra's exporter returns quietly here; the component count changed under
+                // it. Dropping the remaining fields is exactly the silent loss this writer
+                // exists to prevent, so fail the export instead.
+                throw new IncompleteListingException("component " + index + " of "
+                    + components + " at " + data.getMinAddress()
+                    + " disappeared while rendering; the program changed mid-export");
+            }
+            StringBuilder line = new StringBuilder();
+            line.append(pad(" ".repeat(depth * 3) + "|_" + component.getMinAddress(), 16));
+            line.append(pad(component.getFieldName(), 26));
+            line.append(pad(component.getDataType().getDisplayName(), 10));
+            line.append(valueText(component));
+            out.println(rstrip(line.toString()));
+
+            writeDataComponents(out, component, depth + 1);
+        }
+    }
+
+    /**
+     * A data unit's value. Through {@link CodeUnitFormat}, not
+     * {@code getDefaultValueRepresentation}: the latter renders a pointer or vector numerically
+     * even where a symbol (including an overlay-qualified one) exists for its target. Falls
+     * back for the units the format renders as nothing, such as a structure itself.
+     */
+    private String valueText(Data data) {
+        String rendered = format.getOperandRepresentationString(data, 0);
+        return rendered == null || rendered.isBlank()
+            ? data.getDefaultValueRepresentation() : rendered;
     }
 
     /**
