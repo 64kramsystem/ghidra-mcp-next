@@ -420,6 +420,18 @@ public class CommentService {
         }
     }
 
+    /**
+     * Advertised shape of the two comment arrays. The parameters are declared Object so the raw
+     * value reaches decodeCommentItems unconverted; without this fragment the scanner would infer
+     * "any" from that Object and the bridge would publish them as strings.
+     */
+    static final String COMMENT_ITEMS_SCHEMA =
+            "{\"type\":\"array\",\"items\":{\"type\":\"object\","
+            + "\"additionalProperties\":false,"
+            + "\"properties\":{\"address\":{\"type\":\"string\"},"
+            + "\"comment\":{\"type\":\"string\"}},"
+            + "\"required\":[\"address\",\"comment\"]}}";
+
     @McpTool(path = "/batch_set_comments", method = "POST", description = "Set multiple comments in one operation. Each item in decompiler_comments/disassembly_comments must be {\"address\": \"0x...\", \"comment\": \"...\"}; unrecognised keys, missing keys and unresolvable addresses are rejected and the whole request writes nothing. On programs with multiple address spaces (e.g., embedded targets), prefix addresses with the space name (mem:1000) to avoid ambiguous resolution.", category = "comment")
     public Response batchSetComments(
             @Param(value = "address", paramType = "address", source = ParamSource.BODY,
@@ -428,8 +440,12 @@ public class CommentService {
                                + "embedded/microcontroller targets — are not address-space-agnostic; "
                                + "use get_address_spaces to discover spaces before assuming a plain hex "
                                + "address is unambiguous.") String functionAddress,
-            @Param(value = "decompiler_comments", source = ParamSource.BODY, defaultValue = "[]") Object decompilerCommentsRaw,
-            @Param(value = "disassembly_comments", source = ParamSource.BODY, defaultValue = "[]") Object disassemblyCommentsRaw,
+            @Param(value = "decompiler_comments", source = ParamSource.BODY, defaultValue = "[]",
+                   schemaFragment = COMMENT_ITEMS_SCHEMA,
+                   description = "Native JSON array of {address, comment} objects.") Object decompilerCommentsRaw,
+            @Param(value = "disassembly_comments", source = ParamSource.BODY, defaultValue = "[]",
+                   schemaFragment = COMMENT_ITEMS_SCHEMA,
+                   description = "Native JSON array of {address, comment} objects.") Object disassemblyCommentsRaw,
             @Param(value = "plate_comment", source = ParamSource.BODY, defaultValue = "null",
                    description = "Plate comment text. Omit to leave existing plate untouched. Pass empty string to explicitly clear.") String plateComment,
             @Param(value = "program", description = "Target program name", defaultValue = "") String programName) {
@@ -560,8 +576,9 @@ public class CommentService {
         return Response.ok(resultMap);
     }
 
-    public Response batchSetComments(String functionAddress, List<Map<String, String>> decompilerComments,
-                                     List<Map<String, String>> disassemblyComments, String plateComment) {
+    /** Convenience overload. Takes the arrays raw so callers cannot pre-convert past validation. */
+    public Response batchSetComments(String functionAddress, Object decompilerComments,
+                                     Object disassemblyComments, String plateComment) {
         return batchSetComments(functionAddress, decompilerComments, disassemblyComments, plateComment, null);
     }
 
