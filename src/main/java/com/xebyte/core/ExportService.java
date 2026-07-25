@@ -136,10 +136,13 @@ public final class ExportService {
                 return false;
             }
             lastDiagnostic.set("");
+            // Pinned before any model read, as ListingRangeService does for a paged read. The
+            // walk takes no read lock, so an edit landing mid-walk would otherwise publish a
+            // listing stitched from two states of the program, with every counter agreeing
+            // because the records it never saw are also never counted.
+            long modificationNumber = program.getModificationNumber();
             CompleteListingWriter writer =
                 new CompleteListingWriter(program, xrefWrapColumn);
-            // No explicit read lock, matching AsciiExportRunner: both walk the listing
-            // directly, so both have the same exposure to a concurrent edit.
             try (PrintWriter out = new PrintWriter(
                     Files.newBufferedWriter(file.toPath()))) {
                 writer.write(out, selection);
@@ -158,6 +161,10 @@ public final class ExportService {
             String shortfall = writer.shortfall();
             if (shortfall != null) {
                 lastDiagnostic.set(shortfall);
+                return false;
+            }
+            if (program.getModificationNumber() != modificationNumber) {
+                lastDiagnostic.set("program changed during export; nothing was published");
                 return false;
             }
             lastReport.set(writer.report());

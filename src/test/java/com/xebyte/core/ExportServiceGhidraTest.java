@@ -2,6 +2,7 @@ package com.xebyte.core;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assume.assumeTrue;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -18,6 +19,7 @@ import org.junit.BeforeClass;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
+import org.mockito.Mockito;
 
 import com.xebyte.headless.HeadlessProgramProvider;
 
@@ -103,6 +105,24 @@ public class ExportServiceGhidraTest {
         ExportService.AsciiExportRunner runner = new ExportService.AsciiExportRunner();
         assertEquals(new AsciiExporter().supportsAddressRestrictedExport(),
             runner.supportsAddressRestrictedExport());
+    }
+
+    /**
+     * A concurrent edit must fail the export rather than publish a listing stitched from two
+     * different states of the program. The modification number is pinned before the walk and
+     * re-read after it, exactly as ListingRangeService does for a paged read.
+     */
+    @Test
+    public void programChangedDuringExportFailsTheExport() throws Exception {
+        ExportService.CompleteListingRunner runner =
+            new ExportService.CompleteListingRunner(100);
+        ProgramDB changing = Mockito.spy(program);
+        Mockito.doReturn(41L, 42L).when(changing).getModificationNumber();
+        File destination = temporaryFolder.newFile("changed.asm");
+
+        assertFalse(runner.export(destination, changing, program.getMemory(),
+            TaskMonitor.DUMMY));
+        assertTrue(runner.diagnostic(), runner.diagnostic().contains("changed"));
     }
 
     private byte[] directExport(Path destination, AddressSetView set) throws Exception {
