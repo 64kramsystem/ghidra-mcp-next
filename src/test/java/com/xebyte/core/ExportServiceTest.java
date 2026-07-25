@@ -499,6 +499,65 @@ public class ExportServiceTest {
         assertFalse(Files.exists(destination));
     }
 
+    @Test
+    public void outOfRangeXrefWrapColumnIsRejectedBeforeAnyFilesystemWork() throws Exception {
+        Path outputDir = temporaryFolder.newFolder("wrap-column").toPath();
+        Path destination = outputDir.resolve("listing.asm");
+        ExportService service = new ExportService(provider, security);
+
+        assertErrorContains(service.exportFullListing(
+            destination.toString(), null, null, false, 39, "fixture"),
+            "xref_wrap_column must be between 40 and 500");
+        assertErrorContains(service.exportFullListing(
+            destination.toString(), null, null, false, 501, "fixture"),
+            "xref_wrap_column must be between 40 and 500");
+
+        assertFalse(Files.exists(destination));
+        assertNoTemporaryFiles(outputDir);
+        verify(security, never()).resolveWithinFileRoot(anyString());
+    }
+
+    @Test
+    public void schemaDeclaresFullListingToolAlongsideAsciiExport() {
+        AnnotationScanner scanner = new AnnotationScanner(
+            provider, service(new RecordingExportRunner("unused\n", true, Outcome.SUCCESS)));
+        AnnotationScanner.ToolDescriptor tool = scanner.getDescriptors().stream()
+            .filter(candidate -> candidate.path().equals("/export_full_listing"))
+            .findFirst()
+            .orElseThrow();
+
+        assertEquals("POST", tool.method());
+        assertEquals("export", tool.category());
+        assertFalse(tool.supportsDryRun());
+        assertEquals(List.of("output_path", "start", "end", "overwrite",
+            "xref_wrap_column", "program"),
+            tool.params().stream().map(AnnotationScanner.ParamDescriptor::name).toList());
+        assertEquals(List.of("body", "body", "body", "body", "body", "query"),
+            tool.params().stream().map(AnnotationScanner.ParamDescriptor::source).toList());
+    }
+
+    /**
+     * The Ascii runner reports nothing, so adding ExportRunner.report() must leave its
+     * payload byte-for-byte as it was.
+     */
+    @Test
+    public void asciiExportPayloadGainsNoFieldsFromTheReportHook() throws Exception {
+        Path outputDir = temporaryFolder.newFolder("no-report").toPath();
+        Path destination = outputDir.resolve("listing.asm");
+        RecordingExportRunner runner =
+            new RecordingExportRunner("expected\n", true, Outcome.SUCCESS);
+
+        Response response = service(runner).exportAsciiListing(
+            destination.toString(), null, null, false, "fixture");
+
+        assertTrue(response.toJson(), response instanceof Response.Ok);
+        assertEquals(Map.of().isEmpty(), runner.report().isEmpty());
+        assertEquals(List.of("program", "output_path", "start", "end", "ranges",
+            "bytes_written", "exporter"),
+            List.copyOf(((com.google.gson.JsonObject)
+                ((Response.Ok) response).data()).keySet()));
+    }
+
     private ExportService service(ExportService.ExportRunner runner) {
         return new ExportService(provider, security, runner);
     }
