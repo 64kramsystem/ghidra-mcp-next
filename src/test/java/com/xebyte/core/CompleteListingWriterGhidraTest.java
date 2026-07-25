@@ -20,6 +20,7 @@ import org.junit.BeforeClass;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
+import org.mockito.Mockito;
 
 import com.xebyte.headless.HeadlessProgramProvider;
 
@@ -30,8 +31,10 @@ import ghidra.program.database.ProgramBuilder;
 import ghidra.program.database.ProgramDB;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.listing.CommentType;
+import ghidra.program.model.mem.Memory;
 import ghidra.program.model.symbol.RefType;
 import ghidra.program.model.symbol.SourceType;
+import ghidra.util.task.TaskMonitor;
 
 /**
  * Behavioural proof that export_full_listing does not lose what AsciiExporter loses.
@@ -303,6 +306,133 @@ public class CompleteListingWriterGhidraTest {
     }
 
     /**
+     * A range ending at the last address of the space must terminate. Every step of the walk
+     * advances with addNoWrap, which throws rather than wrapping, so the loop has to notice it
+     * has reached the end instead of asking for the next address.
+     */
+    @Test
+    public void rangeEndingAtTheLastAddressOfTheSpaceTerminates() throws Exception {
+        builder.createMemory(".top", "0xfffffffffffffff0", 0x10);
+        Path destination = temporaryFolder.getRoot().toPath().resolve("top.asm");
+        ExportService service = new ExportService(provider, security);
+
+        Response response = service.exportFullListing(destination.toString(),
+            "0xfffffffffffffff0", "0xffffffffffffffff", true, 100, "");
+
+        assertTrue(response.toJson(), response instanceof Response.Ok);
+        String listing = Files.readString(destination.toFile().getCanonicalFile().toPath());
+        assertTrue("the last address of the space must be rendered",
+            listing.contains("ffffffffffffffff"));
+    }
+
+    /**
+     * An overlay unit and a base unit at the same numeric offset are different addresses in
+     * different spaces. Both must appear, and each must stay qualified by its space, or a
+     * reader cannot tell which occupant of the range a line describes. The real program has
+     * exactly this shape: SND_PLAYER overlays part of RAM.
+     */
+    @Test
+    public void baseAndOverlayUnitsAtTheSameOffsetAreBothEmitted() throws Exception {
+        builder.createOverlayMemory("SND_PLAYER", "0x1000", 0x10);
+        builder.createLabel("0x1000", "base_occupant");
+
+        String listing = exportWholeProgram();
+
+        assertTrue("the base unit must be rendered", listing.contains("base_occupant"));
+        assertTrue("the overlay block must be named in the header",
+            listing.contains("SND_PLAYER"));
+        assertTrue("overlay addresses must stay space-qualified",
+            listing.contains("SND_PLAYER::00001000"));
+    }
+
+    /**
+     * More incoming references on one unit than INCOMING_BUDGET. The budget only pre-sizes the
+     * metadata list, which caps at 64 and reports the page as incomplete; the writer must
+     * refetch without a limit rather than emit the capped page.
+     */
+    @Test
+    public void moreIncomingReferencesThanTheBudgetAreAllEmitted() throws Exception {
+        int transaction = program.startTransaction("refs");
+        try {
+            Address destination = builder.addr("0x1000");
+            for (int index = 0; index < 70; index++) {
+                program.getReferenceManager().addMemoryReference(
+                    builder.addr(0x1100 + index), destination,
+                    RefType.READ, SourceType.USER_DEFINED, 0);
+            }
+        }
+        finally {
+            program.endTransaction(transaction, true);
+        }
+
+        String listing = exportWholeProgram();
+
+        assertTrue("the header must report the true total, not the budget",
+            listing.contains("XREF[70]"));
+        for (int index = 0; index < 70; index++) {
+            String source = Integer.toHexString(0x1100 + index);
+            assertTrue("reference from " + source + " must be emitted",
+                listing.contains(source + "(R)"));
+        }
+    }
+
+    /**
+     * A short memory read must fail the export. Padding the tail of the byte array and emitting
+     * it would publish bytes the program does not contain, with every counter in agreement.
+     */
+    @Test
+    public void shortMemoryReadFailsTheExport() throws Exception {
+        ProgramDB spied = Mockito.spy(program);
+        Memory shortReading = Mockito.spy(program.getMemory());
+        Mockito.doReturn(shortReading).when(spied).getMemory();
+        Mockito.doReturn(1).when(shortReading)
+            .getBytes(Mockito.any(Address.class), Mockito.any(byte[].class));
+        ExportService.CompleteListingRunner runner =
+            new ExportService.CompleteListingRunner(100);
+
+        boolean exported = runner.export(temporaryFolder.newFile("short.asm"), spied,
+            program.getMemory(), TaskMonitor.DUMMY);
+
+        assertFalse("a short read must not produce an artifact", exported);
+        assertTrue(runner.diagnostic(), runner.diagnostic().contains("short read"));
+    }
+
+    /** A destination that cannot be written must fail the export, not publish a partial file. */
+    @Test
+    public void unwritableDestinationFailsTheExport() throws Exception {
+        File directory = temporaryFolder.newFolder("readonly");
+        Path destination = directory.toPath().resolve("listing.asm");
+        assertTrue("the fixture requires a directory that rejects writes",
+            directory.setWritable(false));
+        try {
+            Response response = new ExportService(provider, security).exportFullListing(
+                destination.toString(), null, null, true, 100, "");
+
+            assertTrue(response.toJson(), response instanceof Response.Err);
+            assertFalse("nothing may be published", Files.exists(destination));
+        }
+        finally {
+            directory.setWritable(true);
+        }
+    }
+
+    /**
+     * Control characters occur in C64 comments — PETSCII $93 is clear-screen — and must survive
+     * verbatim. The content audit reads the artifact back, so anything that re-encodes or
+     * re-flows them would fail the export rather than corrupt the listing silently.
+     */
+    @Test
+    public void controlCharactersInACommentSurviveVerbatim() throws Exception {
+        String comment = "PETSCII \u0093 clears the screen, \u0007 rings the bell";
+        setComment("0x1000", CommentType.EOL, comment);
+
+        String listing = exportWholeProgram();
+
+        assertTrue("the control characters must be emitted as authored",
+            listing.contains(comment));
+    }
+
+    /**
      * The audit counts comment records, not content, so a body that reaches the artifact only
      * in part still counts as one emitted record. Nothing in the record counts, in
      * {@code checkError}, or in the byte-read checks notices a sink that silently swallows a
@@ -325,6 +455,36 @@ public class CompleteListingWriterGhidraTest {
             sink.toString().lines().filter(line -> !line.contains("SWALLOWED")));
         assertTrue("the lost plate body must be reported, not counted as emitted: " + missing,
             missing != null && missing.contains("SWALLOWED plate line"));
+    }
+
+    /**
+     * References were counted the same way comments were: the emitted-side counter agrees with
+     * the collected-side counter whether or not the lines reach the file. Losing the reference
+     * group downstream, or deleting the call that writes it, must block publication.
+     */
+    @Test
+    public void referenceMissingFromTheOutputIsDetected() throws Exception {
+        int transaction = program.startTransaction("refs");
+        try {
+            program.getReferenceManager().addMemoryReference(
+                builder.addr("0x1100"), builder.addr("0x1000"),
+                RefType.READ, SourceType.USER_DEFINED, 0);
+        }
+        finally {
+            program.endTransaction(transaction, true);
+        }
+        CompleteListingWriter writer = new CompleteListingWriter(program, 100);
+        StringBuilder sink = new StringBuilder();
+        try (PrintWriter out = new PrintWriter(new CollectingWriter(sink))) {
+            writer.write(out, program.getMemory());
+        }
+
+        assertNull("a complete artifact must not be reported as short",
+            writer.shortfall(sink.toString().lines()));
+        String missing = writer.shortfall(
+            sink.toString().lines().filter(line -> !line.contains("XREF")));
+        assertTrue("the lost reference must be reported: " + missing,
+            missing != null && missing.contains("00001100"));
     }
 
     /** Accumulates everything written, so a test can drop lines the way a bad sink would. */
