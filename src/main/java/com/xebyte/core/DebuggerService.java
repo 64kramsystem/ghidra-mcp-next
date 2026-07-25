@@ -81,6 +81,32 @@ public class DebuggerService {
     private static final long ACTION_TIMEOUT_MS = 15_000;
     private static final int MAX_MEMORY_READ = 4096;
 
+    /**
+     * Tool templates that startDebuggerTool may launch, in order of preference. Only a tool built
+     * from the "Debugger" template provides DebuggerTraceManagerService, so this must not include
+     * CodeBrowser: launching one would open a spurious second window and still fail the wait.
+     */
+    static final List<String> DEBUGGER_TOOL_TEMPLATES = List.of("Debugger");
+
+    /**
+     * How long to wait for DebuggerTraceManagerService after launching the tool. A cold start
+     * instantiates the whole Debugger plugin set and can exceed 20s, so this budget must stay
+     * comfortably above that while remaining under the callers' 60s overall timeout.
+     */
+    static final int TOOL_SERVICE_POLL_ATTEMPTS = 60;
+    static final long TOOL_SERVICE_POLL_INTERVAL_MS = 500L;
+
+    /** Distinct, accurate messages: not-running is a different situation from start-failed. */
+    static final String MSG_NO_DEBUGGER =
+            "No Debugger tool is running, and this read-only endpoint does not start one. " +
+            "Open the Debugger tool in the project window, or call debugger_launch, " +
+            "debugger_attach or debugger_launch_offers, which start it automatically.";
+
+    static final String MSG_DEBUGGER_START_FAILED =
+            "Could not start a Debugger tool. Check that a tool template named 'Debugger' exists " +
+            "in the project tool chest (Tools > Import Default Tools if it is missing), then " +
+            "retry, or open the Debugger tool manually.";
+
     private final ProgramProvider programProvider;
     private final PluginTool frontEndTool;
     private final DebuggerTargetMethodCore targetMethodCore =
@@ -129,7 +155,7 @@ public class DebuggerService {
         try {
             Workspace workspace = tm.getActiveWorkspace();
             if (workspace == null) return null;
-            for (String templateName : List.of("Debugger", "CodeBrowser")) {
+            for (String templateName : DEBUGGER_TOOL_TEMPLATES) {
                 ToolTemplate template = project.getLocalToolChest().getToolTemplate(templateName);
                 if (template == null) {
                     continue;
@@ -155,11 +181,11 @@ public class DebuggerService {
                 if (tool == null) {
                     continue;
                 }
-                for (int i = 0; i < 20; i++) {
+                for (int i = 0; i < TOOL_SERVICE_POLL_ATTEMPTS; i++) {
                     if (tool.getService(DebuggerTraceManagerService.class) != null) {
                         return tool;
                     }
-                    Thread.sleep(250);
+                    Thread.sleep(TOOL_SERVICE_POLL_INTERVAL_MS);
                 }
             }
         } catch (Exception e) {
@@ -210,10 +236,20 @@ public class DebuggerService {
         return tool.getService(serviceClass);
     }
 
+    /**
+     * No Debugger tool is running, and this endpoint deliberately does not start one -- read-only
+     * queries should not spawn a heavyweight GUI tool as a side effect. Says only what is true.
+     */
     private Response noDebugger() {
-        return Response.err("Debugger not active and GhidraMCP-next could not auto-start a " +
-                "Debugger tool. Open the Debugger tool or enable Window > Debugger in CodeBrowser, " +
-                "then attach to your target process.");
+        return Response.err(MSG_NO_DEBUGGER);
+    }
+
+    /**
+     * This endpoint did try to start a Debugger tool and could not. Distinguishing this from
+     * {@link #noDebugger()} matters: the two have completely different causes and fixes.
+     */
+    private Response debuggerStartFailed() {
+        return Response.err(MSG_DEBUGGER_START_FAILED);
     }
 
     private Response noTrace() {
@@ -507,7 +543,7 @@ public class DebuggerService {
             return Response.err("Timed out while auto-starting Ghidra's Debugger tool. " +
                     "Open the Debugger tool manually, then retry debugger_launch.");
         }
-        if (tool == null) return noDebugger();
+        if (tool == null) return debuggerStartFailed();
 
         TraceRmiLauncherService launcherSvc =
                 tool.getService(TraceRmiLauncherService.class);
@@ -630,7 +666,7 @@ public class DebuggerService {
         } catch (TimeoutException e) {
             return Response.err("Timed out while auto-starting Ghidra's Debugger tool");
         }
-        if (tool == null) return noDebugger();
+        if (tool == null) return debuggerStartFailed();
 
         TraceRmiLauncherService launcherSvc = tool.getService(TraceRmiLauncherService.class);
         DebuggerTraceManagerService traceMgr =
@@ -1748,8 +1784,16 @@ public class DebuggerService {
     public Response listLaunchOffers(
             @Param(value = "program", defaultValue = "",
                     description = "Program to get offers for") String programName) {
-        PluginTool tool = getDebuggerTool();
-        if (tool == null) return noDebugger();
+        // Listing offers is the first step of starting a session, so start the Debugger tool if
+        // it is not up yet -- same contract as debugger_launch and debugger_attach. Without this,
+        // the natural first call fails and there is no way to bootstrap the tool over MCP.
+        PluginTool tool;
+        try {
+            tool = getOrStartDebuggerTool(60);
+        } catch (TimeoutException e) {
+            return debuggerStartFailed();
+        }
+        if (tool == null) return debuggerStartFailed();
 
         TraceRmiLauncherService launcherSvc =
                 tool.getService(TraceRmiLauncherService.class);

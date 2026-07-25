@@ -6,6 +6,13 @@ Complete version history for the GhidraMCP-next project.
 
 ## Unreleased
 
+### Fixed
+
+- Made Debugger tool auto-start actually reachable. `debugger_launch_offers` now starts a Debugger tool when none is running, matching `debugger_launch` and `debugger_attach`; previously the natural first call of a debug session failed whenever the tool was not already open, leaving no way to bootstrap it over MCP.
+- Stopped `startDebuggerTool` from falling back to the `CodeBrowser` template. Only a tool built from the `Debugger` template provides `DebuggerTraceManagerService`, so the fallback opened a spurious second CodeBrowser window and then failed the service wait regardless.
+- Raised the post-launch wait for `DebuggerTraceManagerService` from 5s to 30s. A cold start instantiates the whole Debugger plugin set and, as `debugger_launch`'s own comment notes, can exceed 20s, so the previous budget always expired on first use. The wait still completes inside the callers' 60s timeout.
+- Corrected the error reported by endpoints that never attempt a start. `debugger_status`, `debugger_traces` and other read-only endpoints previously claimed GhidraMCP-next "could not auto-start a Debugger tool" when no start had been tried, which misdirects diagnosis. They now state that no Debugger tool is running and name the endpoints that will start one, while genuine start failures report a distinct message.
+
 ## GhidraMCP-next 20260724-175549
 
 ### Changed
