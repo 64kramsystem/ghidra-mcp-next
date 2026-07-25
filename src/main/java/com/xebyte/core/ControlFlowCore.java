@@ -254,7 +254,8 @@ final class ControlFlowCore {
                     || existing.getReferenceType() != identity.type()) {
                 throw new IllegalArgumentException(
                     "no exact reference exists for removal: "
-                        + describe(identity, existing));
+                        + describe(identity, existing)
+                        + presentReferences(manager, identity.from()));
             }
             boolean nonUser =
                 existing.getSource() != SourceType.USER_DEFINED;
@@ -492,6 +493,9 @@ final class ControlFlowCore {
     private List<ReferenceIdentity> resolveReferenceRequests(
             Program program, List<ReferenceRequest> requests,
             String description) {
+        // A removal target outside mapped memory is legitimate: the reference manager stores
+        // such edges, and a stale one is exactly what a caller wants to delete.
+        boolean requireMappedTarget = !"remove".equals(description);
         List<ReferenceIdentity> result = new ArrayList<>();
         for (int i = 0; i < requests.size(); i++) {
             ReferenceRequest request = requests.get(i);
@@ -500,7 +504,7 @@ final class ControlFlowCore {
                 description + "[" + i + "].from");
             Address to = referenceTarget(resolve(
                 program, request.to(),
-                description + "[" + i + "].to"));
+                description + "[" + i + "].to", requireMappedTarget));
             validateOperandIndex(
                 program.getListing().getInstructionAt(from),
                 request.operandIndex(),
@@ -668,8 +672,15 @@ final class ControlFlowCore {
 
     private Address resolve(
             Program program, String text, String description) {
+        return resolve(program, text, description, true);
+    }
+
+    private Address resolve(
+            Program program, String text, String description,
+            boolean requireMapped) {
         try {
-            return comments.resolveAddress(program, text).address();
+            return comments.resolveAddress(program, text, requireMapped)
+                .address();
         }
         catch (IllegalArgumentException error) {
             throw new IllegalArgumentException(
@@ -760,6 +771,30 @@ final class ControlFlowCore {
             return overlay.translateAddress(address);
         }
         return address;
+    }
+
+    /**
+     * Lists what the source address actually carries. "(actual: absent)" alone is true but
+     * gives a caller no way to correct the request -- most often the operand index or the
+     * reference type is wrong, and both are visible here.
+     */
+    private static String presentReferences(
+            ReferenceManager manager, Address from) {
+        Reference[] present = manager.getReferencesFrom(from);
+        if (present.length == 0) {
+            return ". No references exist from " + from;
+        }
+        StringBuilder detail = new StringBuilder(". References from ")
+            .append(from).append(": ");
+        for (int i = 0; i < present.length; i++) {
+            if (i > 0) {
+                detail.append(", ");
+            }
+            detail.append("to=").append(present[i].getToAddress())
+                .append(" type=").append(present[i].getReferenceType())
+                .append(" operand_index=").append(present[i].getOperandIndex());
+        }
+        return detail.toString();
     }
 
     private static String describe(

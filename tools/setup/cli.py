@@ -14,7 +14,7 @@ from .ghidra import (
     start_ghidra,
 )
 from .python_env import detect_repo_root, find_repo_python
-from .maven import find_maven_command, run_maven
+from .maven import check_maven_java, find_maven_command, run_maven
 from .requirements import (
     ensure_uv_available,
     execute_install_plan,
@@ -282,7 +282,13 @@ def cmd_preflight(args: argparse.Namespace) -> int:
     if shutil.which("java") is None:
         print("Java not found on PATH.", file=sys.stderr)
         return 1
-    print("Java: available on PATH")
+    # Presence is not enough: the build needs the exact release the pom targets, and a newer
+    # JDK fails late with "warnings found and -Werror specified", naming nothing.
+    java_problem = check_maven_java(repo_root, maven_command)
+    if java_problem:
+        print(java_problem, file=sys.stderr)
+        return 1
+    print("Java: available on PATH, version matches the build target")
     ghidra_version = read_pom_ghidra_version(repo_root)
     ghidra_path = _resolve_ghidra_path(repo_root, args.ghidra_path)
     print(f"Ghidra version from pom.xml: {ghidra_version}")

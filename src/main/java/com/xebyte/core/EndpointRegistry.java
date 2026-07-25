@@ -671,6 +671,10 @@ public class EndpointRegistry {
             params(qStr("address", "Function address"), pProg()),
             (q, b) -> commentService.getPlateComment(str(q, "address"), str(q, "program")));
 
+        get("/get_comment", "Get every listing comment kind at any address",
+            params(qStr("address", "Address in the program"), pProg()),
+            (q, b) -> commentService.getComment(str(q, "address"), str(q, "program")));
+
         post("/set_plate_comment", "Set a plate comment at any valid program address.",
             params(bStr("address"), bStr("comment"), pProg()),
             (q, b) -> commentService.setPlateComment(bodyStr(b, "address"), bodyStr(b, "comment"), str(q, "program")));
@@ -679,7 +683,7 @@ public class EndpointRegistry {
             params(bStr("address"), bArr("decompiler_comments"), bArr("disassembly_comments"),
                 bStrOpt("plate_comment"), pProg()),
             (q, b) -> commentService.batchSetComments(bodyStr(b, "address"),
-                bodyMapList(b, "decompiler_comments"), bodyMapList(b, "disassembly_comments"),
+                b.get("decompiler_comments"), b.get("disassembly_comments"),
                 bodyStr(b, "plate_comment"), str(q, "program")));
 
         post("/clear_function_comments", "Clear all comments within a function",
@@ -908,6 +912,11 @@ public class EndpointRegistry {
             params(bStr("type_name"), bBool("resolve_demangler_duplicate", false), pProg()),
             (q, b) -> dataTypeService.deleteDataType(bodyStr(b, "type_name"),
                 bodyBool(b, "resolve_demangler_duplicate", false), str(q, "program")));
+
+        post("/rename_data_type", "Rename a data type in place, preserving its applications",
+            params(bStr("old_name"), bStr("new_name"), pProg()),
+            (q, b) -> dataTypeService.renameDataType(bodyStr(b, "old_name"),
+                bodyStr(b, "new_name"), str(q, "program")));
 
         post("/resolve_duplicate_type", "Remove /Demangler 1-byte stub when canonical type exists",
             params(bStr("type_name"), bBool("delete_demangler_stub", true), pProg()),
@@ -1240,6 +1249,11 @@ public class EndpointRegistry {
         get("/read_memory", "Read raw memory bytes",
             params(qStr("address", "Start address"), qInt("length", 16, "Number of bytes"), pProg()),
             (q, b) -> programScriptService.readMemory(str(q, "address"), num(q, "length", 16), str(q, "program")));
+
+        post("/diff_memory", "Compare two equal-length memory ranges, across address spaces",
+            params(bStr("a"), bStr("b"), bInt("length", 0), bInt("max_runs", 256), pProg()),
+            (q, b) -> programScriptService.diffMemory(bodyStr(b, "a"), bodyStr(b, "b"),
+                bodyInt(b, "length", 0), bodyInt(b, "max_runs", 256), str(q, "program")));
 
         post("/set_bookmark", "Create or update a bookmark",
             params(bStr("address"), bStrOpt("category"), bStrOpt("comment"), pProg()),

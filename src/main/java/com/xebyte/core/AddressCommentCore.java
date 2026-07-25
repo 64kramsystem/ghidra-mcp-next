@@ -60,6 +60,17 @@ final class AddressCommentCore {
      */
     ResolvedAddress resolveAddress(
             Program program, String addressText) {
+        return resolveAddress(program, addressText, true);
+    }
+
+    /**
+     * @param requireMapped when false, an address outside mapped memory resolves instead of
+     *     failing. Deleting a reference whose target is unmapped is legitimate -- a stale
+     *     {@code JMP $FFFF} edge is exactly the kind worth removing -- and the reference
+     *     manager stores such edges perfectly well.
+     */
+    ResolvedAddress resolveAddress(
+            Program program, String addressText, boolean requireMapped) {
         Objects.requireNonNull(program, "program");
         if (addressText == null || addressText.isBlank()) {
             throw new IllegalArgumentException("Address is required");
@@ -84,7 +95,7 @@ final class AddressCommentCore {
                         + ". Use a qualified <space>:<hex> address.");
             }
         }
-        validateAddress(program, resolved);
+        validateAddress(program, resolved, requireMapped);
         return new ResolvedAddress(program, resolved);
     }
 
@@ -140,6 +151,11 @@ final class AddressCommentCore {
 
     private static void validateAddress(
             Program program, Address address) {
+        validateAddress(program, address, true);
+    }
+
+    private static void validateAddress(
+            Program program, Address address, boolean requireMapped) {
         AddressSpace space = address.getAddressSpace();
         if (space.getType() == AddressSpace.TYPE_EXTERNAL
                 || address.isExternalAddress()) {
@@ -174,7 +190,7 @@ final class AddressCommentCore {
                 "Address does not belong to the target program: "
                     + address);
         }
-        if (!program.getMemory().contains(address)) {
+        if (requireMapped && !program.getMemory().contains(address)) {
             throw new IllegalArgumentException(
                 "Address is not mapped in program memory: " + address);
         }

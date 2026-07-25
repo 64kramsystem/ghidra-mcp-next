@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "description": "GhidraMCP-next REST API Endpoint Specification",
-  "total_endpoints": 255,
+  "total_endpoints": 258,
   "categories": {
     "listing": "List program data",
     "getter": "Get specific data",
@@ -1056,6 +1056,19 @@
       "description": "Diff two functions"
     },
     {
+      "path": "/diff_memory",
+      "method": "POST",
+      "category": "program",
+      "params": [
+        "a",
+        "b",
+        "length",
+        "max_runs",
+        "program"
+      ],
+      "description": "Compare two equal-length memory ranges, which may be in different address spaces (e.g. an overlay against the block it shadows), and return the differing byte runs. Answers 'where exactly do these two occupants diverge' without transferring either range."
+    },
+    {
       "path": "/disassemble_flow",
       "method": "POST",
       "category": "disassembly",
@@ -1315,6 +1328,16 @@
         "program"
       ],
       "description": "Get xrefs for multiple addresses"
+    },
+    {
+      "path": "/get_comment",
+      "method": "GET",
+      "category": "comment",
+      "params": [
+        "address",
+        "program"
+      ],
+      "description": "Get every listing comment kind (plate/pre/eol/post/repeatable) at ANY address, including data addresses. Unlike get_plate_comment this does not require a function at the address. Also returns `comment`, the first non-empty kind, and a `has_comment` flag."
     },
     {
       "path": "/get_current_address",
@@ -2222,6 +2245,17 @@
         "program"
       ],
       "description": "Rename data symbol"
+    },
+    {
+      "path": "/rename_data_type",
+      "method": "POST",
+      "category": "datatype",
+      "params": [
+        "old_name",
+        "new_name",
+        "program"
+      ],
+      "description": "Rename a data type (struct, union, enum, typedef) in place, preserving existing applications of it"
     },
     {
       "path": "/rename_external_location",
