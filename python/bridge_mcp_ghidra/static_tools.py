@@ -10,6 +10,7 @@ from . import dispatch
 from . import registry
 from . import state
 from . import transport  # noqa: F401 - retained as the shared transport seam
+from .instance_summary import summarize_instance
 from .config import DEFAULT_TCP_URL, STATIC_TOOL_NAMES, logger
 from .selection import (
     InstanceSelectionError,
@@ -65,9 +66,9 @@ def list_instances() -> str:
             and url == active_url
         )
 
-    return json.dumps({"instances": instances}, indent=2)
-
-
+    return json.dumps(
+        {"instances": [summarize_instance(i) for i in instances]}, indent=2
+    )
 @mcp.tool()
 async def create_and_connect_project(
     parent_dir: str,
@@ -524,10 +525,20 @@ async def check_tools(tools: str) -> str:
             for definition in bundle.full_schema
         }
         dynamic = set(bundle.dynamic_names)
+        # With no schema fetched there is nothing to check a name against, and every Ghidra
+        # tool would be reported "not_found" -- indistinguishable from a tool that genuinely
+        # does not exist. Say "unknown" and name the fix.
+        schema_available = bool(all_known)
         results: dict[str, dict] = {}
         for name in tool_names:
             if name in STATIC_TOOL_NAMES:
                 results[name] = {"status": "callable", "type": "static"}
+            elif not schema_available:
+                results[name] = {
+                    "status": "unknown",
+                    "reason": "no instance connected — tool schema not loaded",
+                    "fix": "connect_instance(project)",
+                }
             elif name in dynamic:
                 results[name] = {
                     "status": "callable",
