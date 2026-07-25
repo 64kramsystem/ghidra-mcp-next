@@ -1,11 +1,14 @@
 package com.xebyte.core;
 
+import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonNull;
 import com.google.gson.JsonObject;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.PrintWriter;
+import java.util.Map;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -31,6 +34,8 @@ import ghidra.util.task.TaskMonitor;
 @McpToolGroup(value = "export", description = "Native program export")
 public final class ExportService {
 
+    private static final Gson OUTPUT_GSON = new Gson();
+
     interface ExportRunner {
         boolean supportsAddressRestrictedExport();
 
@@ -41,6 +46,14 @@ public final class ExportService {
 
         default String diagnostic() {
             return "";
+        }
+
+        /**
+         * Extra result fields describing what this runner emitted. Empty for runners that
+         * delegate to a Ghidra exporter, whose payload therefore stays unchanged.
+         */
+        default Map<String, Object> report() {
+            return Map.of();
         }
     }
 
@@ -95,6 +108,67 @@ public final class ExportService {
         }
     }
 
+    /**
+     * Writes a listing with no clip step and no ceilings, unlike {@link AsciiExporter}.
+     * See {@link CompleteListingWriter} for what that exporter loses and why.
+     */
+    static final class CompleteListingRunner implements ExportRunner {
+        private final int xrefWrapColumn;
+        private final ThreadLocal<String> lastDiagnostic =
+            ThreadLocal.withInitial(() -> "");
+        private final ThreadLocal<Map<String, Object>> lastReport =
+            ThreadLocal.withInitial(Map::of);
+
+        CompleteListingRunner(int xrefWrapColumn) {
+            this.xrefWrapColumn = xrefWrapColumn;
+        }
+
+        @Override
+        public boolean supportsAddressRestrictedExport() {
+            return true;
+        }
+
+        @Override
+        public boolean export(File file, DomainObject object, AddressSetView selection,
+                TaskMonitor monitor) throws IOException {
+            if (!(object instanceof Program program)) {
+                lastDiagnostic.set("unsupported domain object: " + object.getClass().getName());
+                return false;
+            }
+            lastDiagnostic.set("");
+            CompleteListingWriter writer =
+                new CompleteListingWriter(program, xrefWrapColumn);
+            // No explicit read lock, matching AsciiExportRunner: both walk the listing
+            // directly, so both have the same exposure to a concurrent edit.
+            try (PrintWriter out = new PrintWriter(
+                    Files.newBufferedWriter(file.toPath()))) {
+                writer.write(out, selection);
+            }
+            String shortfall = writer.shortfall();
+            if (shortfall != null) {
+                lastDiagnostic.set(shortfall);
+                return false;
+            }
+            lastReport.set(writer.report());
+            return true;
+        }
+
+        @Override
+        public String name() {
+            return CompleteListingWriter.class.getName();
+        }
+
+        @Override
+        public String diagnostic() {
+            return lastDiagnostic.get();
+        }
+
+        @Override
+        public Map<String, Object> report() {
+            return lastReport.get();
+        }
+    }
+
     private final ProgramProvider programProvider;
     private final SecurityConfig security;
     private final ExportRunner runner;
@@ -140,12 +214,49 @@ public final class ExportService {
             @Param(value = "program", defaultValue = "",
                 description = "Target program name (omit to use the active program)")
                 String programName) {
-        return export(programName, outputPath, normalizeOptional(start),
+        return export(runner, programName, outputPath, normalizeOptional(start),
             normalizeOptional(end), overwrite);
     }
 
-    private Response export(String programName, String outputPath, String start,
-            String end, boolean overwrite) {
+    @McpTool(path = "/export_full_listing", method = "POST",
+        description = "Export a complete listing that drops nothing. Unlike "
+            + "export_ascii_listing, which delegates to Ghidra's AsciiExporter, this clips no "
+            + "field, emits every line of every comment rather than the first six, and emits "
+            + "every cross-reference rather than the first twenty-one. Columns are minimum "
+            + "widths, so long operands push the comment column right instead of being "
+            + "shortened, and authored newlines in comments are never re-flowed. The export "
+            + "fails without publishing if it cannot emit everything it collected.",
+        category = "export", supportsDryRun = false)
+    public Response exportFullListing(
+            @Param(value = "output_path", source = ParamSource.BODY,
+                description = "Destination filesystem path") String outputPath,
+            @Param(value = "start", source = ParamSource.BODY, defaultValue = "",
+                paramType = "address",
+                description = "Inclusive start address; must be supplied with end") String start,
+            @Param(value = "end", source = ParamSource.BODY, defaultValue = "",
+                paramType = "address",
+                description = "Inclusive end address; must be supplied with start") String end,
+            @Param(value = "overwrite", source = ParamSource.BODY,
+                defaultValue = "false",
+                description = "Replace an existing destination after successful export")
+                boolean overwrite,
+            @Param(value = "xref_wrap_column", source = ParamSource.BODY,
+                defaultValue = "100",
+                description = "Column at which the cross-reference list wraps (40..500). "
+                    + "Wrapping never drops a reference")
+                int xrefWrapColumn,
+            @Param(value = "program", defaultValue = "",
+                description = "Target program name (omit to use the active program)")
+                String programName) {
+        if (xrefWrapColumn < 40 || xrefWrapColumn > 500) {
+            return Response.err("xref_wrap_column must be between 40 and 500");
+        }
+        return export(new CompleteListingRunner(xrefWrapColumn), programName, outputPath,
+            normalizeOptional(start), normalizeOptional(end), overwrite);
+    }
+
+    private Response export(ExportRunner runner, String programName, String outputPath,
+            String start, String end, boolean overwrite) {
         if (outputPath == null || outputPath.isBlank()) {
             return Response.err("output_path is required");
         }
@@ -226,6 +337,7 @@ public final class ExportService {
             long bytesWritten = Files.size(temporary);
             Response.Ok result = resultFactory.build(program, destination, start, end,
                 selection, bytesWritten, runner.name());
+            mergeReport(result, runner.report());
             publish(temporary, destination, overwrite);
             published = true;
             return result;
@@ -331,6 +443,19 @@ public final class ExportService {
         result.addProperty("bytes_written", bytesWritten);
         result.addProperty("exporter", exporterName);
         return new Response.Ok(result);
+    }
+
+    /**
+     * Adds a runner's own result fields to a built payload. Runners that delegate to a Ghidra
+     * exporter report nothing, so their payload is untouched.
+     */
+    private static void mergeReport(Response.Ok result, Map<String, Object> report) {
+        if (report.isEmpty() || !(result.data() instanceof JsonObject data)) {
+            return;
+        }
+        for (Map.Entry<String, Object> entry : report.entrySet()) {
+            data.add(entry.getKey(), OUTPUT_GSON.toJsonTree(entry.getValue()));
+        }
     }
 
     private static JsonArray ranges(AddressSetView selection) {
