@@ -2568,9 +2568,24 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
      * Reduces API calls from 10+ to 1 for typical function documentation
      */
     @SuppressWarnings("deprecation")
-    private String batchSetComments(String functionAddress, List<Map<String, String>> decompilerComments,
-                                    List<Map<String, String>> disassemblyComments, String plateComment) {
+    // Raw, not List<Map<String,String>>: converting first would re-run the lossy conversion that
+    // drops malformed array elements, and CommentService's strict decoder would then see an
+    // already-cleaned request. List is an Object, so passing a converted list here compiles
+    // silently and defeats the validation without any signature mismatch to catch it.
+    private String batchSetComments(String functionAddress, Object decompilerComments,
+                                    Object disassemblyComments, String plateComment) {
         return commentService.batchSetComments(functionAddress, decompilerComments, disassemblyComments, plateComment).toJson();
+    }
+
+
+    /** Cheap presence test only; CommentService owns validation of the contents. */
+    private static boolean isNonEmptyCommentArray(Object raw) {
+        if (raw instanceof java.util.List<?> list) return !list.isEmpty();
+        if (raw instanceof String text) {
+            String trimmed = text.trim();
+            return !trimmed.isEmpty() && !trimmed.equals("[]");
+        }
+        return raw != null;
     }
 
     private String clearFunctionComments(String functionAddress, boolean clearPlate, boolean clearPre, boolean clearEol) {
@@ -2781,11 +2796,11 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
 
         // Step 6: Set comments (optional) — AFTER prototype to avoid wipe
         String plateComment = params.get("plate_comment") != null ? params.get("plate_comment").toString() : null;
-        java.util.List<Map<String, String>> decompComments = convertToMapList(params.get("decompiler_comments"));
-        java.util.List<Map<String, String>> disasmComments = convertToMapList(params.get("disassembly_comments"));
-        boolean hasComments = plateComment != null ||
-                              (decompComments != null && !decompComments.isEmpty()) ||
-                              (disasmComments != null && !disasmComments.isEmpty());
+        Object decompComments = params.get("decompiler_comments");
+        Object disasmComments = params.get("disassembly_comments");
+        boolean hasComments = plateComment != null
+                              || isNonEmptyCommentArray(decompComments)
+                              || isNonEmptyCommentArray(disasmComments);
         if (hasComments) {
             if (!firstStep) sb.append(", ");
             firstStep = false;

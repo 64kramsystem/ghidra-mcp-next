@@ -104,6 +104,51 @@ class TestSchemaJsonFormat(unittest.TestCase):
         tool = mcp._tool_manager._tools.get("schema_test_desc")
         self.assertIsNotNone(tool)
 
+    def test_a_fragment_overrides_an_any_type(self):
+        # batch_set_comments declares its two arrays as Object so the raw value reaches the strict
+        # decoder; the scanner then infers "any" for them and there is no way to override that
+        # field. Only the fragment stops the bridge from publishing both arrays as strings.
+        from bridge_mcp_ghidra import _parse_schema
+
+        fragment = {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "address": {"type": "string"},
+                    "comment": {"type": "string"},
+                },
+                "required": ["address", "comment"],
+            },
+        }
+        parsed = _parse_schema(
+            {
+                "tools": [
+                    {
+                        "path": "/batch_set_comments",
+                        "method": "POST",
+                        "params": [
+                            {
+                                "name": "disassembly_comments",
+                                "source": "body",
+                                "type": "any",
+                                "schema": fragment,
+                            },
+                            {"name": "plate_comment", "source": "body", "type": "string"},
+                        ],
+                    }
+                ]
+            }
+        )[0]
+
+        published = parsed["input_schema"]["properties"]["disassembly_comments"]
+        self.assertEqual(published["type"], "array")
+        self.assertEqual(published["items"], fragment["items"])
+        self.assertEqual(
+            parsed["input_schema"]["properties"]["plate_comment"]["type"], "string"
+        )
+
     def test_nested_region_schema_is_preserved(self):
         from bridge_mcp_ghidra import (
             _parse_schema,
