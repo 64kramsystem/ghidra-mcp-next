@@ -83,6 +83,9 @@ final class CompleteListingWriter {
     private final Map<Address, Address> requiredCoverage = new java.util.LinkedHashMap<>();
     private final Map<Address, Address> coverageReached = new java.util.LinkedHashMap<>();
 
+    /** Authored comment body lines that must appear in the artifact, with their multiplicity. */
+    private final Map<String, Integer> expectedCommentLines = new java.util.LinkedHashMap<>();
+
     private int collectedLabels;
     private int emittedLabels;
     private int collectedReferences;
@@ -225,7 +228,7 @@ final class CompleteListingWriter {
             if (boxed) {
                 out.println(ADDRESS_INDENT + ";" + "*".repeat(70));
             }
-            for (String line : comment.text().split("\n", -1)) {
+            for (String line : bodyLines(comment.text())) {
                 out.println(ADDRESS_INDENT + "; "
                     + (offcut ? "[offcut " + comment.address() + "] " : "") + line);
             }
@@ -460,7 +463,7 @@ final class CompleteListingWriter {
             }
             String prefix = comment.address().equals(unitStart)
                 ? "" : "[offcut " + comment.address() + "] ";
-            for (String line : comment.text().split("\n", -1)) {
+            for (String line : bodyLines(comment.text())) {
                 lines.add(prefix + line);
             }
             emittedComments.merge(CommentType.EOL, 1, Integer::sum);
@@ -557,7 +560,27 @@ final class CompleteListingWriter {
         collectedLabels += metadata.labels().size();
         for (CommentRecord comment : metadata.comments()) {
             collectedComments.merge(comment.type(), 1, Integer::sum);
+            for (String line : bodyLines(comment.text())) {
+                String body = rstrip(line);
+                // A blank line carries no content to look for, and every listing has lines
+                // that reduce to nothing once trailing spaces go.
+                if (!body.isBlank()) {
+                    expectedCommentLines.merge(body, 1, Integer::sum);
+                }
+            }
         }
+    }
+
+    /**
+     * Authored comment text split into lines.
+     *
+     * <p>The terminators recognised here are exactly the ones {@code BufferedReader} recognises,
+     * so a line this writer emits is a line the content audit reads back. A lone carriage
+     * return inside a comment would otherwise end a line on readback only, and the audit would
+     * report a loss that never happened; it would also corrupt the line it sits on.
+     */
+    private static String[] bodyLines(String text) {
+        return text.split("\r\n|\r|\n", -1);
     }
 
     /**
@@ -567,9 +590,10 @@ final class CompleteListingWriter {
      * {@link CommentType#values()}, so a kind added by a future Ghidra release is counted
      * rather than silently skipped.
      *
+     * @param emittedLines the artifact's own lines, for the content check
      * @return a description of the shortfall, or null when everything collected was emitted
      */
-    String shortfall() {
+    String shortfall(java.util.stream.Stream<String> emittedLines) {
         for (CommentType type : CommentType.values()) {
             int collected = collectedComments.getOrDefault(type, 0);
             int emitted = emittedComments.getOrDefault(type, 0);
@@ -593,6 +617,49 @@ final class CompleteListingWriter {
             if (reached == null || !reached.equals(required.getValue())) {
                 return "range " + required.getKey() + " - " + required.getValue()
                     + " stopped at " + (reached == null ? "nothing" : reached);
+            }
+        }
+        return missingCommentBody(emittedLines);
+    }
+
+    /**
+     * Looks for every authored comment body line in the artifact itself.
+     *
+     * <p>The counts above prove a comment record was handed to a renderer, not that its text
+     * reached the file. A renderer that emits part of a body, or a sink that swallows a line,
+     * leaves every count in agreement — the record was counted as emitted the moment the
+     * renderer was entered.
+     *
+     * <p>Bodies are matched as line suffixes rather than by parsing the {@code "; "} introducer
+     * out of a line: a data value such as {@code ds "a; b"} contains that sequence, so parsing
+     * would pick the wrong offset on exactly the lines that are hardest to check by eye.
+     * Candidates are bucketed by last character, which is shared by any line ending in a given
+     * body, so the scan stays proportional to the artifact.
+     *
+     * @return a description of the first body line that did not reach the output, or null
+     */
+    private String missingCommentBody(java.util.stream.Stream<String> emittedLines) {
+        Map<Character, List<String>> byLastCharacter = new java.util.HashMap<>();
+        emittedLines.forEach(raw -> {
+            String line = rstrip(raw);
+            if (!line.isEmpty()) {
+                byLastCharacter
+                    .computeIfAbsent(line.charAt(line.length() - 1), key -> new ArrayList<>())
+                    .add(line);
+            }
+        });
+        for (Map.Entry<String, Integer> expected : expectedCommentLines.entrySet()) {
+            String body = expected.getKey();
+            int found = 0;
+            for (String line : byLastCharacter.getOrDefault(
+                    body.charAt(body.length() - 1), List.of())) {
+                if (line.endsWith(body)) {
+                    found++;
+                }
+            }
+            if (found < expected.getValue()) {
+                return "comment body line reached the output " + found + " of "
+                    + expected.getValue() + " times: \"" + body + "\"";
             }
         }
         return null;

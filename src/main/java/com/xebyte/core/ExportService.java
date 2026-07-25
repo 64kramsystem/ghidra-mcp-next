@@ -158,7 +158,12 @@ public final class ExportService {
                 lastDiagnostic.set(e.getMessage());
                 return false;
             }
-            String shortfall = writer.shortfall();
+            // Read back what was actually written: the counters only prove a record reached a
+            // renderer, so the comment bodies are checked against the file itself.
+            String shortfall;
+            try (java.util.stream.Stream<String> written = Files.lines(file.toPath())) {
+                shortfall = writer.shortfall(written);
+            }
             if (shortfall != null) {
                 lastDiagnostic.set(shortfall);
                 return false;

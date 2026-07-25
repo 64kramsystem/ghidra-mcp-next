@@ -2,6 +2,7 @@ package com.xebyte.core;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assume.assumeTrue;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -9,6 +10,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import java.io.File;
+import java.io.PrintWriter;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
@@ -298,6 +300,53 @@ public class CompleteListingWriterGhidraTest {
         byte[] second = Files.readAllBytes(exportTo("second.asm"));
 
         assertEquals(new String(first), new String(second));
+    }
+
+    /**
+     * The audit counts comment records, not content, so a body that reaches the artifact only
+     * in part still counts as one emitted record. Nothing in the record counts, in
+     * {@code checkError}, or in the byte-read checks notices a sink that silently swallows a
+     * line, so the content has to be checked against what actually landed in the output.
+     */
+    @Test
+    public void commentBodyMissingFromTheOutputIsDetected() throws Exception {
+        setComment("0x1000", CommentType.PLATE,
+            "first plate line\nSWALLOWED plate line\nlast plate line");
+        setComment("0x1004", CommentType.EOL, "first eol line\nSWALLOWED eol line");
+        CompleteListingWriter writer = new CompleteListingWriter(program, 100);
+        StringBuilder sink = new StringBuilder();
+        try (PrintWriter out = new PrintWriter(new CollectingWriter(sink))) {
+            writer.write(out, program.getMemory());
+        }
+
+        assertNull("a complete artifact must not be reported as short",
+            writer.shortfall(sink.toString().lines()));
+        String missing = writer.shortfall(
+            sink.toString().lines().filter(line -> !line.contains("SWALLOWED")));
+        assertTrue("the lost plate body must be reported, not counted as emitted: " + missing,
+            missing != null && missing.contains("SWALLOWED plate line"));
+    }
+
+    /** Accumulates everything written, so a test can drop lines the way a bad sink would. */
+    private static final class CollectingWriter extends java.io.Writer {
+        private final StringBuilder sink;
+
+        CollectingWriter(StringBuilder sink) {
+            this.sink = sink;
+        }
+
+        @Override
+        public void write(char[] buffer, int offset, int length) {
+            sink.append(buffer, offset, length);
+        }
+
+        @Override
+        public void flush() {
+        }
+
+        @Override
+        public void close() {
+        }
     }
 
     @Test
