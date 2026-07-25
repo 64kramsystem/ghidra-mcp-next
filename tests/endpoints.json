@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "description": "GhidraMCP-next REST API Endpoint Specification",
-  "total_endpoints": 255,
+  "total_endpoints": 256,
   "categories": {
     "listing": "List program data",
     "getter": "Get specific data",
@@ -1315,6 +1315,16 @@
         "program"
       ],
       "description": "Get xrefs for multiple addresses"
+    },
+    {
+      "path": "/get_comment",
+      "method": "GET",
+      "category": "comment",
+      "params": [
+        "address",
+        "program"
+      ],
+      "description": "Get every listing comment kind (plate/pre/eol/post/repeatable) at ANY address, including data addresses. Unlike get_plate_comment this does not require a function at the address. Also returns `comment`, the first non-empty kind, and a `has_comment` flag."
     },
     {
       "path": "/get_current_address",

@@ -710,4 +710,56 @@ public class CommentServiceAddressGhidraTest {
             return true;
         }
     }
+
+    @Test
+    public void getCommentReadsEveryKindAtADataAddress() throws Exception {
+        // get_plate_comment requires a function, so a comment on data was unreadable over MCP.
+        int tx = program.startTransaction("comments on data");
+        try {
+            program.getListing().setComment(
+                builder.addr("0x1010"), CommentType.PLATE, "plate here");
+            program.getListing().setComment(
+                builder.addr("0x1010"), CommentType.EOL, "eol here");
+        }
+        finally {
+            program.endTransaction(tx, true);
+        }
+
+        JsonObject result = JsonParser.parseString(
+            comments.getComment("0x1010", "").toJson()).getAsJsonObject();
+
+        assertEquals("plate here", result.get("plate").getAsString());
+        assertEquals("eol here", result.get("eol").getAsString());
+        assertTrue(result.get("has_comment").getAsBoolean());
+        // `comment` is the first non-empty kind, so a caller needing just one has it.
+        assertEquals("plate here", result.get("comment").getAsString());
+    }
+
+    @Test
+    public void getCommentReportsAnAddressWithNoComments() throws Exception {
+        JsonObject result = JsonParser.parseString(
+            comments.getComment("0x1030", "").toJson()).getAsJsonObject();
+
+        assertFalse(result.get("has_comment").getAsBoolean());
+        // Null-valued keys are dropped by the serializer, so absence is the "no comment" signal.
+        assertFalse(result.toString(), result.has("comment"));
+    }
+
+    @Test
+    public void getCommentResolvesAnOverlayQualifiedAddress() throws Exception {
+        int tx = program.startTransaction("overlay comment");
+        try {
+            program.getListing().setComment(
+                program.getAddressFactory().getAddressSpace("bank").getAddress(0x2000),
+                CommentType.PLATE, "in the overlay");
+        }
+        finally {
+            program.endTransaction(tx, true);
+        }
+
+        JsonObject result = JsonParser.parseString(
+            comments.getComment("bank::2000", "").toJson()).getAsJsonObject();
+
+        assertEquals("in the overlay", result.get("plate").getAsString());
+    }
 }

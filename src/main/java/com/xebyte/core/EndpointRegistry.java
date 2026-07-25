@@ -671,6 +671,10 @@ public class EndpointRegistry {
             params(qStr("address", "Function address"), pProg()),
             (q, b) -> commentService.getPlateComment(str(q, "address"), str(q, "program")));
 
+        get("/get_comment", "Get every listing comment kind at any address",
+            params(qStr("address", "Address in the program"), pProg()),
+            (q, b) -> commentService.getComment(str(q, "address"), str(q, "program")));
+
         post("/set_plate_comment", "Set a plate comment at any valid program address.",
             params(bStr("address"), bStr("comment"), pProg()),
             (q, b) -> commentService.setPlateComment(bodyStr(b, "address"), bodyStr(b, "comment"), str(q, "program")));

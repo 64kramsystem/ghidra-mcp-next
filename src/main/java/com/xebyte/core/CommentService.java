@@ -13,6 +13,7 @@ import javax.swing.SwingUtilities;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -171,6 +172,47 @@ public class CommentService {
     /**
      * Set a plate comment at an exact mapped program address.
      */
+    @McpTool(path = "/get_comment",
+             description = "Get every listing comment kind (plate/pre/eol/post/repeatable) at ANY address, including data addresses. Unlike get_plate_comment this does not require a function at the address. Also returns `comment`, the first non-empty kind, and a `has_comment` flag.",
+             category = "comment")
+    public Response getComment(
+            @Param(value = "address", paramType = "address",
+                   description = "Address in the program. Accepts 0x<hex> (default space) or "
+                               + "<space>:<hex> (e.g. mem:1000, SND_PLAYER::9695). Works at data "
+                               + "addresses, not just function entries.") String addressStr,
+            @Param(value = "program", description = "Target program name (omit to use the active program)",
+                   defaultValue = "") String programName) {
+        ServiceUtils.ProgramOrError pe = ServiceUtils.getProgramOrError(programProvider, programName);
+        if (pe.hasError()) return pe.error();
+        Program program = pe.program();
+
+        if (addressStr == null || addressStr.isEmpty()) {
+            return Response.err("address parameter is required");
+        }
+        Address address = ServiceUtils.parseAddress(program, addressStr);
+        if (address == null) {
+            return Response.err(ServiceUtils.getLastParseError());
+        }
+
+        Listing listing = program.getListing();
+        Map<String, Object> result = new LinkedHashMap<>(
+            ServiceUtils.addressToJson(address, program));
+        String best = null;
+        // Explicit precedence: CommentType.values() is declaration order, which put EOL ahead of
+        // PLATE and made `comment` pick the wrong kind. Plate first, then narrowing scope.
+        for (CommentType type : List.of(CommentType.PLATE, CommentType.PRE, CommentType.EOL,
+                                        CommentType.POST, CommentType.REPEATABLE)) {
+            String text = listing.getComment(type, address);
+            result.put(type.name().toLowerCase(Locale.ROOT), text);
+            if (best == null && text != null && !text.isBlank()) {
+                best = text;
+            }
+        }
+        result.put("comment", best);
+        result.put("has_comment", best != null);
+        return Response.ok(result);
+    }
+
     @McpTool(path = "/set_plate_comment", method = "POST", description = "Set a plate comment at any valid program address.", category = "comment")
     public Response setPlateComment(
             @Param(value = "address", paramType = "address", source = ParamSource.BODY,
