@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "description": "GhidraMCP-next REST API Endpoint Specification",
-  "total_endpoints": 258,
+  "total_endpoints": 259,
   "categories": {
     "listing": "List program data",
     "getter": "Get specific data",
@@ -1178,6 +1178,21 @@
         "program"
       ],
       "description": "Export Ghidra AsciiExporter listing text without running a script"
+    },
+    {
+      "path": "/export_full_listing",
+      "method": "POST",
+      "category": "export",
+      "supports_dry_run": false,
+      "params": [
+        "output_path",
+        "start",
+        "end",
+        "overwrite",
+        "xref_wrap_column",
+        "program"
+      ],
+      "description": "Export a complete listing that drops nothing. Unlike export_ascii_listing, which delegates to Ghidra's AsciiExporter, this clips no field, emits every line of every comment rather than the first six, and emits every cross-reference rather than the first twenty-one. Columns are minimum widths, so long operands push the comment column right instead of being shortened, and authored newlines in comments are never re-flowed. The export fails without publishing if it cannot emit everything it collected."
     },
     {
       "path": "/export_program",

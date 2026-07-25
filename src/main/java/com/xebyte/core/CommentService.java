@@ -301,16 +301,12 @@ public class CommentService {
     }
 
     /**
-     * Batch set multiple comments (decompiler, disassembly, and plate) in a single operation.
-     */
-    /**
-     * Rejects items the writer below would otherwise skip in silence. An item missing `comment`,
-     * carrying an unrecognised key, or naming an unresolvable address used to leave the request
-     * reporting success with a zero count, so a caller who sent the wrong shape -- {@code text}
-     * instead of {@code comment}, say -- believed the write had happened.
-     */
-    /**
      * Decode one comment array strictly, recording every problem rather than dropping items.
+     *
+     * <p>This rejects items the writer below would otherwise skip in silence. An item missing
+     * {@code comment}, carrying an unrecognised key, or naming an unresolvable address used to
+     * leave the request reporting success with a zero count, so a caller who sent the wrong
+     * shape -- {@code text} instead of {@code comment}, say -- believed the write had happened.
      *
      * <p>The shared converters must stay permissive -- they also back endpoint-schema parsing,
      * where non-string values are legitimate -- so strictness lives here, at the one endpoint
@@ -432,6 +428,9 @@ public class CommentService {
             + "\"comment\":{\"type\":\"string\"}},"
             + "\"required\":[\"address\",\"comment\"]}}";
 
+    /**
+     * Batch set multiple comments (decompiler, disassembly, and plate) in a single operation.
+     */
     @McpTool(path = "/batch_set_comments", method = "POST", description = "Set multiple comments in one operation. Each item in decompiler_comments/disassembly_comments must be {\"address\": \"0x...\", \"comment\": \"...\"}; unrecognised keys, missing keys and unresolvable addresses are rejected and the whole request writes nothing. On programs with multiple address spaces (e.g., embedded targets), prefix addresses with the space name (mem:1000) to avoid ambiguous resolution.", category = "comment")
     public Response batchSetComments(
             @Param(value = "address", paramType = "address", source = ParamSource.BODY,

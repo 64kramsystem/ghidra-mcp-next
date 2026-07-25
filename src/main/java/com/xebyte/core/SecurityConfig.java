@@ -51,6 +51,13 @@ import java.util.Set;
  *       analogous containment guard is project-folder scope
  *       ({@link #isPathInProjectScope(String)}), which is enforced only when a project
  *       scope is configured.</li>
+ *   <li>{@code GHIDRA_MCP_ALLOW_UNSECURED_FILE_READ} — set to {@code "1"}, {@code "true"},
+ *       or {@code "yes"} (case-insensitive) to permit bounded file reads on filesystem
+ *       providers that offer no {@link SecureDirectoryStream}, which on macOS means all of
+ *       them. Without it those reads fail closed, so every endpoint taking
+ *       {@code file_path} bytes is unusable there. The fallback narrows the substitution
+ *       window rather than closing it — see
+ *       {@link #readFileRangeWithoutSecureTraversal} — which is why it is opt-in.</li>
  * </ul>
  *
  * Also enforces a bind-hardening rule at headless startup:
@@ -66,16 +73,23 @@ public final class SecurityConfig {
     private final String fileRoot;       // null if disabled
     private final Path fileRootCanonical;
     private final String projectFolderScope; // null = no enforcement (default)
+    private final boolean unsecuredFileReadAllowed;
 
     private SecurityConfig() {
         this(System.getenv("GHIDRA_MCP_AUTH_TOKEN"),
             System.getenv("GHIDRA_MCP_ALLOW_SCRIPTS"),
             System.getenv("GHIDRA_MCP_FILE_ROOT"),
-            System.getenv("GHIDRA_MCP_PROJECT_FOLDER"));
+            System.getenv("GHIDRA_MCP_PROJECT_FOLDER"),
+            System.getenv("GHIDRA_MCP_ALLOW_UNSECURED_FILE_READ"));
     }
 
     private SecurityConfig(String rawToken, String rawScripts, String rawRoot,
-            String rawScope) {
+            String rawScope, String rawUnsecuredRead) {
+        this.unsecuredFileReadAllowed = rawUnsecuredRead != null
+                && (rawUnsecuredRead.equalsIgnoreCase("1")
+                    || rawUnsecuredRead.equalsIgnoreCase("true")
+                    || rawUnsecuredRead.equalsIgnoreCase("yes"));
+
         this.tokenBytes = (rawToken != null && !rawToken.isEmpty())
                 ? rawToken.getBytes(StandardCharsets.UTF_8)
                 : null;
@@ -120,12 +134,16 @@ public final class SecurityConfig {
     /**
      * Build an isolated configuration with a real file-root policy for tests.
      * Package-private so production callers continue to use the environment snapshot.
+     *
+     * <p>The unsecured-read fallback is enabled here so the suite exercises the same read path
+     * on providers with and without {@link SecureDirectoryStream}. Production keeps that
+     * fallback behind an explicit environment opt-in.
      */
     static SecurityConfig forFileRootTesting(Path fileRoot) {
         if (fileRoot == null) {
             throw new IllegalArgumentException("fileRoot is required");
         }
-        return new SecurityConfig(null, null, fileRoot.toString(), null);
+        return new SecurityConfig(null, null, fileRoot.toString(), null, "1");
     }
 
     public static SecurityConfig getInstance() {
@@ -233,9 +251,10 @@ public final class SecurityConfig {
      * {@link LinkOption#NOFOLLOW_LINKS}, so replacing an approved file,
      * parent, or configured root with a symlink cannot escape the allow-list.
      *
-     * <p>This deliberately fails closed on providers without
-     * {@link SecureDirectoryStream}; standard Java has no portable
-     * race-free fallback for rooted path traversal.
+     * <p>Providers without {@link SecureDirectoryStream} — which includes every filesystem on
+     * macOS, where the JDK offers no secure variant at all — fail closed unless
+     * {@code GHIDRA_MCP_ALLOW_UNSECURED_FILE_READ} is set, in which case
+     * {@link #readFileRangeWithoutSecureTraversal} handles the read under a weaker guarantee.
      */
     byte[] readFileRangeWithinRoot(
             Path authorizedPath, long offset, int length)
@@ -280,8 +299,14 @@ public final class SecurityConfig {
                 java.nio.file.Files.newDirectoryStream(anchor);
             if (!(rootStream instanceof SecureDirectoryStream<?>)) {
                 rootStream.close();
-                throw new IOException(
-                    "filesystem provider does not support secure file-root traversal");
+                if (!unsecuredFileReadAllowed) {
+                    throw new IOException(
+                        "filesystem provider does not support secure file-root traversal; "
+                            + "set GHIDRA_MCP_ALLOW_UNSECURED_FILE_READ=1 to permit the "
+                            + "canonicalizing fallback, which is not race-free");
+                }
+                return readFileRangeWithoutSecureTraversal(
+                    authorizedPath, offset, length);
             }
             @SuppressWarnings("unchecked")
             SecureDirectoryStream<Path> current =
@@ -314,25 +339,7 @@ public final class SecurityConfig {
                 LinkOption.NOFOLLOW_LINKS);
             try (SeekableByteChannel channel =
                     current.newByteChannel(fileName, options)) {
-                long size = channel.size();
-                if (offset > size || length > size - offset) {
-                    throw new IOException(
-                        "file_offset plus source_length exceeds file size");
-                }
-                byte[] result = new byte[length];
-                channel.position(offset);
-                ByteBuffer buffer = ByteBuffer.wrap(result);
-                while (buffer.hasRemaining()) {
-                    int count = channel.read(buffer);
-                    if (count < 0) {
-                        break;
-                    }
-                }
-                if (buffer.hasRemaining()) {
-                    throw new IOException(
-                        "file changed while reading; requested range no longer fits");
-                }
-                return result;
+                return readSlice(channel, offset, length);
             }
         }
         catch (IOException | RuntimeException | Error error) {
@@ -364,6 +371,100 @@ public final class SecurityConfig {
                 }
             }
         }
+    }
+
+    /**
+     * Read one bounded file range without per-component directory handles, for providers that
+     * offer no {@link SecureDirectoryStream}.
+     *
+     * <p><strong>This is weaker than {@link #readFileRangeWithinRoot} and cannot be made as
+     * strong with standard Java.</strong> The secure path holds an open handle on every path
+     * component, so no component can be substituted once it has been verified. Here the path is
+     * verified by name: canonicalization resolves every symlink and the result must fall inside
+     * the configured root, the file is opened with {@link LinkOption#NOFOLLOW_LINKS} so the last
+     * component cannot itself be a link, and both the canonical path and the file's identity are
+     * re-checked after the open so a substitution made during the call is detected. A
+     * substitution that lands between the final check and the kernel's own resolution is still
+     * possible: the window is narrowed, not closed. That is why reaching this method requires
+     * {@code GHIDRA_MCP_ALLOW_UNSECURED_FILE_READ}.
+     */
+    byte[] readFileRangeWithoutSecureTraversal(
+            Path authorizedPath, long offset, int length)
+            throws IOException {
+        if (fileRootCanonical == null) {
+            throw new IOException("GHIDRA_MCP_FILE_ROOT is not configured");
+        }
+        if (authorizedPath == null) {
+            throw new IOException("file path was not authorized");
+        }
+        Path resolved = canonicalWithinRoot(authorizedPath);
+        BasicFileAttributes before = java.nio.file.Files.readAttributes(
+            resolved, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+        if (!before.isRegularFile()) {
+            throw new IOException(
+                "file_path must be a regular readable file: " + resolved);
+        }
+
+        Set<OpenOption> options = Set.of(
+            StandardOpenOption.READ,
+            LinkOption.NOFOLLOW_LINKS);
+        try (SeekableByteChannel channel =
+                java.nio.file.Files.newByteChannel(resolved, options)) {
+            // Re-verify after opening: a swap performed during the call above would otherwise
+            // leave this holding a handle on a file outside the root.
+            if (!resolved.equals(canonicalWithinRoot(authorizedPath))) {
+                throw new IOException(
+                    "file path changed while opening; refusing the read");
+            }
+            BasicFileAttributes after = java.nio.file.Files.readAttributes(
+                resolved, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+            if (before.fileKey() != null
+                    && !before.fileKey().equals(after.fileKey())) {
+                throw new IOException(
+                    "file was replaced while opening; refusing the read");
+            }
+            return readSlice(channel, offset, length);
+        }
+    }
+
+    /**
+     * Canonicalize {@code requested} — resolving every symlink in it — and require the result to
+     * name a file inside the configured root.
+     */
+    private Path canonicalWithinRoot(Path requested) throws IOException {
+        Path canonical = requested.toFile().getCanonicalFile().toPath();
+        if (!canonical.startsWith(fileRootCanonical)) {
+            throw new IOException("file path is outside GHIDRA_MCP_FILE_ROOT");
+        }
+        if (canonical.equals(fileRootCanonical) || canonical.getFileName() == null) {
+            throw new IOException("file_path must name a regular file");
+        }
+        return canonical;
+    }
+
+    /** Reads exactly {@code length} bytes at {@code offset}, against the channel's own size. */
+    private static byte[] readSlice(
+            SeekableByteChannel channel, long offset, int length)
+            throws IOException {
+        long size = channel.size();
+        if (offset > size || length > size - offset) {
+            throw new IOException(
+                "file_offset plus source_length exceeds file size");
+        }
+        byte[] result = new byte[length];
+        channel.position(offset);
+        ByteBuffer buffer = ByteBuffer.wrap(result);
+        while (buffer.hasRemaining()) {
+            int count = channel.read(buffer);
+            if (count < 0) {
+                break;
+            }
+        }
+        if (buffer.hasRemaining()) {
+            throw new IOException(
+                "file changed while reading; requested range no longer fits");
+        }
+        return result;
     }
 
     /**
