@@ -202,7 +202,7 @@ final class CompleteListingWriter {
         writeComments(out, metadata, CommentType.PLATE, true, start);
         writeComments(out, metadata, CommentType.PRE, false, start);
         writeLabelsAndFunction(out, metadata, start);
-        writeCrossReferences(out, start, end);
+        writeCrossReferences(out, start, end, metadata);
 
         writeCodeLine(out, existing, start, end, index, metadata);
 
@@ -270,7 +270,8 @@ final class CompleteListingWriter {
             + (comment == null || comment.isBlank() ? "" : "  ; " + comment);
     }
 
-    private void writeCrossReferences(PrintWriter out, Address start, Address end) {
+    private void writeCrossReferences(PrintWriter out, Address start, Address end,
+            UnitMetadata metadata) {
         List<Reference> direct = new ArrayList<>();
         List<Reference> offcut = new ArrayList<>();
         for (Reference reference : incomingReferences(start, end)) {
@@ -283,6 +284,14 @@ final class CompleteListingWriter {
         }
         writeReferenceGroup(out, "XREF", direct);
         writeReferenceGroup(out, "XREF offcut", offcut);
+        // Outgoing too: a listing that names only who points here still drops half the graph.
+        // Already gathered by collectMetadata, so this costs nothing extra to emit.
+        List<Reference> outgoing = new ArrayList<>(metadata.outgoing());
+        outgoing.sort(Comparator
+            .comparing((Reference reference) -> reference.getFromAddress())
+            .thenComparing(Reference::getToAddress));
+        collectedReferences += outgoing.size();
+        writeReferenceGroup(out, "XREF from", outgoing);
     }
 
     /**
@@ -341,10 +350,17 @@ final class CompleteListingWriter {
         if (reference.getReferenceType().isJump()) {
             return "j";
         }
-        if (reference.getReferenceType().isWrite()) {
+        // Read-write must be tested before either half, or it reports as write-only and the
+        // listing loses the distinction Ghidra's own export shows as (RW).
+        boolean read = reference.getReferenceType().isRead();
+        boolean write = reference.getReferenceType().isWrite();
+        if (read && write) {
+            return "RW";
+        }
+        if (write) {
             return "W";
         }
-        if (reference.getReferenceType().isRead()) {
+        if (read) {
             return "R";
         }
         return "*";
@@ -362,7 +378,12 @@ final class CompleteListingWriter {
         }
         else if (existing instanceof Data data) {
             line.append(pad(data.getDataType().getDisplayName(), 10));
-            line.append(data.getDefaultValueRepresentation());
+            // Through CodeUnitFormat, not getDefaultValueRepresentation: the latter renders a
+            // pointer or vector numerically even where a symbol (including an overlay-
+            // qualified one) exists for its target.
+            String rendered = format.getOperandRepresentationString(data, 0);
+            line.append(rendered == null || rendered.isBlank()
+                ? data.getDefaultValueRepresentation() : rendered);
         }
         else {
             line.append(pad("??", 10));
