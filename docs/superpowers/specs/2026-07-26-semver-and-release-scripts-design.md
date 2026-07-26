@@ -1,7 +1,7 @@
 # Semantic versioning and scripted releases — design
 
 Date: 2026-07-26
-Status: approved decisions, not yet implemented
+Status: implemented in `ghidra-mcp-next` (`tools/release`)
 Scope: three repositories — `ghidra-mcp-next`, `ghidra-vice-connector`, `ghidra-mcp-c64`
 
 ## Why

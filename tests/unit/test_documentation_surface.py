@@ -1,12 +1,15 @@
+import os
 import re
 from pathlib import Path
 from urllib.parse import unquote
 
 
 ROOT = Path(__file__).resolve().parents[2]
+# CLAUDE.md is deliberately absent: it is a symlink to AGENTS.md, so listing it
+# would scan the same bytes twice. test_claude_md_is_a_symlink_to_agents_md
+# guards the link itself.
 MAINTAINED = [
     "AGENTS.md",
-    "CLAUDE.md",
     "README.md",
     "ROADMAP.md",
     "SECURITY.md",
@@ -105,11 +108,23 @@ def test_docs_name_maven_and_local_project_workflows():
 
 def test_catalog_documentation_uses_a_stable_lower_bound():
     for path in (
-        "CLAUDE.md",
+        "AGENTS.md",
         "docs/README.md",
         "docs/Context-Window-Analysis.md",
     ):
         assert "more than 250" in (ROOT / path).read_text(encoding="utf-8")
+
+
+def test_claude_md_is_a_symlink_to_agents_md():
+    """AGENTS.md is the single instruction file; CLAUDE.md only points at it.
+
+    Claude Code reads CLAUDE.md and not AGENTS.md, while Codex reads AGENTS.md.
+    A symlink serves both from one file. If CLAUDE.md ever becomes a regular
+    file again, the two silently drift and each tool reads different rules.
+    """
+    claude_md = ROOT / "CLAUDE.md"
+    assert claude_md.is_symlink(), "CLAUDE.md must be a symlink, not a regular file"
+    assert os.readlink(claude_md) == "AGENTS.md"
 
 
 def test_obsolete_document_trees_and_files_are_absent():
@@ -138,13 +153,19 @@ def test_obsolete_document_trees_and_files_are_absent():
         assert not (ROOT / path).exists(), path
 
 
-def test_release_guidance_describes_only_timestamp_automation():
+def test_release_guidance_describes_the_local_release_script():
+    """Release docs must describe `tools/release`, not the retired CI job.
+
+    CI stopped publishing in 97657b3; `tools/release <major|minor|patch>` took
+    over. Docs that still promise autopublished timestamp builds send agents
+    looking for a release that never happens, or stop them from cutting one.
+    """
     text = "\n".join(
         (ROOT / path).read_text(encoding="utf-8")
         for path in (
             ".github/workflows/README.md",
             "docs/releases/README.md",
-            "CLAUDE.md",
+            "AGENTS.md",
         )
     )
     for obsolete in (
@@ -153,10 +174,17 @@ def test_release_guidance_describes_only_timestamp_automation():
         "vX.Y.Z",
         "build-v<version>",
         "stable release",
+        # The retired CI automation. Its tag/name scheme and its changelog
+        # commit are gone; only CHANGELOG.md still carries those headings, as
+        # published history.
+        "GhidraMCP-next <UTC timestamp>",
+        "build-<UTC timestamp>-<12-character commit>",
+        "github-actions[bot]",
+        "release-worthy",
     ):
-        assert obsolete not in text
-    assert "GhidraMCP-next <UTC timestamp>" in text
-    assert "build-<UTC timestamp>-<12-character commit>" in text
+        assert obsolete not in text, obsolete
+    assert "tools/release <major|minor|patch>" in text
+    assert "CI does not release" in text
 
 
 def test_runtime_guidance_does_not_link_to_deleted_workflow_docs():
