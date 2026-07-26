@@ -129,6 +129,11 @@ public class EndpointRegistry {
         return qStr(name, "");
     }
 
+    /** Query-string parameter the endpoint cannot run without. */
+    private static EndpointDef.ParamDef qStrReq(String name, String desc) {
+        return new EndpointDef.ParamDef(name, "string", "query", true, null, desc);
+    }
+
     private static EndpointDef.ParamDef qStrOpt(String name, String desc) {
         return new EndpointDef.ParamDef(name, "string", "query", false, null, desc);
     }
@@ -770,11 +775,23 @@ public class EndpointRegistry {
             (q, b) -> xrefCallGraphService.getXrefsFrom(str(q, "address"), num(q, "offset", 0),
                 num(q, "limit", 100), str(q, "program")));
 
+        // Kept in step with the @McpTool annotation on getReferencesIntoRange. The
+        // recorded-references-only caveat is the substance of that description, and a
+        // generateSchema() consumer told only "lists references in a range" would read
+        // the result as an exhaustive sweep. start/end are required, not optional.
         get("/get_references_into_range",
-            "List recorded references whose destination falls in an inclusive address range",
-            params(qStr("start", "First address of the range, inclusive"),
-                qStr("end", "Last address of the range, inclusive"),
-                qInt("limit", 2000), pProg()),
+            "List every recorded reference whose destination falls in [start, end] (inclusive), "
+                + "ordered by source address. Returns RECORDED REFERENCES ONLY: complete for what "
+                + "Ghidra's reference database currently holds, and silent on bytes that encode an "
+                + "in-range address without a recorded reference. Plain hex resolves in the default "
+                + "physical space; the response echoes resolved_range, overlapping_spaces and scope.",
+            params(qStrReq("start", "First address of the range, inclusive. Accepts 0x<hex> "
+                    + "(default space) or <space>:<hex> (e.g., SND_PLAYER:9680)"),
+                qStrReq("end", "Last address of the range, inclusive. Must resolve in the same "
+                    + "address space as start"),
+                qInt("limit", 2000, "Maximum rows returned, 1..10000. count still reports total "
+                    + "matches when the cap truncates the list"),
+                pProg()),
             (q, b) -> xrefCallGraphService.getReferencesIntoRange(str(q, "start"),
                 str(q, "end"), num(q, "limit", 2000), str(q, "program")));
 
