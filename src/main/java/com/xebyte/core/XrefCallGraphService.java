@@ -1,10 +1,15 @@
 package com.xebyte.core;
 
 import ghidra.program.model.address.Address;
+import ghidra.program.model.address.AddressIterator;
+import ghidra.program.model.address.AddressSet;
 import ghidra.program.model.address.AddressSetView;
+import ghidra.program.model.address.AddressSpace;
 import ghidra.program.model.listing.*;
+import ghidra.program.model.mem.MemoryBlock;
 import ghidra.program.model.symbol.*;
 
+import java.math.BigInteger;
 import java.util.*;
 
 /**
@@ -1336,6 +1341,250 @@ public class XrefCallGraphService {
     // -----------------------------------------------------------------------
     // Bulk Xref Methods
     // -----------------------------------------------------------------------
+
+    // -----------------------------------------------------------------------
+    // Range Xref Query
+    // -----------------------------------------------------------------------
+
+    /** Upper bound for {@code limit}; keeps a wide range from returning an unbounded body. */
+    private static final int MAX_RANGE_REFERENCE_LIMIT = 10_000;
+
+    @McpTool(path = "/get_references_into_range",
+             description = "List every recorded reference whose DESTINATION falls in [start, end] "
+                         + "(inclusive), as a flat list ordered by source address. Answers "
+                         + "\"what touches this address span\" in one call — the recurring query on "
+                         + "overlay/banked-memory targets. Returns RECORDED REFERENCES ONLY: untyped "
+                         + "bytes that happen to encode an in-range address produce no Reference and "
+                         + "will not appear, so an exhaustive sweep also needs an instruction-decoding "
+                         + "pass. Plain hex resolves in the default physical space; `resolved_range` "
+                         + "echoes what was queried and `overlapping_spaces` lists other spaces "
+                         + "occupying those offsets.",
+             category = "xref")
+    public Response getReferencesIntoRange(
+            @Param(value = "start", paramType = "address",
+                   description = "First address of the range, inclusive. Accepts 0x<hex> (default "
+                               + "space) or <space>:<hex> (e.g., SND_PLAYER:9680).") String startStr,
+            @Param(value = "end", paramType = "address",
+                   description = "Last address of the range, inclusive. Must resolve in the same "
+                               + "address space as `start`.") String endStr,
+            @Param(value = "limit", defaultValue = "2000",
+                   description = "Maximum rows returned, 1..10000. `count` still reports total "
+                               + "matches when the cap truncates the list.") int limit,
+            @Param(value = "program", description = "Target program name (omit to use the active program — always specify when multiple programs are open)", defaultValue = "") String programName) {
+        ServiceUtils.ProgramOrError pe = ServiceUtils.getProgramOrError(programProvider, programName);
+        if (pe.hasError()) return pe.error();
+        Program program = pe.program();
+
+        if (limit < 1 || limit > MAX_RANGE_REFERENCE_LIMIT) {
+            return Response.err("limit must be in 1.." + MAX_RANGE_REFERENCE_LIMIT
+                + " (got " + limit + ")");
+        }
+
+        // parseAddress records its error in a ThreadLocal, so both endpoints are
+        // resolved here on the calling thread before any threading strategy hop.
+        Address start = ServiceUtils.parseAddress(program, startStr);
+        if (start == null) return Response.err(ServiceUtils.getLastParseError());
+        Address end = ServiceUtils.parseAddress(program, endStr);
+        if (end == null) return Response.err(ServiceUtils.getLastParseError());
+
+        AddressSpace startSpace = start.getAddressSpace();
+        AddressSpace endSpace = end.getAddressSpace();
+        if (!startSpace.getName().equals(endSpace.getName())) {
+            return Response.err("start and end must resolve in the same address space; got '"
+                + startSpace.getName() + "' and '" + endSpace.getName()
+                + "'. A range spanning two spaces has no meaning.");
+        }
+        BigInteger startOffset = start.getOffsetAsBigInteger();
+        BigInteger endOffset = end.getOffsetAsBigInteger();
+        if (startOffset.compareTo(endOffset) > 0) {
+            return Response.err("start must not be greater than end; got '"
+                + startStr + "' > '" + endStr + "'");
+        }
+
+        // Every model read below goes through the threading strategy: under the
+        // GUI strategy that transfers to the EDT, which is why both parseAddress
+        // calls had to happen above — a ThreadLocal set inside is invisible here.
+        try {
+            return threadingStrategy.executeRead(() ->
+                collectReferencesIntoRange(program, start, end, startSpace,
+                    startOffset, endOffset, limit));
+        } catch (Exception e) {
+            return Response.err("Error listing references into range: " + e.getMessage());
+        }
+    }
+
+    private Response collectReferencesIntoRange(Program program, Address start, Address end,
+                                                AddressSpace startSpace, BigInteger startOffset,
+                                                BigInteger endOffset, int limit) {
+        {
+            ReferenceManager refMgr = program.getReferenceManager();
+            AddressSet range = new AddressSet(start, end);
+
+            List<Reference> matches = new ArrayList<>();
+            AddressIterator destinations = refMgr.getReferenceDestinationIterator(range, true);
+            while (destinations != null && destinations.hasNext()) {
+                Address destination = destinations.next();
+                if (destination == null || !inRange(destination, startSpace, startOffset, endOffset)) {
+                    continue;
+                }
+                ReferenceIterator refIter = refMgr.getReferencesTo(destination);
+                while (refIter != null && refIter.hasNext()) {
+                    Reference reference = refIter.next();
+                    if (reference != null) matches.add(reference);
+                }
+            }
+
+            // Total order over (from, to, type, operand, source kind): the same
+            // comparator get_listing_range uses, so equal from/to never tie.
+            matches.sort(ReferenceOrdering.outgoing());
+            int total = matches.size();
+            boolean truncated = total > limit;
+            List<Reference> page = truncated ? matches.subList(0, limit) : matches;
+
+            boolean qualify = ServiceUtils.getOverlaySpaceCount(program) > 0
+                || ServiceUtils.getPhysicalSpaceCount(program) > 1;
+
+            List<Map<String, Object>> rows = new ArrayList<>(page.size());
+            for (Reference reference : page) {
+                rows.add(describeReference(program, reference, qualify));
+            }
+
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("resolved_range", start.toString(true) + " - " + end.toString(true));
+            result.put("overlapping_spaces",
+                overlappingSpaces(program, startSpace, startOffset, endOffset));
+            result.put("count", total);
+            result.put("truncated", truncated);
+            result.put("references", rows);
+            return Response.ok(result);
+        }
+    }
+
+    /** True when {@code candidate} sits in the queried space and within the offset bounds. */
+    private static boolean inRange(Address candidate, AddressSpace space,
+                                   BigInteger low, BigInteger high) {
+        if (!candidate.getAddressSpace().getName().equals(space.getName())) return false;
+        BigInteger offset = candidate.getOffsetAsBigInteger();
+        return offset.compareTo(low) >= 0 && offset.compareTo(high) <= 0;
+    }
+
+    /**
+     * Other spaces occupying the requested offsets, excluding the queried space.
+     *
+     * <p>Computed from memory BLOCKS, not address spaces: an overlay space spans the
+     * full range of the space it shadows, so intersecting on space bounds would report
+     * every overlay for every query. Iterating all blocks (not just overlay blocks) is
+     * what lets an overlay-space query report the underlying physical space.</p>
+     */
+    private static List<String> overlappingSpaces(Program program, AddressSpace queried,
+                                                  BigInteger low, BigInteger high) {
+        AddressSpace queriedPhysical = queried.getPhysicalSpace();
+        Set<String> names = new TreeSet<>();
+        MemoryBlock[] blocks = program.getMemory().getBlocks();
+        if (blocks == null) return new ArrayList<>(names);
+        for (MemoryBlock block : blocks) {
+            if (block == null || block.getStart() == null || block.getEnd() == null) continue;
+            AddressSpace candidate = block.getStart().getAddressSpace();
+            if (candidate.getName().equals(queried.getName())) continue;
+            AddressSpace candidatePhysical = candidate.getPhysicalSpace();
+            if (candidatePhysical == null || queriedPhysical == null
+                    || !candidatePhysical.getName().equals(queriedPhysical.getName())) {
+                continue;
+            }
+            // BigInteger comparison: signed long would order high-half 64-bit
+            // offsets wrongly.
+            BigInteger blockLow = block.getStart().getOffsetAsBigInteger();
+            BigInteger blockHigh = block.getEnd().getOffsetAsBigInteger();
+            if (blockLow.compareTo(high) <= 0 && blockHigh.compareTo(low) >= 0) {
+                names.add(candidate.getName());
+            }
+        }
+        return new ArrayList<>(names);
+    }
+
+    /** One flat row per reference. */
+    private static Map<String, Object> describeReference(Program program, Reference reference,
+                                                         boolean qualify) {
+        Address from = reference.getFromAddress();
+        Address to = reference.getToAddress();
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("from", format(from, qualify));
+
+        Symbol exact = program.getSymbolTable().getPrimarySymbol(from);
+        Function containing = program.getFunctionManager().getFunctionContaining(from);
+        if (exact != null) {
+            row.put("from_symbol", exact.getName());
+            row.put("from_symbol_offset", BigInteger.ZERO);
+        } else if (containing != null && containing.getEntryPoint() != null) {
+            row.put("from_symbol", containing.getName());
+            row.put("from_symbol_offset", delta(containing.getEntryPoint(), from));
+        } else {
+            Symbol preceding = nearestPrecedingSymbol(program, from);
+            if (preceding != null) {
+                row.put("from_symbol", preceding.getName());
+                row.put("from_symbol_offset", delta(preceding.getAddress(), from));
+            }
+        }
+
+        CodeUnit unit = program.getListing().getCodeUnitContaining(from);
+        if (unit instanceof Instruction) {
+            row.put("from_kind", "instruction");
+            row.put("from_instruction", unit.toString());
+        } else if (unit != null) {
+            row.put("from_kind", "data");
+            row.put("from_instruction", unit.toString());
+        } else {
+            // References can be recorded from mapped-but-undefined addresses;
+            // rendering must be absent rather than an empty string.
+            row.put("from_kind", "undefined");
+        }
+
+        row.put("to", format(to, qualify));
+        row.put("type", reference.getReferenceType().getName());
+        row.put("source_kind", ReferenceOrdering.sourceKind(reference.getSource()));
+        row.put("operand_index", reference.getOperandIndex());
+        return row;
+    }
+
+    /**
+     * Nearest preceding primary label or function entry, never crossing out of the
+     * source's own memory block. Plate comments are not symbols and are not consulted.
+     */
+    private static Symbol nearestPrecedingSymbol(Program program, Address from) {
+        MemoryBlock block = program.getMemory().getBlock(from);
+        if (block == null || block.getStart() == null) {
+            // Without a containing block there is no boundary to respect, and
+            // walking past one would report a symbol from unrelated memory.
+            return null;
+        }
+        // getPrimarySymbolIterator over [blockStart, from] does the work the
+        // contract describes: primary label/function symbols only, and the set
+        // itself enforces the block boundary. The all-symbol iterator would
+        // return secondary labels and other addressable symbol types.
+        AddressSet searched = new AddressSet(block.getStart(), from);
+        SymbolIterator iterator =
+            program.getSymbolTable().getPrimarySymbolIterator(searched, false);
+        while (iterator != null && iterator.hasNext()) {
+            Symbol symbol = iterator.next();
+            if (symbol == null || symbol.getAddress() == null) continue;
+            return symbol;
+        }
+        return null;
+    }
+
+    /**
+     * Byte delta as a BigInteger. Not narrowed to int: Ghidra permits memory blocks
+     * far larger than 2 GiB, so a preceding symbol that distance behind the source is
+     * reachable inside one block, and narrowing would wrap the offset. Gson emits a
+     * BigInteger as an ordinary exact JSON number.
+     */
+    private static BigInteger delta(Address base, Address target) {
+        return target.getOffsetAsBigInteger().subtract(base.getOffsetAsBigInteger());
+    }
+
+    private static String format(Address address, boolean qualify) {
+        return qualify ? address.toString(true) : address.toString(false);
+    }
 
     /**
      * Retrieve xrefs for multiple addresses in one call
