@@ -31,6 +31,10 @@ public final class JsonHelper {
     private static final Gson GSON = new GsonBuilder()
             .disableHtmlEscaping()
             .create();
+    private static final Gson NULL_PRESERVING_GSON = new GsonBuilder()
+            .disableHtmlEscaping()
+            .serializeNulls()
+            .create();
     private static final Gson BODY_GSON = new GsonBuilder()
             .disableHtmlEscaping()
             .setObjectToNumberStrategy(ToNumberPolicy.BIG_DECIMAL)
@@ -51,6 +55,21 @@ public final class JsonHelper {
             return element.toString();
         }
         return GSON.toJson(obj);
+    }
+
+    /**
+     * Serialize with explicit nulls retained.
+     *
+     * <p>{@link #toJson} drops null members, which is right for legacy responses but
+     * wrong for a contract where a null field carries meaning — {@code cursor: null} is
+     * how a paged endpoint says the traversal is complete, and an omitted key says only
+     * that the server might be older.</p>
+     */
+    public static String toJsonWithNulls(Object obj) {
+        if (obj instanceof JsonElement element) {
+            return element.toString();
+        }
+        return NULL_PRESERVING_GSON.toJson(obj);
     }
 
     /** Build a LinkedHashMap from alternating key-value pairs (preserves field order). */

@@ -85,6 +85,9 @@ public class ServerManager {
                 new ListingRangeService(programProvider, ts);
             ListingMutationService listingMutationService =
                 new ListingMutationService(programProvider, ts);
+            AddressEncodingSearchService addressEncodingSearchService =
+                new AddressEncodingSearchService(programProvider, ts);
+            CoverageService coverageService = new CoverageService(programProvider, ts);
             DebuggerService debuggerService = new DebuggerService(programProvider, ts, tool);
             GuiProjectService guiProjectService = new GuiProjectService(this::getActiveTool);
             GuiContextService guiContextService =
@@ -98,6 +101,7 @@ public class ServerManager {
                 symbolProfileService,
                 emulationService, exportService, flowDisassemblyService,
                 listingRangeService, listingMutationService,
+                addressEncodingSearchService, coverageService,
                 debuggerService, guiProjectService, guiContextService);
 
             startServer(scanner);

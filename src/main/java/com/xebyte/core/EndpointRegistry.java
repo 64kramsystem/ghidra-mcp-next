@@ -42,6 +42,8 @@ public class EndpointRegistry {
     private final ExportService exportService;
     private final ListingRangeService listingRangeService;
     private final ListingMutationService listingMutationService;
+    private final AddressEncodingSearchService addressEncodingSearchService;
+    private final CoverageService coverageService;
 
     public EndpointRegistry(ListingService listingService,
                             FunctionService functionService,
@@ -55,7 +57,9 @@ public class EndpointRegistry {
                             ProgramScriptService programScriptService,
                             ExportService exportService,
                             ListingRangeService listingRangeService,
-                            ListingMutationService listingMutationService) {
+                            ListingMutationService listingMutationService,
+                            AddressEncodingSearchService addressEncodingSearchService,
+                            CoverageService coverageService) {
         this.listingService = listingService;
         this.functionService = functionService;
         this.commentService = commentService;
@@ -69,6 +73,8 @@ public class EndpointRegistry {
         this.exportService = exportService;
         this.listingRangeService = listingRangeService;
         this.listingMutationService = listingMutationService;
+        this.addressEncodingSearchService = addressEncodingSearchService;
+        this.coverageService = coverageService;
         registerEndpoints();
     }
 
@@ -148,6 +154,10 @@ public class EndpointRegistry {
 
     private static EndpointDef.ParamDef qInt(String name, int def) {
         return qInt(name, def, "");
+    }
+
+    private static EndpointDef.ParamDef qLong(String name, long def, String desc) {
+        return new EndpointDef.ParamDef(name, "integer", "query", false, String.valueOf(def), desc);
     }
 
     private static EndpointDef.ParamDef qBool(String name, boolean def, String desc) {
@@ -255,6 +265,12 @@ public class EndpointRegistry {
         String v = q.get(key);
         if (v == null || v.isEmpty()) return def;
         try { return Integer.parseInt(v); } catch (NumberFormatException e) { return def; }
+    }
+
+    private static long longNum(Map<String, String> q, String key, long def) {
+        String v = q.get(key);
+        if (v == null || v.isEmpty()) return def;
+        try { return Long.parseLong(v); } catch (NumberFormatException e) { return def; }
     }
 
     private static boolean bool(Map<String, String> q, String key) {
@@ -783,17 +799,20 @@ public class EndpointRegistry {
             "List every recorded reference whose destination falls in [start, end] (inclusive), "
                 + "ordered by source address. Returns RECORDED REFERENCES ONLY: complete for what "
                 + "Ghidra's reference database currently holds, and silent on bytes that encode an "
-                + "in-range address without a recorded reference. Plain hex resolves in the default "
-                + "physical space; the response echoes resolved_range, overlapping_spaces and scope.",
+                + "in-range address without a recorded reference (see search_address_encodings). "
+                + "Plain hex resolves in the default physical space; the response echoes "
+                + "resolved_range, overlapping_spaces, scope and the page envelope.",
             params(qStrReq("start", "First address of the range, inclusive. Accepts 0x<hex> "
                     + "(default space) or <space>:<hex> (e.g., SND_PLAYER:9680)"),
                 qStrReq("end", "Last address of the range, inclusive. Must resolve in the same "
                     + "address space as start"),
-                qInt("limit", 2000, "Maximum rows returned, 1..10000. count still reports total "
-                    + "matches when the cap truncates the list"),
+                qInt("limit", 2000, "Maximum rows returned per page, 1..10000. count still "
+                    + "reports total matches over the whole range"),
+                qInt("offset", 0, "Page start within the ordered result, 0-based"),
                 pProg()),
             (q, b) -> xrefCallGraphService.getReferencesIntoRange(str(q, "start"),
-                str(q, "end"), num(q, "limit", 2000), str(q, "program")));
+                str(q, "end"), num(q, "limit", 2000), num(q, "offset", 0),
+                str(q, "program")));
 
         get("/get_function_xrefs", "Get cross-references to a function",
             params(qStr("name", "Function name"), qStr("address", "Function address (alternative to name)"), qInt("offset", 0), qInt("limit", 100), pProg()),
@@ -1065,9 +1084,84 @@ public class EndpointRegistry {
             (q, b) -> analysisService.inspectMemoryContent(str(q, "address"), num(q, "length", 64),
                 bool(q, "detect_strings", true), str(q, "program")));
 
-        get("/search_byte_patterns", "Search for byte patterns with masks",
-            params(qStr("pattern", "Hex byte pattern"), qStr("mask", "Pattern mask"), pProg()),
-            (q, b) -> analysisService.searchBytePatterns(str(q, "pattern"), str(q, "mask"), str(q, "program")));
+        // Kept in step with the @McpTool annotation on searchBytePatterns: the mask
+        // semantics, the range scoping and the block-seam limitation are the substance
+        // of that description, and a generateSchema() consumer told only "search for
+        // byte patterns" would not know the mask is honoured or where a match can fall.
+        get("/search_byte_patterns",
+            "Find every occurrence of a byte pattern in initialized memory. '??' is a "
+                + "wildcard byte; an optional mask applies Ghidra's bit-mask semantics and "
+                + "is ANDed with the wildcard default. start/end scope the search to one "
+                + "inclusive range in one address space, and the whole match must fit "
+                + "inside it. Ordered by address-space name then offset and paged with "
+                + "offset/limit; total_matched is the pre-paging total. A match straddling "
+                + "two initialized ranges is not found; a read failure is an error, not a miss.",
+            params(qStrReq("pattern", "Hex bytes, whitespace ignored; '??' is a wildcard "
+                    + "byte. At most 65536 bytes"),
+                qStr("mask", "Optional hex bit mask with the same byte count as pattern"),
+                qStr("start", "Inclusive start of the searched range; requires end"),
+                qStr("end", "Inclusive end of the searched range; same space as start"),
+                qInt("limit", 1000, "Maximum matches returned per page, 1..10000"),
+                qInt("offset", 0, "Page start within the ordered result, 0-based"),
+                pProg()),
+            (q, b) -> analysisService.searchBytePatterns(str(q, "pattern"), str(q, "mask"),
+                str(q, "start"), str(q, "end"), num(q, "limit", 1000),
+                num(q, "offset", 0), str(q, "program")));
+
+        // Kept in step with the @McpTool annotation on searchAddressEncodings. The
+        // false-positives-by-construction caveat and the space-specific reference rule
+        // are the substance of that description.
+        get("/search_address_encodings",
+            "Find byte windows that numerically decode into an inclusive destination "
+                + "address range, including untyped pointers and unresolved operands that "
+                + "get_references_into_range cannot see. Every offset is tested, unaligned "
+                + "included, so the result carries FALSE POSITIVES by construction. Each "
+                + "row reports its site kind (inside_instruction, inside_data_unit, "
+                + "undefined) and the recorded references whose destination matches the "
+                + "decoded target in both space and offset. Paged with an authenticated "
+                + "cursor.",
+            params(qStrReq("start", "Inclusive start of the destination range"),
+                qStrReq("end", "Inclusive end of the destination range; same space as start"),
+                qInt("width_bytes", 2, "Encoding width in bytes, 1..8"),
+                qStr("byte_order", "'little' or 'big'; default little"),
+                qStr("source_start", "Restrict where the scan looks; requires source_end"),
+                qStr("source_end", "Inclusive end of the scanned source range"),
+                qInt("limit", 1000, "Maximum rows returned per page, 1..10000"),
+                qStr("cursor", "Authenticated continuation token from a previous page"),
+                pProg()),
+            (q, b) -> addressEncodingSearchService.searchAddressEncodings(
+                str(q, "start"), str(q, "end"), num(q, "width_bytes", 2),
+                str(q, "byte_order", "little"), str(q, "source_start"),
+                str(q, "source_end"), num(q, "limit", 1000), str(q, "cursor"),
+                str(q, "program")));
+
+        // Kept in step with the @McpTool annotation on analyzeCoverage: the two
+        // namespaces and the undefined-datatype rule are the substance of it.
+        get("/analyze_coverage",
+            "Report how much of the program is still unexplained: every initialized byte "
+                + "classified as instruction, data or undefined, per address space, plus "
+                + "the undefined runs with their neighbouring labels and incoming "
+                + "reference counts. Does not depend on function objects, so it works on a "
+                + "labels-only program; an explicitly applied undefined1..8 counts as "
+                + "undefined, not as data. A second namespace, annotation_backlog, audits "
+                + "generic symbol names and TODO markers.",
+            params(qLong("min_run_length", 1, "Runs shorter than this are excluded from "
+                    + "the page but still counted in below_min"),
+                qInt("limit", 100, "Maximum undefined runs returned, 1..10000"),
+                qInt("offset", 0, "Page start within the ordered undefined runs"),
+                qInt("marker_limit", 100, "Maximum unknown markers returned, 1..10000"),
+                qInt("marker_offset", 0, "Page start within the ordered unknown markers"),
+                qStr("unknown_marker_prefix", "Case-sensitive marker literal; default TODO"),
+                qStr("generic_prefixes",
+                    "Comma-separated generated-name prefixes; default DAT_,SUB_,LAB_,FUN_,UNK_"),
+                pProg()),
+            (q, b) -> coverageService.analyzeCoverage(
+                longNum(q, "min_run_length", 1), num(q, "limit", 100),
+                num(q, "offset", 0), num(q, "marker_limit", 100),
+                num(q, "marker_offset", 0),
+                str(q, "unknown_marker_prefix", "TODO"),
+                str(q, "generic_prefixes", "DAT_,SUB_,LAB_,FUN_,UNK_"),
+                str(q, "program")));
 
         get("/find_similar_functions", "Find structurally similar functions",
             params(qStr("target_function", "Function name"), qDbl("threshold", 0.8, "Similarity threshold"), pProg()),

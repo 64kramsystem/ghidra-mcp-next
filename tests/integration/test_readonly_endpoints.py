@@ -26,10 +26,12 @@ Test coverage:
 - Memory inspection (2 tests)
 - Bulk operations (1 test)
 - Selection state (1 test)
-- Byte pattern search (1 test)
+- Byte pattern search (3 tests)
+- Address-encoding search (2 tests)
+- Whole-program coverage (3 tests)
 - Response format validation (3 tests)
 
-Total: 57 read-only tests
+Total: 66 read-only tests
 """
 
 import pytest
@@ -755,12 +757,146 @@ class TestBytePatternSearch:
     """Test byte pattern search (read-only)."""
 
     def test_search_byte_patterns(self, http_client):
-        """Search for byte patterns."""
-        # Search for common function prologue
+        """Search for byte patterns and assert the response envelope, not just 200."""
         response = http_client.get(
             "/search_byte_patterns", params={"pattern": "55 8B EC"}
         )
         assert response.status_code == 200
+        body = json.loads(response.text)
+        # An envelope, not a bare array: the old shape carried truncation and
+        # empty-result notices as array ELEMENTS, which read as matches.
+        assert isinstance(body, dict), body
+        assert isinstance(body["matches"], list)
+        assert body["pattern"] == "558bec"
+        assert body["effective_mask"] == "ffffff"
+        assert body["wildcard_count"] == 0
+        assert body["scope"]["mode"] == "all_initialized_memory"
+        assert isinstance(body["scope"]["spaces"], list)
+        assert body["total_matched"] >= len(body["matches"])
+        assert body["returned"] == len(body["matches"])
+        assert body["has_more"] == (
+            body["offset"] + body["returned"] < body["total_matched"]
+        )
+        assert "program_modification_number" in body
+        for match in body["matches"]:
+            assert set(match) == {"address", "address_full", "address_space"}
+
+    def test_search_byte_patterns_honours_the_mask(self, http_client):
+        """A mask narrows the match set; it used to be accepted and ignored."""
+        masked = http_client.get(
+            "/search_byte_patterns", params={"pattern": "55", "mask": "f0"}
+        )
+        assert masked.status_code == 200
+        body = json.loads(masked.text)
+        assert body["effective_mask"] == "f0"
+        exact = json.loads(
+            http_client.get(
+                "/search_byte_patterns", params={"pattern": "55"}
+            ).text
+        )
+        # 0x50-0x5f all match under f0, so the masked search cannot be narrower.
+        assert body["total_matched"] >= exact["total_matched"]
+
+    def test_search_byte_patterns_zero_matches_is_an_empty_list(self, http_client):
+        """Empty is data, not a {"note": ...} element."""
+        response = http_client.get(
+            "/search_byte_patterns",
+            params={"pattern": "de ad be ef ca fe ba be de ad be ef ca fe ba be"},
+        )
+        assert response.status_code == 200
+        body = json.loads(response.text)
+        assert body["matches"] == []
+        assert body["total_matched"] == 0
+        assert body["has_more"] is False
+
+
+class TestAddressEncodingSearch:
+    """Test byte windows decoding into an address range (read-only)."""
+
+    def test_search_address_encodings_shape(self, http_client, sample_address):
+        response = http_client.get(
+            "/search_address_encodings",
+            params={"start": sample_address, "end": sample_address, "width_bytes": 4},
+        )
+        assert response.status_code == 200
+        body = json.loads(response.text)
+        assert body["scope"] == "byte_encodings_of_destination_range"
+        assert body["width_bytes"] == 4
+        assert body["byte_order"] == "little"
+        assert " - " in body["destination_range"]
+        assert body["source_scope"]["mode"] == "all_initialized_memory"
+        assert body["returned"] == len(body["encodings"])
+        assert ("cursor" in body) and (body["has_more"] == (body["cursor"] is not None))
+        for row in body["encodings"]:
+            assert row["site"] in {
+                "inside_instruction",
+                "inside_data_unit",
+                "undefined",
+            }
+            assert isinstance(row["matching_references"], list)
+            assert row["decoded_target"].endswith(row["decoded_offset"])
+
+    def test_search_address_encodings_rejects_an_unrepresentable_bound(
+        self, http_client, sample_address
+    ):
+        """An empty result would otherwise read as a clean sweep."""
+        response = http_client.get(
+            "/search_address_encodings",
+            params={"start": sample_address, "end": sample_address, "width_bytes": 1},
+        )
+        assert response.status_code == 200
+        assert "error" in json.loads(response.text)
+
+
+class TestCoverage:
+    """Test whole-program coverage accounting (read-only)."""
+
+    def test_analyze_coverage_shape_and_invariants(self, http_client):
+        response = http_client.get("/analyze_coverage")
+        assert response.status_code == 200
+        body = json.loads(response.text)
+        assert "program_modification_number" in body
+
+        coverage = body["memory_coverage"]
+        assert coverage["spaces"], "a loaded program has at least one space"
+        for space in coverage["spaces"]:
+            assert (
+                space["instruction"] + space["data"] + space["undefined"]
+                == space["total"]
+            ), space
+        runs = coverage["undefined_runs"]
+        assert runs["all_count"] == runs["eligible_count"] + runs["below_min"]["count"]
+        assert runs["returned"] == len(runs["items"])
+        assert runs["has_more"] == (
+            runs["offset"] + runs["returned"] < runs["eligible_count"]
+        )
+        for item in runs["items"]:
+            assert item["length"] >= 1
+            assert "primary_labels_in_run" in item
+            assert "incoming_reference_count" in item
+
+        backlog = body["annotation_backlog"]
+        assert set(backlog["generic_symbols"]["totals"]) >= {"DAT_", "LAB_", "SUB_"}
+        markers = backlog["unknown_markers"]
+        assert markers["returned"] == len(markers["items"])
+
+    def test_analyze_coverage_pages_runs_and_markers_independently(self, http_client):
+        response = http_client.get(
+            "/analyze_coverage", params={"limit": 1, "marker_limit": 2}
+        )
+        assert response.status_code == 200
+        body = json.loads(response.text)
+        runs = body["memory_coverage"]["undefined_runs"]
+        markers = body["annotation_backlog"]["unknown_markers"]
+        assert runs["limit"] == 1 and len(runs["items"]) <= 1
+        assert markers["limit"] == 2 and len(markers["items"]) <= 2
+
+    def test_analyze_coverage_rejects_an_empty_marker_prefix(self, http_client):
+        response = http_client.get(
+            "/analyze_coverage", params={"unknown_marker_prefix": " "}
+        )
+        assert response.status_code == 200
+        assert "error" in json.loads(response.text)
 
 
 class TestResponseFormats:

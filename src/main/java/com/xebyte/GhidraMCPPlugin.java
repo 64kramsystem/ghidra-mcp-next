@@ -249,6 +249,8 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
     private final com.xebyte.core.FlowDisassemblyService flowDisassemblyService;
     private final com.xebyte.core.ListingRangeService listingRangeService;
     private final com.xebyte.core.ListingMutationService listingMutationService;
+    private final com.xebyte.core.AddressEncodingSearchService addressEncodingSearchService;
+    private final com.xebyte.core.CoverageService coverageService;
     private final com.xebyte.core.DebuggerService debuggerService;
 
     public GhidraMCPPlugin(PluginTool tool) {
@@ -289,6 +291,11 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
         this.listingMutationService =
             new com.xebyte.core.ListingMutationService(
                 programProvider, threadingStrategy);
+        this.addressEncodingSearchService =
+            new com.xebyte.core.AddressEncodingSearchService(
+                programProvider, threadingStrategy);
+        this.coverageService =
+            new com.xebyte.core.CoverageService(programProvider, threadingStrategy);
         this.debuggerService = new com.xebyte.core.DebuggerService(programProvider, threadingStrategy, tool);
         Msg.info(GhidraMCPPlugin.class, "============================================");
         Msg.info(GhidraMCPPlugin.class, VersionInfo.getFullVersion());
@@ -553,6 +560,7 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
             symbolProfileService,
             emulationService, exportService, flowDisassemblyService,
             listingRangeService, listingMutationService,
+            addressEncodingSearchService, coverageService,
             debuggerService, guiProjectService, guiContextService);
 
         for (EndpointDef ep : scanner.getEndpoints()) {
@@ -2460,13 +2468,6 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
      */
     private String detectCryptoConstants() {
         return analysisService.detectCryptoConstants().toJson();
-    }
-
-    /**
-     * Search for byte patterns with optional wildcards
-     */
-    private String searchBytePatterns(String pattern, String mask) {
-        return analysisService.searchBytePatterns(pattern, mask).toJson();
     }
 
     /**

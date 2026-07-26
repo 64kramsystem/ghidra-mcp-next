@@ -67,6 +67,8 @@ public class HeadlessEndpointHandler {
     private final com.xebyte.core.FlowDisassemblyService flowDisassemblyService;
     private final com.xebyte.core.ListingRangeService listingRangeService;
     private final com.xebyte.core.ListingMutationService listingMutationService;
+    private final com.xebyte.core.AddressEncodingSearchService addressEncodingSearchService;
+    private final com.xebyte.core.CoverageService coverageService;
 
     public HeadlessEndpointHandler(ProgramProvider programProvider, ThreadingStrategy threadingStrategy) {
         this.programProvider = programProvider;
@@ -104,6 +106,11 @@ public class HeadlessEndpointHandler {
         this.listingMutationService =
             new com.xebyte.core.ListingMutationService(
                 programProvider, threadingStrategy);
+        this.addressEncodingSearchService =
+            new com.xebyte.core.AddressEncodingSearchService(
+                programProvider, threadingStrategy);
+        this.coverageService =
+            new com.xebyte.core.CoverageService(programProvider, threadingStrategy);
     }
 
     // ==========================================================================
@@ -142,6 +149,12 @@ public class HeadlessEndpointHandler {
     }
     public com.xebyte.core.ListingMutationService getListingMutationService() {
         return listingMutationService;
+    }
+    public com.xebyte.core.AddressEncodingSearchService getAddressEncodingSearchService() {
+        return addressEncodingSearchService;
+    }
+    public com.xebyte.core.CoverageService getCoverageService() {
+        return coverageService;
     }
     public ProgramProvider getProgramProvider() { return programProvider; }
 
@@ -1486,99 +1499,6 @@ public class HeadlessEndpointHandler {
         result.append("\"filter\": ").append(filter != null ? "\"" + escapeJson(filter) + "\"" : "null");
         result.append("}");
         return result.toString();
-    }
-
-    /**
-     * Search for byte patterns in memory
-     */
-    public String searchBytePatterns(String pattern, String mask, String programName) {
-        Program program = getProgram(programName);
-        if (program == null) {
-            return getProgramError(programName);
-        }
-
-        if (pattern == null || pattern.trim().isEmpty()) {
-            return "{\"error\": \"Pattern is required\"}";
-        }
-
-        try {
-            StringBuilder result = new StringBuilder();
-            result.append("[");
-
-            // Parse hex pattern (e.g., "E8 ?? ?? ?? ??" or "E8????????")
-            String cleanPattern = pattern.trim().toUpperCase().replaceAll("\\s+", "");
-
-            // Convert pattern to byte array and mask
-            int patternLen = cleanPattern.length() / 2;
-            byte[] patternBytes = new byte[patternLen];
-            byte[] maskBytes = new byte[patternLen];
-
-            int byteIndex = 0;
-            for (int i = 0; i < cleanPattern.length() && byteIndex < patternLen; i += 2) {
-                if (cleanPattern.charAt(i) == '?' ||
-                    (i + 1 < cleanPattern.length() && cleanPattern.charAt(i + 1) == '?')) {
-                    patternBytes[byteIndex] = 0;
-                    maskBytes[byteIndex] = 0; // Don't check this byte
-                } else {
-                    String hexByte = cleanPattern.substring(i, Math.min(i + 2, cleanPattern.length()));
-                    patternBytes[byteIndex] = (byte) Integer.parseInt(hexByte, 16);
-                    maskBytes[byteIndex] = (byte) 0xFF; // Check this byte
-                }
-                byteIndex++;
-            }
-
-            // Search memory for pattern
-            Memory memory = program.getMemory();
-            int matchCount = 0;
-            final int MAX_MATCHES = 1000;
-
-            for (MemoryBlock block : memory.getBlocks()) {
-                if (!block.isInitialized()) continue;
-
-                Address blockStart = block.getStart();
-                long blockSize = block.getSize();
-
-                byte[] blockData = new byte[(int) Math.min(blockSize, Integer.MAX_VALUE)];
-                try {
-                    block.getBytes(blockStart, blockData);
-                } catch (Exception e) {
-                    continue;
-                }
-
-                for (int i = 0; i <= blockData.length - patternBytes.length; i++) {
-                    boolean matches = true;
-                    for (int j = 0; j < patternBytes.length; j++) {
-                        if (maskBytes[j] != 0 && blockData[i + j] != patternBytes[j]) {
-                            matches = false;
-                            break;
-                        }
-                    }
-
-                    if (matches) {
-                        if (matchCount > 0) result.append(",");
-                        Address matchAddr = blockStart.add(i);
-                        result.append("{\"address\": \"").append(matchAddr.toString()).append("\"}");
-                        matchCount++;
-
-                        if (matchCount >= MAX_MATCHES) {
-                            result.append(",{\"note\": \"Limited to ").append(MAX_MATCHES).append(" matches\"}");
-                            break;
-                        }
-                    }
-                }
-
-                if (matchCount >= MAX_MATCHES) break;
-            }
-
-            if (matchCount == 0) {
-                result.append("{\"note\": \"No matches found\"}");
-            }
-
-            result.append("]");
-            return result.toString();
-        } catch (Exception e) {
-            return "{\"error\": \"" + escapeJson(e.getMessage()) + "\"}";
-        }
     }
 
     /**

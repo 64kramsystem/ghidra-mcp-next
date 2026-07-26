@@ -100,6 +100,13 @@ public class GuiTransportSchemaParityTest extends TestCase {
         assertTrue("TCP must construct ListingMutationService with GUI threading",
                 source.matches("(?s).*new com\\.xebyte\\.core\\.ListingMutationService\\(\\s*"
                     + "programProvider,\\s*threadingStrategy\\).*"));
+        assertTrue("TCP must construct AddressEncodingSearchService with GUI threading",
+                source.matches(
+                    "(?s).*new com\\.xebyte\\.core\\.AddressEncodingSearchService\\(\\s*"
+                    + "programProvider,\\s*threadingStrategy\\).*"));
+        assertTrue("TCP must construct CoverageService with GUI threading",
+                source.matches("(?s).*new com\\.xebyte\\.core\\.CoverageService\\("
+                    + "programProvider,\\s*threadingStrategy\\).*"));
         assertTrue("TCP scanner must include GuiProjectService so schema and routes agree",
                 source.matches("(?s).*new AnnotationScanner\\(programProvider,.*"
                         + "programScriptService,\\s*memoryBlockService,\\s*dataRegionService,\\s*"
@@ -107,6 +114,7 @@ public class GuiTransportSchemaParityTest extends TestCase {
                         + "emulationService,\\s*exportService,\\s*"
                         + "flowDisassemblyService,\\s*listingRangeService,\\s*"
                         + "listingMutationService,\\s*"
+                        + "addressEncodingSearchService,\\s*coverageService,\\s*"
                         + "debuggerService,\\s*"
                         + "guiProjectService,\\s*guiContextService\\).*"));
     }
@@ -132,6 +140,10 @@ public class GuiTransportSchemaParityTest extends TestCase {
                 "new ListingRangeService(programProvider, ts)"));
         assertTrue("UDS must construct ListingMutationService", source.contains(
                 "new ListingMutationService(programProvider, ts)"));
+        assertTrue("UDS must construct AddressEncodingSearchService", source.contains(
+                "new AddressEncodingSearchService(programProvider, ts)"));
+        assertTrue("UDS must construct CoverageService", source.contains(
+                "new CoverageService(programProvider, ts)"));
         assertTrue("UDS must construct DebuggerService", source.contains(
                 "DebuggerService debuggerService = new DebuggerService"));
         assertTrue("UDS must construct GuiProjectService", source.contains(
@@ -145,6 +157,7 @@ public class GuiTransportSchemaParityTest extends TestCase {
                         + "emulationService,\\s*exportService,\\s*"
                         + "flowDisassemblyService,\\s*listingRangeService,\\s*"
                         + "listingMutationService,\\s*"
+                        + "addressEncodingSearchService,\\s*coverageService,\\s*"
                         + "debuggerService,\\s*"
                         + "guiProjectService,\\s*guiContextService\\).*"));
     }
@@ -185,6 +198,10 @@ public class GuiTransportSchemaParityTest extends TestCase {
                         + "programProvider,\\s*threadingStrategy\\).*"));
         assertTrue("Headless handler must expose ListingMutationService to the scanner",
                 handlerSource.contains("getListingMutationService()"));
+        assertTrue("Headless handler must expose AddressEncodingSearchService",
+                handlerSource.contains("getAddressEncodingSearchService()"));
+        assertTrue("Headless handler must expose CoverageService",
+                handlerSource.contains("getCoverageService()"));
 
         String serverSource = Files.readString(ROOT.resolve(
                 "src/main/java/com/xebyte/headless/GhidraMCPHeadlessServer.java"));
@@ -200,6 +217,8 @@ public class GuiTransportSchemaParityTest extends TestCase {
                         + "endpointHandler\\.getFlowDisassemblyService\\(\\),\\s*"
                         + "endpointHandler\\.getListingRangeService\\(\\),\\s*"
                         + "endpointHandler\\.getListingMutationService\\(\\),\\s*"
+                        + "endpointHandler\\.getAddressEncodingSearchService\\(\\),\\s*"
+                        + "endpointHandler\\.getCoverageService\\(\\),\\s*"
                         + "managementService\\).*"));
     }
 

@@ -58,6 +58,7 @@ body — unlike `get_bulk_xrefs`, which is POST only because it takes an array.
 | `start` | yes | inclusive |
 | `end` | yes | inclusive |
 | `limit` | no | `1`–`10000`, default `2000` |
+| `offset` | no | default `0`; page start within the ordered result |
 | `program` | no | existing selector convention |
 
 Both endpoints resolve through `ServiceUtils.parseAddress`. Errors:
@@ -67,8 +68,37 @@ Both endpoints resolve through `ServiceUtils.parseAddress`. Errors:
   spaces has no meaning.
 - an unresolvable endpoint — carries the `parseAddress` message unchanged.
 
-Deliberately excluded: reference-type filter, offset/cursor pagination, and any
-summary block beyond `count`. The output is a flat list; a caller tallies it.
+Deliberately excluded: reference-type filter, cursor pagination, and any summary
+block beyond the page envelope. The output is a flat list; a caller tallies it.
+
+**Offset pagination is included** (added 2026-07-27; the first revision excluded it).
+The implementation already collects and sorts the full result, so paging is cheap, and
+without it a single address carrying more than `limit` incoming references has no
+route to completeness — the dead end recorded under "Still open" below, now closed.
+The page envelope replaces the earlier `truncated` flag:
+
+```json
+{
+  "count": 93,
+  "offset": 20,
+  "limit": 20,
+  "returned": 20,
+  "has_more": true,
+  "references": []
+}
+```
+
+`count` remains the total over the whole range, independent of paging;
+`returned == references.length`; `has_more == (offset + returned < count)`. `truncated`
+is gone: it conflated rows skipped before the page with rows remaining after it.
+
+A negative `offset` is **rejected**, not clamped. `offset + returned` is computed with
+overflow-safe arithmetic, so a caller passing a near-maximum `offset` gets an empty page
+rather than a wrapped comparison that reports `has_more` incorrectly.
+
+The response also echoes `program_modification_number`. Page continuity is only guaranteed
+while the program is unchanged; the echo is what lets a caller detect that two pages came
+from different revisions rather than silently stitching them.
 
 ### Bare, unqualified ranges resolve to the physical space
 
@@ -123,7 +153,10 @@ Excerpt — two of the eleven rows the pre-retarget sweep would return:
   "resolved_range": "ram:9680 - ram:98ff",
   "overlapping_spaces": ["SND_PLAYER"],
   "count": 11,
-  "truncated": false,
+  "offset": 0,
+  "limit": 2000,
+  "returned": 11,
+  "has_more": false,
   "references": [
     {"from": "ram:0733", "from_symbol": "LAB_0730", "from_symbol_offset": 3,
      "from_kind": "instruction", "from_instruction": "STA $9700,Y",
@@ -245,9 +278,11 @@ Nine is the wrong number for every one of those cases.
   reading the rows sees one instruction and can classify it as a single site,
   while `count` still reports 2. Grouping by target would instead scatter that
   one instruction under two keys, where it reads like two independent findings.
-- `truncated` plus `count` makes the cap visible instead of silent. When the
-  cap bites, `count` still reports matches found, so `count` exceeds
-  `references.length`.
+- the page envelope (`count`, `offset`, `limit`, `returned`, `has_more`) makes an
+  incomplete body visible instead of silent. When a page does not cover the range,
+  `count` still reports every match found, so `count` exceeds `references.length`.
+  (Originally a single `truncated` flag; superseded by `offset` paging on
+  2026-07-27, since a flag announced incompleteness without offering a way out.)
 - `from_symbol` resolves in one explicit precedence order, because "exact label,
   else preceding label, and functions where they exist" left the tie
   unspecified:
@@ -303,6 +338,12 @@ instruction bytes; the two methods agreeing is what makes a result exhaustive.
 One `refMgr.getReferenceDestinationIterator(addressSet, true)` pass over the
 resolved set, then `getReferencesTo` per hit destination, so destinations with
 no references never appear.
+
+The full result is collected and sorted before anything is returned — which is why
+`count` is exact and why paging is cheap. **The page is a slice taken after that
+sort**: skip `offset` rows, take up to `limit`, and derive `returned` and `has_more`
+from the slice against `count`. `offset` beyond the end yields an empty array with
+`count` unchanged, never an error.
 
 `overlapping_spaces` is computed from **memory blocks**, not address spaces. An
 overlay space in Ghidra spans the full range of the space it shadows —
@@ -416,11 +457,19 @@ likely to be silently dropped in the JSON mapper:
   - a label in the **previous memory block** is never returned, even when it is
     the nearest preceding symbol by address.
 
-Cap semantics:
+Paging semantics (revised 2026-07-27, replacing the cap-only tests):
 
-- a case where `truncated` is `true` and `count` exceeds `references.length`.
+- a case where `has_more` is `true` and `count` exceeds `references.length`.
   Without it, `count` and array length stay accidentally equal in every test
   and the distinction is never exercised.
+- a **middle page** (`offset` and `limit` both interior), asserting the rows are
+  the expected slice of the ordered result, with no duplicates against the
+  previous page and no gap.
+- an `offset` **past the end**, returning an empty array with `count` unchanged
+  and `has_more` false.
+- `count` **invariant across pages** of the same range, so paging cannot be
+  mistaken for filtering.
+- `has_more` exactly at the boundary, where `offset + returned == count`.
 
 Overlay-qualified output, which is the entire reason the tool exists:
 
@@ -489,7 +538,7 @@ Reviewed after implementation, two ways: a Codex pass over the spec, the impleme
 
 ### The live run confirmed the numbers
 
-A physical query for `RAM:9680`–`RAM:98ff` returned **exactly seven** references from five sites — the figure this spec predicted post-retarget, matching the hand-built sweep. An overlay query for `SND_PLAYER::9680`–`SND_PLAYER::98ff` returned 93, of which the 42 RAM-sourced rows are exactly the cross-space edge count derived by hand. Truncation behaved as specified: with `limit=5`, `count` reported 93 and `truncated` was true, so the cap never masquerades as the total.
+A physical query for `RAM:9680`–`RAM:98ff` returned **exactly seven** references from five sites — the figure this spec predicted post-retarget, matching the hand-built sweep. An overlay query for `SND_PLAYER::9680`–`SND_PLAYER::98ff` returned 93, of which the 42 RAM-sourced rows are exactly the cross-space edge count derived by hand. Capping behaved as specified: with `limit=5`, `count` reported 93 and the response said so, so the cap never masqueraded as the total. (That run predates the 2026-07-27 paging change and observed the original `truncated` flag; the equivalent assertion today is `has_more`, and the caller can now page to the remaining 88 rather than only being told they exist.)
 
 ### Corrected: the field literals in this spec were wrong
 
@@ -531,7 +580,7 @@ For a reference recorded from the interior of an aggregate — a dispatch-table 
 
 The fixture's `getReferenceDestinationIterator` stub ignored the `AddressSetView` it was handed and returned every fixture destination, leaving the endpoint's own `inRange` filter as the only thing under test. The space dimension of that filter — whether a RAM query can see an overlay destination — is the whole reason this endpoint exists, and nothing pinned it. The stub now honours the set, including its space test, and two tests occupy the *same* offset `$9700` in both spaces and assert each query returns only its own occupant, with the overlay case including both a cross-space and a player-internal caller so the query cannot be filtering on the source space instead.
 
-The empty-range test asserted only `resolved_range` and `overlapping_spaces`; it now also pins `count == 0`, `truncated == false` and `references == []`.
+The empty-range test asserted only `resolved_range` and `overlapping_spaces`; it now also pins `count == 0`, `references == []`, and — after the 2026-07-27 paging change — `returned == 0` and `has_more == false` in place of the original `truncated == false`.
 
 That first attempt was itself checked by mutation, and did not hold up: deleting the space comparison from `inRange` left every test passing. Making the fixture faithful is what caused it — a faithful iterator filters by space and offset itself, so the endpoint's own filter never sees anything to reject and no test can observe it. Fixing a fixture that reimplemented what it verified introduced the opposite problem in the same commit.
 
@@ -539,6 +588,37 @@ The fixture therefore has an opt-in over-delivering mode: the iterator ignores t
 
 The lesson worth keeping: a test that asserts the right property is not the same as a test that would fail if the property broke. Only mutation told them apart here.
 
-### Still open: no guaranteed path from incomplete to complete
+### Closed: the path from incomplete to complete
 
-Pagination was excluded by design and `limit` caps at 10,000. Splitting the destination range does not rescue a caller if a single address carries more than 10,000 incoming references. The cap is honest — `count` and `truncated` say so — but there is no route through this endpoint to the full list in that case. Left as a design decision rather than patched: it needs a cursor contract, which is a larger change than this review.
+*Recorded as open in the first review; closed 2026-07-27.*
+
+Pagination was excluded by design and `limit` capped at 10,000, so a single address carrying more than 10,000 incoming references had no route through this endpoint to the full list. The fix turned out to be small rather than the cursor contract feared here: the implementation already collects and sorts the whole result, so `offset` paging — specified in the Contract section above — exposes it. A cursor is only required where the traversal itself is the expensive part, which is `search_address_encodings`, not this endpoint.
+
+## Extension proposal withdrawn: unreferenced address encodings
+
+Date: 2026-07-27
+
+An earlier revision of this document proposed an `include_unreferenced_encodings` parameter
+that would also report bytes numerically encoding an in-range address without a recorded
+reference — closing the blind spot `scope: "recorded_references_only"` admits.
+
+**Withdrawn in favour of a separate endpoint**, specified in
+`2026-07-27-search-address-encodings-design.md`. The reasoning, from review:
+
+- The two are different result categories. This endpoint enumerates semantic references
+  indexed by destination; a byte scan reports windows that numerically decode into a range
+  and carries false positives by construction.
+- The flag was misnamed: it would have returned both referenced and unreferenced rows.
+- The scan needs parameters that are meaningless here — encoding width, byte order, and a
+  *source* scope distinct from the destination range.
+- The scan needs resumable traversal, since a broad range over a large program can produce
+  tens of thousands of accidental matches. A `limit` plus a truncation flag caps the body
+  and offers no route to the rest — the same dead end recorded under "Still open" above.
+
+This endpoint therefore stays recorded-reference-only. Two changes land here instead:
+
+- The tool description gains a pointer to `search_address_encodings`, so the documented
+  limitation names its remedy.
+- **`offset` pagination is added**, the small permanent fix for the 10,000-row dead end
+  under "Still open": the implementation already collects and sorts the full result, so
+  paging it is cheap and removes the case where a caller has no route to the remainder.
