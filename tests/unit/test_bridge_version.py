@@ -109,3 +109,40 @@ def test_missing_version_source_is_an_error(tmp_path: Path, monkeypatch: pytest.
 
     with pytest.raises(RuntimeError, match="Unable to derive the bridge version"):
         bridge_version.get_bridge_version(tmp_path / "bare")
+
+
+def test_a_wheel_builds_from_the_produced_sdist(tmp_path: Path):
+    """The spec requires this: the pom must ship, or the sdist cannot version itself.
+
+    Regression for the reason `pom.xml` is in the sdist include list. Runs the
+    real build, so it fails if that include is dropped.
+    """
+    import shutil
+    import subprocess
+    import tarfile
+
+    repo_root = Path(__file__).resolve().parents[2]
+    if shutil.which("uv") is None:  # pragma: no cover - environment dependent
+        pytest.skip("uv is required to build distributions")
+
+    build = subprocess.run(
+        ["uv", "build", "--sdist", "--out-dir", str(tmp_path)],
+        cwd=repo_root, capture_output=True, text=True, check=False,
+    )
+    assert build.returncode == 0, build.stderr
+
+    sdists = list(tmp_path.glob("ghidra_mcp_bridge-*.tar.gz"))
+    assert len(sdists) == 1, sdists
+    with tarfile.open(sdists[0]) as archive:
+        archive.extractall(tmp_path / "extracted", filter="data")
+    extracted = next((tmp_path / "extracted").iterdir())
+    assert (extracted / "pom.xml").is_file(), "the sdist must ship pom.xml"
+
+    wheel = subprocess.run(
+        ["uv", "build", "--wheel", "--out-dir", str(tmp_path / "wheel")],
+        cwd=extracted, capture_output=True, text=True, check=False,
+    )
+    assert wheel.returncode == 0, wheel.stderr
+    built = list((tmp_path / "wheel").glob("*.whl"))
+    assert len(built) == 1
+    assert bridge_version.get_bridge_version(repo_root) in built[0].name

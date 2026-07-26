@@ -50,9 +50,7 @@ def repo(tmp_path: Path) -> Path:
     git(root, "init", "-q", "-b", release.DEFAULT_BRANCH)
     git(root, "config", "user.email", "test@example.com")
     git(root, "config", "user.name", "Test")
-    (root / ".gitignore").write_text(
-        f"/target/\n/dist/\n{release.MANIFEST_NAME}\n", encoding="utf-8"
-    )
+    (root / ".gitignore").write_text("/target/\n/dist/\n", encoding="utf-8")
     (root / "pom.xml").write_text(POM.format(version="0.99.0"), encoding="utf-8")
     (root / "CHANGELOG.md").write_text(CHANGELOG, encoding="utf-8")
     git(root, "add", "-A")
@@ -65,12 +63,11 @@ def repo(tmp_path: Path) -> Path:
     return root
 
 
-def make_artifacts(repo: Path, version: str, *, plugin_version: str | None = None) -> None:
-    """Create artifacts the way a successful build would."""
+def make_extension(repo: Path, version: str, *, plugin_version: str | None = None) -> None:
+    """Only what Maven produces, so a missing uv build is not masked."""
     import zipfile
 
     (repo / "target").mkdir(exist_ok=True)
-    (repo / "dist").mkdir(exist_ok=True)
     extension = repo / "target" / f"{release.PRODUCT}-{version}.zip"
     with zipfile.ZipFile(extension, "w") as archive:
         archive.writestr(
@@ -78,8 +75,18 @@ def make_artifacts(repo: Path, version: str, *, plugin_version: str | None = Non
             "version=12.1.2\n"
             f"pluginVersion={plugin_version or version}\n",
         )
+
+
+def make_distributions(repo: Path, version: str) -> None:
+    """Only what `uv build` produces, so a missing Maven build is not masked."""
+    (repo / "dist").mkdir(exist_ok=True)
     (repo / "dist" / f"ghidra_mcp_bridge-{version}-py3-none-any.whl").write_bytes(b"wheel")
     (repo / "dist" / f"ghidra_mcp_bridge-{version}.tar.gz").write_bytes(b"sdist")
+
+
+def make_artifacts(repo: Path, version: str, *, plugin_version: str | None = None) -> None:
+    make_extension(repo, version, plugin_version=plugin_version)
+    make_distributions(repo, version)
 
 
 def recording_runner(repo: Path, *, fail: str | None = None, build: bool = True):
@@ -93,11 +100,12 @@ def recording_runner(repo: Path, *, fail: str | None = None, build: bool = True)
             raise release.ReleaseError(f"injected failure: {joined}")
         if command[0] == "git":
             return release.run(command, cwd)
-        if build and command[:2] == ["mvn", "-q"] and "package" in command:
-            make_artifacts(repo, release.read_version(repo))
+        parts = [str(part) for part in command]
+        if build and parts[0] == "mvn" and "package" in parts:
+            make_extension(repo, release.read_version(repo))
             return ""
-        if build and command[0] == "uv" and "build" in command:
-            make_artifacts(repo, release.read_version(repo))
+        if build and parts[:2] == ["uv", "build"]:
+            make_distributions(repo, release.read_version(repo))
             return ""
         return ""
 
@@ -236,7 +244,7 @@ def test_a_failing_tag_resets_the_branch(repo: Path):
 
     assert release.head_sha(repo) == before_head
     assert git(repo, "status", "--porcelain").strip() == ""
-    assert not (repo / release.MANIFEST_NAME).exists()
+    assert not (repo / release.MANIFEST_PATH).exists()
 
 
 def test_a_missing_artifact_fails_before_committing(repo: Path):
@@ -305,7 +313,7 @@ def publish_runner(repo: Path, *, assets: list[str] | None = None):
     def runner(command, cwd):
         if command[0] == "git":
             return release.run(command, cwd)
-        if command[:3] == ["gh", "release", "view"]:
+        if [str(part) for part in command][:3] == ["gh", "release", "view"]:
             names = assets if assets is not None else _expected_names(repo)
             return "\n".join(names)
         return ""
@@ -314,8 +322,11 @@ def publish_runner(repo: Path, *, assets: list[str] | None = None):
 
 
 def _expected_names(repo: Path) -> list[str]:
-    manifest = release.read_manifest(repo)
-    return [entry["name"] for entry in manifest["artifacts"]] + ["SHA256SUMS"]
+    """Derived from the version, not the manifest: the manifest is what we check."""
+    version = release.read_version(repo)
+    return [
+        path.name for path in release.expected_artifacts(repo, version)
+    ] + ["SHA256SUMS"]
 
 
 def test_publish_pins_gh_to_the_origin_repository(repo: Path):
@@ -347,7 +358,7 @@ def test_publish_refuses_when_the_tag_is_absent_from_origin(repo: Path):
     version = release.prepare(repo, "minor", recording_runner(repo))
     git(repo, "push", "-q", "origin", release.DEFAULT_BRANCH)
     # Everything else is in place; only the tag was never pushed.
-    assert (repo / release.MANIFEST_NAME).is_file()
+    assert (repo / release.MANIFEST_PATH).is_file()
 
     with pytest.raises(release.ReleaseError, match=f"origin has no v{version}"):
         release.publish(repo, publish_runner(repo))
@@ -380,9 +391,9 @@ def test_publish_refuses_an_artifact_rebuilt_after_prepare(repo: Path):
 
 def test_publish_refuses_a_missing_manifest(repo: Path):
     prepared(repo)
-    (repo / release.MANIFEST_NAME).unlink()
+    (repo / release.MANIFEST_PATH).unlink()
 
-    with pytest.raises(release.ReleaseError, match="is missing"):
+    with pytest.raises(release.ReleaseError, match="missing"):
         release.publish(repo, publish_runner(repo))
 
 
@@ -397,14 +408,14 @@ def test_publish_succeeds_and_writes_checksums(repo: Path):
     version = prepared(repo)
 
     assert release.publish(repo, publish_runner(repo)) == version
-    checksums = (repo / "SHA256SUMS").read_text()
+    checksums = (repo / release.CHECKSUMS_PATH).read_text()
     assert f"ghidra_mcp_bridge-{version}.tar.gz" in checksums
     assert len(checksums.strip().splitlines()) == 3
 
 
 def test_manifest_records_the_tagged_commit(repo: Path):
     version = release.prepare(repo, "minor", recording_runner(repo))
-    manifest = json.loads((repo / release.MANIFEST_NAME).read_text())
+    manifest = json.loads((repo / release.MANIFEST_PATH).read_text())
 
     assert manifest["version"] == version
     assert manifest["commit"] == release.head_sha(repo)
@@ -439,3 +450,132 @@ def test_workflow_no_longer_publishes_releases():
     )
     assert "gh release create" not in workflow_text
     assert "git push" not in workflow_text
+
+
+# ------------------------------------------------ blockers found in review
+
+
+def test_a_concurrent_commit_is_not_destroyed(repo: Path):
+    """Rollback must reset only the commit this run created.
+
+    Resetting whenever HEAD moved would erase whatever else landed.
+    """
+    def runner(command, cwd):
+        parts = [str(part) for part in command]
+        if parts[:3] == ["git", "tag", "-a"]:
+            # Something else commits between our commit and the tag.
+            (repo / "other.txt").write_text("concurrent", encoding="utf-8")
+            git(repo, "add", "other.txt")
+            git(repo, "commit", "-qm", "concurrent work")
+            raise release.ReleaseError("injected failure: git tag -a")
+        return recording_runner(repo)(command, cwd)
+
+    with pytest.raises(release.ReleaseError, match="not resetting"):
+        release.prepare(repo, "minor", runner)
+
+    assert git(repo, "log", "-1", "--format=%s").strip() == "concurrent work"
+    assert (repo / "other.txt").is_file()
+
+
+def test_an_injected_commit_failure_leaves_no_trace(repo: Path):
+    before_head = release.head_sha(repo)
+
+    with pytest.raises(release.ReleaseError, match="injected failure"):
+        release.prepare(repo, "minor", recording_runner(repo, fail="git commit"))
+
+    assert release.head_sha(repo) == before_head
+    assert git(repo, "status", "--porcelain").strip() == ""
+    assert git(repo, "tag", "--list").strip() == ""
+
+
+def test_an_injected_manifest_write_failure_resets_the_branch(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+):
+    before_head = release.head_sha(repo)
+
+    def explode(*args, **kwargs):
+        raise release.ReleaseError("injected failure: manifest write")
+
+    monkeypatch.setattr(release, "write_manifest", explode)
+
+    with pytest.raises(release.ReleaseError, match="injected failure"):
+        release.prepare(repo, "minor", recording_runner(repo))
+
+    assert release.head_sha(repo) == before_head
+    assert git(repo, "status", "--porcelain").strip() == ""
+    assert not (repo / release.MANIFEST_PATH).exists()
+
+
+def test_publish_rejects_a_manifest_missing_artifacts(repo: Path):
+    """The manifest is untrusted input; an empty one must not publish nothing."""
+    prepared(repo)
+    manifest = json.loads((repo / release.MANIFEST_PATH).read_text())
+    manifest["artifacts"] = []
+    (repo / release.MANIFEST_PATH).write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(release.ReleaseError, match="manifest lists"):
+        release.publish(repo, publish_runner(repo))
+
+
+def test_publish_rejects_a_manifest_listing_an_unexpected_artifact(repo: Path):
+    prepared(repo)
+    manifest = json.loads((repo / release.MANIFEST_PATH).read_text())
+    stray = repo / "dist" / "something-else.whl"
+    stray.write_bytes(b"stray")
+    manifest["artifacts"] = [
+        {"name": stray.name, "path": str(stray), "sha256": release.sha256(stray)}
+    ]
+    (repo / release.MANIFEST_PATH).write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(release.ReleaseError, match="manifest lists"):
+        release.publish(repo, publish_runner(repo))
+
+
+def test_release_scratch_files_do_not_dirty_the_repository(repo: Path):
+    """The first real publish must not leave a state the next prepare refuses."""
+    prepared(repo)
+    release.publish(repo, publish_runner(repo))
+
+    assert git(repo, "status", "--porcelain").strip() == ""
+    assert str(release.MANIFEST_PATH).startswith("dist/")
+    assert str(release.CHECKSUMS_PATH).startswith("dist/")
+
+
+def test_publish_takes_notes_from_the_tag(repo: Path):
+    """Working-tree notes could drift after the tag was written."""
+    prepared(repo)
+    commands: list[list[str]] = []
+
+    def runner(command, cwd):
+        commands.append([str(part) for part in command])
+        return publish_runner(repo)(command, cwd)
+
+    release.publish(repo, runner)
+
+    create = next(c for c in commands if c[:3] == ["gh", "release", "create"])
+    assert "--notes-from-tag" in create
+    assert "--notes" not in create
+
+
+def test_each_build_command_is_required(repo: Path):
+    """The fake creates only what each command produces, so neither can be dropped."""
+    import shutil
+
+    for dropped in ("mvn", "uv"):
+        # Clear build output first: artifacts left by the previous iteration
+        # would otherwise satisfy this one's verification.
+        shutil.rmtree(repo / "dist", ignore_errors=True)
+        shutil.rmtree(repo / "target", ignore_errors=True)
+        target = repo / "pom.xml"
+        original = target.read_text()
+
+        def runner(command, cwd, dropped=dropped):
+            parts = [str(part) for part in command]
+            if parts[0] == dropped and parts[0] != "git":
+                return ""
+            return recording_runner(repo)(command, cwd)
+
+        with pytest.raises(release.ReleaseError, match="build did not produce"):
+            release.prepare(repo, "minor", runner)
+
+        assert target.read_text() == original

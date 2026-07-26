@@ -75,6 +75,3 @@ __pycache__/
 Thumbs.db
 [Dd]esktop.ini
 $RECYCLE.BIN/
-
-# Written by tools/release prepare; consumed by publish.
-.release-manifest.json
