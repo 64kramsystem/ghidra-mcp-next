@@ -586,6 +586,14 @@ public class ReferencesIntoRangeTest {
     }
 
     @Test
+    public void scopeNamesTheCompletenessBoundaryInEveryResponse() {
+        // The caveat has to survive being read without the tool description in view.
+        XrefCallGraphService service = new Fixture().build();
+        assertEquals("recorded_references_only",
+            body(service.getReferencesIntoRange("9680", "98ff", 2000, "")).get("scope"));
+    }
+
+    @Test
     public void physicalQueryReportsOverlappingOverlayBlock() {
         AddressSpace player = overlaySpace("SND_PLAYER");
         XrefCallGraphService service = new Fixture()
@@ -863,6 +871,7 @@ public class ReferencesIntoRangeTest {
             rows(service.getReferencesIntoRange("9680", "98ff", 2000, "")).get(0);
         assertEquals("EXACT_LABEL", row.get("from_symbol"));
         assertEquals(BigInteger.ZERO, row.get("from_symbol_offset"));
+        assertEquals("at", row.get("from_symbol_relation"));
     }
 
     @Test
@@ -892,6 +901,7 @@ public class ReferencesIntoRangeTest {
             rows(service.getReferencesIntoRange("9680", "98ff", 2000, "")).get(0);
         assertEquals("CONTAINING_FUNC", row.get("from_symbol"));
         assertEquals(BigInteger.valueOf(3), row.get("from_symbol_offset"));
+        assertEquals("containing", row.get("from_symbol_relation"));
     }
 
     @Test
@@ -953,6 +963,52 @@ public class ReferencesIntoRangeTest {
             rows(service.getReferencesIntoRange("9680", "98ff", 2000, "")).get(0);
         assertEquals("IN_BLOCK_LABEL", row.get("from_symbol"));
         assertEquals(BigInteger.valueOf(3), row.get("from_symbol_offset"));
+        assertEquals("preceding", row.get("from_symbol_relation"));
+    }
+
+    @Test
+    public void distantPrecedingLabelIsMarkedPrecedingNotContaining() {
+        // The reason from_symbol_relation exists. On a program laid out as one large
+        // block the preceding walk is unbounded in practice: here a 5-byte filename
+        // buffer 475 bytes back is the nearest label, and the row reads
+        // "PART_FILENAME+475" — indistinguishable from an offset INTO something 475
+        // bytes long unless the relation says otherwise.
+        Symbol distant = mock(Symbol.class);
+        when(distant.getName()).thenReturn("PART_FILENAME");
+        when(distant.getAddress()).thenReturn(ramAddr(0x9735));
+
+        Fixture fixture = new Fixture()
+            .withRefs(ref(ramAddr(0x9902), ramAddr(0x98d1),
+                RefType.UNCONDITIONAL_JUMP, SourceType.USER_DEFINED, 0));
+        XrefCallGraphService service = fixture.build();
+        SymbolIterator iterator = mock(SymbolIterator.class);
+        when(iterator.hasNext()).thenReturn(true, false);
+        when(iterator.next()).thenReturn(distant);
+        when(fixture.symbolTable.getPrimarySymbolIterator(
+                any(AddressSetView.class), anyBoolean()))
+            .thenReturn(iterator);
+        // Built before the when(...), or Mockito sees stubbing inside stubbing.
+        MemoryBlock wholeRam = block("RAM", ramAddr(0x0000), ramAddr(0xcfff));
+        when(fixture.memory.getBlock(any(Address.class))).thenReturn(wholeRam);
+
+        Map<String, Object> row =
+            rows(service.getReferencesIntoRange("9680", "98ff", 2000, "")).get(0);
+        assertEquals("PART_FILENAME", row.get("from_symbol"));
+        assertEquals(BigInteger.valueOf(0x9902 - 0x9735), row.get("from_symbol_offset"));
+        assertEquals("preceding", row.get("from_symbol_relation"));
+    }
+
+    @Test
+    public void relationIsAbsentWheneverTheSymbolFieldsAre() {
+        XrefCallGraphService service = new Fixture()
+            .withRefs(ref(ramAddr(0x0703), ramAddr(0x96a1),
+                RefType.UNCONDITIONAL_CALL, SourceType.USER_DEFINED, 0))
+            .build();
+
+        Map<String, Object> row =
+            rows(service.getReferencesIntoRange("9680", "98ff", 2000, "")).get(0);
+        assertFalse(row.containsKey("from_symbol"));
+        assertFalse(row.containsKey("from_symbol_relation"));
     }
 
     @Test
