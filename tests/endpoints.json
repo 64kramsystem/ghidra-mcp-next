@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "description": "GhidraMCP-next REST API Endpoint Specification",
-  "total_endpoints": 259,
+  "total_endpoints": 260,
   "categories": {
     "listing": "List program data",
     "getter": "Get specific data",
@@ -1649,6 +1649,18 @@
       "category": "headless",
       "params": [],
       "description": "Get info about the currently open project"
+    },
+    {
+      "path": "/get_references_into_range",
+      "method": "GET",
+      "category": "xref",
+      "params": [
+        "start",
+        "end",
+        "limit",
+        "program"
+      ],
+      "description": "List every recorded reference whose DESTINATION falls in [start, end] (inclusive), as a flat list ordered by source address. Answers \"what touches this address span\" in one call — the recurring query on overlay/banked-memory targets. Returns RECORDED REFERENCES ONLY: untyped bytes that happen to encode an in-range address produce no Reference and will not appear, so an exhaustive sweep also needs an instruction-decoding pass. Plain hex resolves in the default physical space; `resolved_range` echoes what was queried and `overlapping_spaces` lists other spaces occupying those offsets."
     },
     {
       "path": "/get_struct_layout",
