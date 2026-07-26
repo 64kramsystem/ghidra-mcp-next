@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from bridge_mcp_ghidra import instance_summary, state, static_tools
+from ghidra_mcp_bridge import instance_summary, state, static_tools
 
 
 class TestInstanceSummary:

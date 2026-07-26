@@ -93,9 +93,9 @@ local project lifecycle, emulation, and TraceRMI tools.
 Start the stdio bridge:
 
 ```bash
-uv run bridge-mcp-ghidra
+uv run ghidra-mcp-bridge
 # equivalent:
-python -m bridge_mcp_ghidra
+python -m ghidra_mcp_bridge
 ```
 
 Example MCP client configuration:
@@ -105,7 +105,7 @@ Example MCP client configuration:
   "mcpServers": {
     "ghidra": {
       "command": "uv",
-      "args": ["run", "--directory", "/path/to/ghidra-mcp", "bridge-mcp-ghidra"]
+      "args": ["run", "--directory", "/path/to/ghidra-mcp", "ghidra-mcp-bridge"]
     }
   }
 }
@@ -114,7 +114,7 @@ Example MCP client configuration:
 For Streamable HTTP:
 
 ```bash
-uv run bridge-mcp-ghidra \
+uv run ghidra-mcp-bridge \
   --transport streamable-http \
   --mcp-host 127.0.0.1 \
   --mcp-port 8081
@@ -151,9 +151,9 @@ the `listing`, `function`, and `program` groups plus its management tools. Use
 `minimal` for management tools only or `full` for the complete eager catalog:
 
 ```bash
-uv run bridge-mcp-ghidra --tool-profile minimal
-uv run bridge-mcp-ghidra --tool-profile core
-uv run bridge-mcp-ghidra --tool-profile full
+uv run ghidra-mcp-bridge --tool-profile minimal
+uv run ghidra-mcp-bridge --tool-profile core
+uv run ghidra-mcp-bridge --tool-profile full
 ```
 
 `GHIDRA_MCP_TOOL_PROFILE` selects the same named profiles. A custom lazy

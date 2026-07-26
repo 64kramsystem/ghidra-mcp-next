@@ -31,10 +31,10 @@ def test_fun_doc_dependency_group_is_absent():
 
 def test_standalone_debugger_proxy_is_absent():
     assert not (ROOT / "debugger").exists()
-    assert not (ROOT / "python/bridge_mcp_ghidra/debugger.py").exists()
+    assert not (ROOT / "python/ghidra_mcp_bridge/debugger.py").exists()
     maintained = "\n".join(
         path.read_text(encoding="utf-8")
-        for path in (ROOT / "python/bridge_mcp_ghidra").glob("*.py")
+        for path in (ROOT / "python/ghidra_mcp_bridge").glob("*.py")
     )
     assert "GHIDRA_DEBUGGER_URL" not in maintained
     assert "DEBUGGER_TOOL_NAMES" not in maintained
@@ -61,7 +61,7 @@ def test_removed_documentation_endpoints_are_absent_from_live_tests_and_timeouts
     maintained = "\n".join(
         (ROOT / path).read_text(encoding="utf-8")
         for path in (
-            "python/bridge_mcp_ghidra/config.py",
+            "python/ghidra_mcp_bridge/config.py",
             "tests/integration/test_readonly_endpoints.py",
             "tests/integration/test_safe_write_endpoints.py",
         )

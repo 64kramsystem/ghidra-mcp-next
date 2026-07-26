@@ -7,7 +7,7 @@ import pytest
 
 # Import bridge functions under test
 sys.path.insert(0, ".")
-from bridge_mcp_ghidra import (
+from ghidra_mcp_bridge import (
     sanitize_address,
     validate_hex_address,
     SEGMENT_ADDRESS_PATTERN,
@@ -162,7 +162,7 @@ class TestBuildToolFunctionSanitization:
 
         handler = _build_tool_function("/test_tool", method, params_schema)
 
-        import bridge_mcp_ghidra as bridge
+        import ghidra_mcp_bridge as bridge
 
         original_get = bridge.dispatch.dispatch_get
         original_post = bridge.dispatch.dispatch_post

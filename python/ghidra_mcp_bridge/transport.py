@@ -1,7 +1,7 @@
 """HTTP transports to the Ghidra plugin: Unix domain sockets and TCP.
 
 ``do_request`` routes to the active transport based on the shared connection
-state in :mod:`bridge_mcp_ghidra.state`.
+state in :mod:`ghidra_mcp_bridge.state`.
 """
 
 import http.client

@@ -8,9 +8,9 @@ Supports two transports to Ghidra:
   - UDS (Unix domain sockets) — preferred for local instances
   - TCP (HTTP) — fallback for headless/remote servers
 
-This package was split out of the historical single-file ``bridge_mcp_ghidra.py``.
+This package was split out of the historical single-file ``ghidra_mcp_bridge.py``.
 The public names below are re-exported for backwards compatibility; mutable
-runtime state lives in :mod:`bridge_mcp_ghidra.state` and must be read/written
+runtime state lives in :mod:`ghidra_mcp_bridge.state` and must be read/written
 through that module.
 """
 
@@ -111,7 +111,7 @@ from .static_tools import (  # noqa: F401
 # These two are only ever mutated in place (clear/append/add/discard), so the
 # re-exported references stay valid. Reassigned state (_transport_mode,
 # _active_socket, _full_schema, _tool_profile, …) is intentionally NOT re-exported
-# here — read/write it through ``bridge_mcp_ghidra.state`` to avoid stale binds.
+# here — read/write it through ``ghidra_mcp_bridge.state`` to avoid stale binds.
 from .state import _dynamic_tool_names, _loaded_groups  # noqa: F401
 
 from .cli import main  # noqa: F401

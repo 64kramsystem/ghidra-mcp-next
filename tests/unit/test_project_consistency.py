@@ -21,7 +21,7 @@ CORE_SRC = JAVA_SRC / "core"
 POM_XML = PROJECT_ROOT / "pom.xml"
 PYPROJECT_TOML = PROJECT_ROOT / "pyproject.toml"
 # The bridge is now a package split across modules under python/.
-BRIDGE_PKG = PROJECT_ROOT / "python" / "bridge_mcp_ghidra"
+BRIDGE_PKG = PROJECT_ROOT / "python" / "ghidra_mcp_bridge"
 ENDPOINTS_JSON = PROJECT_ROOT / "tests" / "endpoints.json"
 
 
@@ -47,7 +47,7 @@ class TestBuildIdentity(unittest.TestCase):
         self.assertIn('dynamic = ["version"]', pyproject)
         self.assertNotRegex(pyproject, r'(?m)^version = "\d+\.\d+\.\d+"$')
         self.assertIn('path = "tools/bridge_version.py"', pyproject)
-        self.assertIn('"/python/bridge_mcp_ghidra"', pyproject)
+        self.assertIn('"/python/ghidra_mcp_bridge"', pyproject)
         self.assertNotIn('    "CHANGELOG.md",', pyproject)
         # A wheel built from an extracted sdist reads the pom, so it must ship.
         self.assertIn('"/pom.xml",', pyproject)
@@ -128,7 +128,7 @@ class TestBridgeConfiguration(unittest.TestCase):
     def test_bridge_importable(self):
         """Bridge should be importable without errors."""
         try:
-            import bridge_mcp_ghidra
+            import ghidra_mcp_bridge
         except ImportError as e:
             self.fail(f"Bridge import failed: {e}")
 

@@ -6,6 +6,10 @@ Complete version history for the GhidraMCP-next project.
 
 ## Unreleased
 
+### Changed
+
+- Renamed the bridge Python package `bridge_mcp_ghidra` to `ghidra_mcp_bridge` and its console script `bridge-mcp-ghidra` to `ghidra-mcp-bridge`, matching the wheel, which was already `ghidra-mcp-bridge`. The same three words previously appeared in three different orders across the wheel, the package and the script. **This changes the command MCP clients launch**: update any `.mcp.json` entry from `bridge-mcp-ghidra` to `ghidra-mcp-bridge`, and re-sync the virtualenv so the old script is replaced.
+
 ### Added
 
 - Added `tools/release <major|minor|patch>`, replacing the retired CI release job. One command: it refuses unless the checkout is on the default branch, clean and exactly in sync with `origin`, then writes the version, rolls the changelog, runs the full gate set against that release candidate, builds and inspects the artifacts' contents, commits, tags, pushes, and creates the GitHub release — in that order, so a gate sees the mutation it exists to catch and everything that can fail runs before the push. A failure before the push restores the working tree, the index and the branch ref, so it is a no-op rather than a mess to unpick; a pushed tag cannot be retracted, so if publishing fails afterwards, re-running the same command resumes from that tag instead of bumping again. Every `gh` call is pinned with `--repo` derived from `origin`, because `gh` otherwise resolves through `upstream` in this repository — a different project entirely. Publishing verifies the peeled remote tag points at the released commit and that each artifact still hashes to what the build produced, so an artifact rebuilt from another commit cannot be published under the same version.
@@ -227,7 +231,7 @@ Minor release packaging a large project-audit hardening pass — service-layer t
 
 - **fun-doc provider timeout** default lowered 900s → 300s (#286); a hung/slow provider call now frees a worker in 5 min instead of 15–25 (complex/massive functions still get +300/+600).
 - **fun-doc `ghidra_http.jsonl`** logs errors/timeouts only by default (#285), with `FUN_DOC_HTTP_LOG_VERBOSE=1` to record every call — cutting the ~1 GB success-event bulk.
-- **pytest coverage** now measures the real Python (`bridge_mcp_ghidra` / `tools` / `debugger`) instead of the Java-only `src/` tree.
+- **pytest coverage** now measures the real Python (`ghidra_mcp_bridge` / `tools` / `debugger`) instead of the Java-only `src/` tree.
 
 ### Added
 
@@ -497,7 +501,7 @@ Bundles three community-reported bug fixes (#170, #175, #192) plus an internal f
 
 ### Fixed
 
-- **#170**: macOS bridge spawned by Claude Desktop couldn't find Ghidra instances. Root cause: Claude Desktop spawned the bridge without forwarding `$TMPDIR`, so the bridge fell back to `/tmp/ghidra-mcp-<user>` while the plugin (with `$TMPDIR` set to a `/var/folders/<2>/<rand>/T/` path) wrote its socket elsewhere. Fix: `bridge_mcp_ghidra.py` now scans every plausible socket directory (`XDG_RUNTIME_DIR`, `/run/user/<uid>`, `$TMPDIR`, `/var/folders/*/*/T/...`, `/private/var/folders/*/*/T/...`, `/tmp`, `%TEMP%`) via `get_socket_dir_candidates()` and deduplicates by absolute path. Backwards-compatible: `get_socket_dir()` still returns the primary candidate. (PR #195)
+- **#170**: macOS bridge spawned by Claude Desktop couldn't find Ghidra instances. Root cause: Claude Desktop spawned the bridge without forwarding `$TMPDIR`, so the bridge fell back to `/tmp/ghidra-mcp-<user>` while the plugin (with `$TMPDIR` set to a `/var/folders/<2>/<rand>/T/` path) wrote its socket elsewhere. Fix: `ghidra_mcp_bridge.py` now scans every plausible socket directory (`XDG_RUNTIME_DIR`, `/run/user/<uid>`, `$TMPDIR`, `/var/folders/*/*/T/...`, `/private/var/folders/*/*/T/...`, `/tmp`, `%TEMP%`) via `get_socket_dir_candidates()` and deduplicates by absolute path. Backwards-compatible: `get_socket_dir()` still returns the primary candidate. (PR #195)
 
 - **#175**: On Windows, two Ghidra instances couldn't run simultaneously because both tried to bind TCP `8089` and the second failed with "Address already in use: bind". Two-part fix:
   1. **UDS enabled by default on all platforms** (Win10 1803+ has `AF_UNIX`; older Windows falls through to the TCP path). Per-PID socket file names mean no port competition for UDS users.
@@ -650,7 +654,7 @@ Patch release bundling five community-contributed PRs that landed on `main` in t
 ### Fixed
 
 - **Headless server crashes on startup with "cannot add context to list"** ([#180](https://github.com/bethington/ghidra-mcp/issues/180), originally diagnosed by @MMOStars). `/create_folder` and `/delete_file` were registered both via `@McpTool` annotations on `ProgramScriptService` and manually in `GhidraMCPHeadlessServer.registerEndpoints()`, tripping `HttpServerImpl.createContext` with `IllegalArgumentException`. Removed the duplicate manual registrations; updated `countEndpoints()` -2.
-- **Address-space name lowercasing breaks 8051 and other uppercase-space architectures** ([#184](https://github.com/bethington/ghidra-mcp/issues/184), reported by @Artem-B). `bridge_mcp_ghidra.py::sanitize_address` was lowercasing the space-name component (`CODE:123` → `code:123`), but Ghidra's `AddressFactory` is case-sensitive and 8051 declares `RAM`/`CODE`/`INTMEM`/`EXTMEM` uppercase. Fix: pass the space name through unchanged. Three regression tests added covering the 8051 spaces. Two unrelated pre-existing test scaffolding bugs cleaned up in the same commit (camelCase param key, missing mock kwarg) — test file goes 18 → 21 passing tests.
+- **Address-space name lowercasing breaks 8051 and other uppercase-space architectures** ([#184](https://github.com/bethington/ghidra-mcp/issues/184), reported by @Artem-B). `ghidra_mcp_bridge.py::sanitize_address` was lowercasing the space-name component (`CODE:123` → `code:123`), but Ghidra's `AddressFactory` is case-sensitive and 8051 declares `RAM`/`CODE`/`INTMEM`/`EXTMEM` uppercase. Fix: pass the space name through unchanged. Three regression tests added covering the 8051 spaces. Two unrelated pre-existing test scaffolding bugs cleaned up in the same commit (camelCase param key, missing mock kwarg) — test file goes 18 → 21 passing tests.
 - **Docker build can't resolve Ghidra Maven artifacts** ([#183](https://github.com/bethington/ghidra-mcp/issues/183), reported by @RocketMaDev). `Dockerfile` `GHIDRA_VERSION` ARG defaulted to `12.0.3` from the v5.6.0 era but `pom.xml` bumped to `12.0.4` in v5.7.0. The build downloaded 12.0.3 and stamped JARs as `ghidra:*:12.0.3`, then Maven failed to resolve `ghidra:*:12.0.4`. Bumped to `12.0.4` + `GHIDRA_DATE=20260303` and added a comment marking this as a release-time sync point with `pom.xml`.
 - **Maven `OSError` on Windows when `M2_HOME` is set** (community — deckbsd, [#176](https://github.com/bethington/ghidra-mcp/pull/176)). `tools/setup/maven.py::candidate_maven_commands` was always adding both `<M2_HOME>/bin/mvn` (shell script) and `<M2_HOME>/bin/mvn.cmd` (Windows wrapper) as candidates. On Windows the shell script triggered an `OSError` when the discovery code tried to exec it. Now adds only the platform-appropriate executable.
 
@@ -818,7 +822,7 @@ Maintenance release focused on cleanup and release readiness after the v5.4.1 se
 ### Fixed
 
 - **`FunctionService` decompiler lifetime handling** — closes owned `DecompInterface` instances on all relevant success, early-return, and exception paths to avoid leaking decompiler subprocesses during decompilation and variable-update workflows.
-- **Claude/CAPI tool-name compatibility in the Python bridge** — `bridge_mcp_ghidra.py` now enforces the stricter `^[a-zA-Z0-9_-]{1,64}$` constraint when sanitizing and collision-suffixing tool names, matching client expectations instead of emitting overlong names.
+- **Claude/CAPI tool-name compatibility in the Python bridge** — `ghidra_mcp_bridge.py` now enforces the stricter `^[a-zA-Z0-9_-]{1,64}$` constraint when sanitizing and collision-suffixing tool names, matching client expectations instead of emitting overlong names.
 - **Bundled Ghidra script resource ownership** — script-side `DecompInterface` usage now follows scoped `try/finally` disposal in the affected batch, export, survey, and audit helpers.
 - **Claude subprocess lifetime in bundled scripts** — the Claude-invoking scripts now drain and close readers with try-with-resources and use bounded `waitFor(timeout, TimeUnit.SECONDS)` handling with terminate/kill fallback instead of unbounded waits.
 
@@ -898,7 +902,7 @@ Feature release. Three new service domains land together: P-code emulation, live
 
 - **Live debugger integration** (#128) — two-part addition:
   - Java side: [`DebuggerService.java`](src/main/java/com/xebyte/core/DebuggerService.java) exposes 17 `/debugger/*` endpoints (`status`, `traces`, `resume`, `interrupt`, `step_{into,over,out}`, `{set,remove,list}_breakpoint`, `registers`, `read_memory`, `stack_trace`, `modules`, `{static,dynamic}_to_{dynamic,static}`, `launch_offers`) wrapping Ghidra's `DebuggerTraceManagerService`, `DebuggerLogicalBreakpointService`, and `TraceRmiLauncherService`. Supports whatever backend Ghidra's TraceRmi framework provides (`dbgeng` for Windows PE targets, `gdb`/`lldb` otherwise). GUI-only — not wired into the headless server because `DebuggerService` requires a `PluginTool`.
-  - Python side: new [`debugger/`](debugger/) package with a standalone HTTP server on port 8099 (engine, protocol, tracing, address_map, D2-specific convention parser). `bridge_mcp_ghidra.py` registers 22 static MCP tools (`debugger_attach`, `debugger_continue`, `debugger_step_*`, `debugger_registers`, `debugger_read_memory`, `debugger_stack_trace`, `debugger_trace_*`, `debugger_watch_*`) that proxy to the server via the `GHIDRA_DEBUGGER_URL` env var.
+  - Python side: new [`debugger/`](debugger/) package with a standalone HTTP server on port 8099 (engine, protocol, tracing, address_map, D2-specific convention parser). `ghidra_mcp_bridge.py` registers 22 static MCP tools (`debugger_attach`, `debugger_continue`, `debugger_step_*`, `debugger_registers`, `debugger_read_memory`, `debugger_stack_trace`, `debugger_trace_*`, `debugger_watch_*`) that proxy to the server via the `GHIDRA_DEBUGGER_URL` env var.
 
   Compile + offline tests pass for both layers. Live-session testing is pending an attached debug target.
 
@@ -1104,7 +1108,7 @@ Deadlocks:   0 since test start
 
 #### Added
 
-- **Request serialization in MCP bridge** — Added `threading.Lock` around all Ghidra HTTP calls in `bridge_mcp_ghidra.py` to prevent JSON-RPC stdout corruption when multiple MCP tool calls arrive concurrently (#91).
+- **Request serialization in MCP bridge** — Added `threading.Lock` around all Ghidra HTTP calls in `ghidra_mcp_bridge.py` to prevent JSON-RPC stdout corruption when multiple MCP tool calls arrive concurrently (#91).
 - **Dry-run mode for mutating endpoints** — Pass `dry_run=true` query parameter to any POST endpoint to preview changes without committing to the Ghidra database. Implemented via nested transaction rollback in `AnnotationScanner` — no service code changes needed. All dynamic MCP tools for POST endpoints now include an optional `dry_run` parameter (#110).
 - **Composable completeness scoring** — Added `include_completeness` flag to `analyze_function_complete` endpoint. When enabled, includes full completeness scoring in the same response, eliminating the need for a separate `analyze_function_completeness` call (#109).
 
@@ -1989,7 +1993,7 @@ code = decompile_function(address='0x401000', offset=100, limit=100)
   - Guides consolidated in `docs/guides/`
 
 ### Changed Files
-- `bridge_mcp_ghidra.py` (+585 lines) - 6 new MCP tools, enhanced field analysis
+- `ghidra_mcp_bridge.py` (+585 lines) - 6 new MCP tools, enhanced field analysis
 - `src/main/java/com/xebyte/GhidraMCPPlugin.java` (+188 lines) - Struct analysis endpoints
 - `pom.xml` (Version 1.7.3 Ã¢â€ â€™ 1.8.0)
 - `.gitignore` - Added `*.txt` for temporary files

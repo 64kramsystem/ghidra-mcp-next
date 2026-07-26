@@ -13,8 +13,8 @@ import pytest
 
 import tomllib
 
-from bridge_mcp_ghidra import handshake
-from bridge_mcp_ghidra import connection, registry, state, static_tools
+from ghidra_mcp_bridge import handshake
+from ghidra_mcp_bridge import connection, registry, state, static_tools
 
 
 VERSION = {

@@ -53,7 +53,7 @@ logging.basicConfig(
     level=getattr(logging, LOG_LEVEL.upper(), logging.INFO),
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
-logger = logging.getLogger("bridge_mcp_ghidra")
+logger = logging.getLogger("ghidra_mcp_bridge")
 
 # ==========================================================================
 # Tool-group / static-tool catalog constants

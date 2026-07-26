@@ -8,7 +8,7 @@ from unittest import mock
 
 import pytest
 
-from bridge_mcp_ghidra import (
+from ghidra_mcp_bridge import (
     config,
     discovery,
     handshake,
@@ -16,7 +16,7 @@ from bridge_mcp_ghidra import (
     state,
     static_tools,
 )
-from bridge_mcp_ghidra.server import mcp
+from ghidra_mcp_bridge.server import mcp
 
 
 def _instance(**overrides):

@@ -25,8 +25,8 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-import bridge_mcp_ghidra as bridge  # noqa: E402
-from bridge_mcp_ghidra import dispatch, state, transport  # noqa: E402
+import ghidra_mcp_bridge as bridge  # noqa: E402
+from ghidra_mcp_bridge import dispatch, state, transport  # noqa: E402
 
 
 class _Handler(http.server.BaseHTTPRequestHandler):

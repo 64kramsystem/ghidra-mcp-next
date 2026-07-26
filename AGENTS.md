@@ -10,7 +10,7 @@ GhidraMCP-next exposes more than 250 tools through a Java Ghidra extension/headl
 server and a Python MCP bridge.
 
 ```text
-AI client <-> python/bridge_mcp_ghidra <-> local Ghidra HTTP/UDS <-> Java services
+AI client <-> python/ghidra_mcp_bridge <-> local Ghidra HTTP/UDS <-> Java services
 ```
 
 The maintained product is local-first: local projects, Maven builds, caller-supplied
@@ -40,7 +40,7 @@ per-action authorization. Draft text for review when asked.
 - `src/main/java/com/xebyte/core/` — program, analysis, datatype, comparison, emulation,
   security, and TraceRMI services.
 - `src/main/java/com/xebyte/headless/` — local headless lifecycle and endpoint handling.
-- `python/bridge_mcp_ghidra/` — discovery, schema normalization, tool groups, dispatch,
+- `python/ghidra_mcp_bridge/` — discovery, schema normalization, tool groups, dispatch,
   transports, and CLI.
 - `tests/endpoints.json` — authoritative repository catalog (more than 250 endpoints).
 - `ghidra_scripts/` — exact reviewed generic-script allowlist.
