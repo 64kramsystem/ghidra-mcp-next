@@ -136,6 +136,9 @@ public class ReferencesIntoRangeTest {
         final List<Address> extraDestinations = new ArrayList<>();
         final RecordingThreadingStrategy threading = new RecordingThreadingStrategy();
         final List<Boolean> modelAccessInsideRead = new ArrayList<>();
+        /** See {@link #withOverDeliveringDestinations()}. */
+        boolean overDeliverDestinations = false;
+        final List<AddressSetView> requestedSets = new ArrayList<>();
 
         Fixture() {
             // Every model access records whether it happened inside the read hop.
@@ -182,6 +185,23 @@ public class ReferencesIntoRangeTest {
             return this;
         }
 
+        /**
+         * Makes the destination iterator ignore the set it is given and hand back every
+         * destination in the fixture, so the endpoint's own {@code inRange} filter is the only
+         * thing standing between the caller and the wrong occupant.
+         *
+         * <p>A faithful iterator filters by space and offset itself, which leaves
+         * {@code inRange} with nothing observable to do: delete its space check and every test
+         * still passes. That is a real gap — {@code inRange} is the endpoint's own guarantee, not
+         * the mock's, and on real Ghidra data it is what holds if the iterator is ever handed a
+         * set built in the wrong space. Modelling a source that over-delivers is how that
+         * guarantee gets tested. Use it only for that; the default is the faithful behaviour.</p>
+         */
+        Fixture withOverDeliveringDestinations() {
+            overDeliverDestinations = true;
+            return this;
+        }
+
         XrefCallGraphService build() {
             when(factory.getAddressSpaces())
                 .thenReturn(spaces.toArray(new AddressSpace[0]));
@@ -192,10 +212,17 @@ public class ReferencesIntoRangeTest {
             when(memory.getBlocks())
                 .thenReturn(blocks.toArray(new MemoryBlock[0]));
 
-            // Destinations are the distinct to-addresses of the fixture refs;
-            // the endpoint filters them to the requested range itself.
+            // The iterator honours the AddressSetView it is handed, as Ghidra's does.
+            // Returning every fixture destination regardless would leave the endpoint's
+            // own inRange filter as the only thing under test, and the space dimension
+            // of that filter — whether a RAM query can see an overlay destination — is
+            // precisely the property this endpoint exists to get right.
             when(refMgr.getReferenceDestinationIterator(any(AddressSetView.class), anyBoolean()))
-                .thenAnswer(invocation -> destinationIterator());
+                .thenAnswer(invocation -> {
+                    AddressSetView requested = invocation.getArgument(0);
+                    requestedSets.add(requested);
+                    return destinationIterator(requested);
+                });
             when(refMgr.getReferencesTo(any(Address.class)))
                 .thenAnswer(invocation -> {
                     Address target = invocation.getArgument(0);
@@ -237,17 +264,29 @@ public class ReferencesIntoRangeTest {
             return null;
         }
 
-        private ghidra.program.model.address.AddressIterator destinationIterator() {
-            List<Address> targets = new ArrayList<>(extraDestinations);
+        /**
+         * The distinct destinations of the fixture's references, restricted to
+         * {@code requested} the way {@code ReferenceManager} restricts to the set it is
+         * given — including the space test: an address in another space is not in the set
+         * even when its offset falls between the set's bounds.
+         */
+        private ghidra.program.model.address.AddressIterator destinationIterator(
+                AddressSetView requested) {
+            List<Address> targets = new ArrayList<>();
+            for (Address extra : extraDestinations) {
+                if (overDeliverDestinations || containedIn(requested, extra)) targets.add(extra);
+            }
             for (Reference reference : references) {
+                Address destination = reference.getToAddress();
+                if (!overDeliverDestinations && !containedIn(requested, destination)) continue;
                 boolean seen = false;
                 for (Address existing : targets) {
-                    if (sameAddress(existing, reference.getToAddress())) {
+                    if (sameAddress(existing, destination)) {
                         seen = true;
                         break;
                     }
                 }
-                if (!seen) targets.add(reference.getToAddress());
+                if (!seen) targets.add(destination);
             }
             Collections.sort(targets);
             Iterator<Address> delegate = targets.iterator();
@@ -257,6 +296,24 @@ public class ReferencesIntoRangeTest {
             when(iterator.next()).thenAnswer(i -> delegate.next());
             return iterator;
         }
+    }
+
+    /**
+     * Whether {@code candidate} lies in {@code requested}, judged on space name and unsigned
+     * offset bounds rather than by delegating to {@code AddressSetView.contains}: the fixture's
+     * addresses are mocks, and a real AddressSet built over them cannot be trusted to apply the
+     * space test that this comparison exists to reproduce. The endpoint always builds a single
+     * contiguous range, so min/max is the whole set.
+     */
+    private static boolean containedIn(AddressSetView requested, Address candidate) {
+        Address min = requested.getMinAddress();
+        Address max = requested.getMaxAddress();
+        if (min == null || max == null) return false;
+        if (!candidate.getAddressSpace().getName().equals(min.getAddressSpace().getName())) {
+            return false;
+        }
+        return Long.compareUnsigned(candidate.getOffset(), min.getOffset()) >= 0
+            && Long.compareUnsigned(candidate.getOffset(), max.getOffset()) <= 0;
     }
 
     private static boolean sameAddress(Address left, Address right) {
@@ -463,6 +520,129 @@ public class ReferencesIntoRangeTest {
                 .get("truncated"));
     }
 
+    // ------------------------------------------------- cross-space isolation
+
+    /**
+     * The property the endpoint exists for, and the one a mocked-away destination iterator
+     * cannot prove: with the SAME offsets occupied in both spaces, each query must return only
+     * its own occupant. A filter that compared offsets and forgot the space would return four
+     * rows from either query, and a sweep built on it would silently attribute one occupant's
+     * callers to the other.
+     */
+    private Fixture bothOccupants(AddressSpace player) {
+        return new Fixture()
+            .withSpaces(player)
+            .withBlocks(block("RAM", ramAddr(0x0000), ramAddr(0xcfff)),
+                        block("SND_PLAYER", addr(player, 0x9680), addr(player, 0x98ff)))
+            // Same destination offset $9700 in both spaces: the disk loader in RAM,
+            // the recovered SID player in the overlay.
+            .withRefs(ref(ramAddr(0x0453), ramAddr(0x9700),
+                          RefType.UNCONDITIONAL_CALL, SourceType.DEFAULT, 0),
+                      ref(ramAddr(0x0733), ramAddr(0x9700),
+                          RefType.WRITE, SourceType.ANALYSIS, 0),
+                      ref(ramAddr(0xa884), addr(player, 0x9700),
+                          RefType.UNCONDITIONAL_CALL, SourceType.USER_DEFINED, 0),
+                      ref(addr(player, 0x9695), addr(player, 0x9700),
+                          RefType.UNCONDITIONAL_CALL, SourceType.DEFAULT, 0));
+    }
+
+    @Test
+    public void physicalQueryReturnsOnlyThePhysicalOccupant() {
+        AddressSpace player = overlaySpace("SND_PLAYER");
+        XrefCallGraphService service = bothOccupants(player).build();
+
+        Map<String, Object> body =
+            body(service.getReferencesIntoRange("9680", "98ff", 2000, ""));
+        assertEquals(2, body.get("count"));
+        List<String> sources = new ArrayList<>();
+        for (Map<String, Object> row : rows(service.getReferencesIntoRange(
+                "9680", "98ff", 2000, ""))) {
+            sources.add((String) row.get("from"));
+            assertEquals("every row must name the RAM occupant",
+                "ram:9700", row.get("to"));
+        }
+        assertEquals(Arrays.asList("ram:0453", "ram:0733"), sources);
+    }
+
+    @Test
+    public void overlayQueryReturnsOnlyTheOverlayOccupant() {
+        AddressSpace player = overlaySpace("SND_PLAYER");
+        XrefCallGraphService service = bothOccupants(player).build();
+
+        Map<String, Object> body = body(service.getReferencesIntoRange(
+            "SND_PLAYER:9680", "SND_PLAYER:98ff", 2000, ""));
+        assertEquals(2, body.get("count"));
+        List<String> sources = new ArrayList<>();
+        for (Map<String, Object> row : rows(service.getReferencesIntoRange(
+                "SND_PLAYER:9680", "SND_PLAYER:98ff", 2000, ""))) {
+            sources.add((String) row.get("from"));
+            assertEquals("every row must name the overlay occupant",
+                "SND_PLAYER::9700", row.get("to"));
+        }
+        // Both a cross-space caller and a player-internal one, so the query is not
+        // accidentally filtering on the SOURCE space. Sorted because the fixture's
+        // mock addresses compare on offset alone; source ordering has its own test.
+        Collections.sort(sources);
+        assertEquals(Arrays.asList("SND_PLAYER::9695", "ram:a884"), sources);
+    }
+
+    @Test
+    public void inRangeRejectsTheWrongSpaceEvenWhenTheSourceOverDelivers() {
+        // Kills the mutant the two tests above do not: delete the space comparison from
+        // inRange and this fails, because the iterator is deliberately handing back both
+        // occupants' destinations and inRange is the only thing left to separate them.
+        AddressSpace player = overlaySpace("SND_PLAYER");
+        XrefCallGraphService service =
+            bothOccupants(player).withOverDeliveringDestinations().build();
+
+        Map<String, Object> body =
+            body(service.getReferencesIntoRange("9680", "98ff", 2000, ""));
+        assertEquals("overlay destinations must not leak into a RAM query",
+            2, body.get("count"));
+        for (Map<String, Object> row : rows(service.getReferencesIntoRange(
+                "9680", "98ff", 2000, ""))) {
+            assertEquals("ram:9700", row.get("to"));
+        }
+    }
+
+    @Test
+    public void inRangeRejectsOffsetsOutsideTheRangeEvenWhenTheSourceOverDelivers() {
+        // The offset half of the same guarantee. $9700 is in range, $a884 is not.
+        XrefCallGraphService service = new Fixture()
+            .withOverDeliveringDestinations()
+            .withRefs(ref(ramAddr(0x0453), ramAddr(0x9700),
+                          RefType.UNCONDITIONAL_CALL, SourceType.DEFAULT, 0),
+                      ref(ramAddr(0x0456), ramAddr(0xa884),
+                          RefType.UNCONDITIONAL_CALL, SourceType.DEFAULT, 0))
+            .build();
+
+        Map<String, Object> body =
+            body(service.getReferencesIntoRange("9680", "98ff", 2000, ""));
+        assertEquals(1, body.get("count"));
+        // Bare, not "ram:9700": one physical space and no overlay, so nothing is qualified.
+        assertEquals("9700", rows(service.getReferencesIntoRange(
+            "9680", "98ff", 2000, "")).get(0).get("to"));
+    }
+
+    @Test
+    public void theRangeHandedToTheIteratorIsExactlyTheQueriedSpaceAndBounds() {
+        // What the endpoint actually controls. A faithful iterator does the filtering, so
+        // asking for the wrong space or the wrong bounds is the failure mode that would
+        // silently return another occupant's references on real Ghidra data.
+        AddressSpace player = overlaySpace("SND_PLAYER");
+        Fixture fixture = bothOccupants(player);
+        XrefCallGraphService service = fixture.build();
+
+        service.getReferencesIntoRange("SND_PLAYER:9680", "SND_PLAYER:98ff", 2000, "");
+
+        assertEquals(1, fixture.requestedSets.size());
+        AddressSetView requested = fixture.requestedSets.get(0);
+        assertEquals("SND_PLAYER",
+            requested.getMinAddress().getAddressSpace().getName());
+        assertEquals(0x9680L, requested.getMinAddress().getOffset());
+        assertEquals(0x98ffL, requested.getMaxAddress().getOffset());
+    }
+
     // ------------------------------------------------------- range echo
 
     @Test
@@ -472,6 +652,26 @@ public class ReferencesIntoRangeTest {
             body(service.getReferencesIntoRange("9680", "98ff", 2000, ""));
         assertEquals("ram:9680 - ram:98ff", body.get("resolved_range"));
         assertEquals(Collections.emptyList(), body.get("overlapping_spaces"));
+    }
+
+    @Test
+    public void emptyRangeReportsZeroUntruncatedAndAnEmptyList() {
+        // Asserting resolved_range alone would pass while count, truncated or
+        // references were absent, null, or carried a stale value.
+        XrefCallGraphService service = new Fixture().build();
+        Map<String, Object> body =
+            body(service.getReferencesIntoRange("9680", "98ff", 2000, ""));
+        assertEquals(0, body.get("count"));
+        assertEquals(Boolean.FALSE, body.get("truncated"));
+        assertEquals(Collections.emptyList(), body.get("references"));
+    }
+
+    @Test
+    public void scopeNamesTheCompletenessBoundaryInEveryResponse() {
+        // The caveat has to survive being read without the tool description in view.
+        XrefCallGraphService service = new Fixture().build();
+        assertEquals("recorded_references_only",
+            body(service.getReferencesIntoRange("9680", "98ff", 2000, "")).get("scope"));
     }
 
     @Test
@@ -752,6 +952,7 @@ public class ReferencesIntoRangeTest {
             rows(service.getReferencesIntoRange("9680", "98ff", 2000, "")).get(0);
         assertEquals("EXACT_LABEL", row.get("from_symbol"));
         assertEquals(BigInteger.ZERO, row.get("from_symbol_offset"));
+        assertEquals("at", row.get("from_symbol_relation"));
     }
 
     @Test
@@ -781,6 +982,7 @@ public class ReferencesIntoRangeTest {
             rows(service.getReferencesIntoRange("9680", "98ff", 2000, "")).get(0);
         assertEquals("CONTAINING_FUNC", row.get("from_symbol"));
         assertEquals(BigInteger.valueOf(3), row.get("from_symbol_offset"));
+        assertEquals("containing", row.get("from_symbol_relation"));
     }
 
     @Test
@@ -840,8 +1042,62 @@ public class ReferencesIntoRangeTest {
 
         Map<String, Object> row =
             rows(service.getReferencesIntoRange("9680", "98ff", 2000, "")).get(0);
-        assertEquals("IN_BLOCK_LABEL", row.get("from_symbol"));
-        assertEquals(BigInteger.valueOf(3), row.get("from_symbol_offset"));
+        assertEquals("IN_BLOCK_LABEL", row.get("nearest_preceding_symbol"));
+        assertEquals(BigInteger.valueOf(3), row.get("nearest_preceding_distance"));
+        assertEquals("preceding", row.get("from_symbol_relation"));
+        assertFalse("proximity must not be spelled from_symbol",
+            row.containsKey("from_symbol"));
+    }
+
+    @Test
+    public void distantPrecedingLabelIsMarkedPrecedingNotContaining() {
+        // The reason from_symbol_relation exists. On a program laid out as one large
+        // block the preceding walk is unbounded in practice: here a 5-byte filename
+        // buffer 475 bytes back is the nearest label, and the row reads
+        // "PART_FILENAME+475" — indistinguishable from an offset INTO something 475
+        // bytes long unless the relation says otherwise.
+        Symbol distant = mock(Symbol.class);
+        when(distant.getName()).thenReturn("PART_FILENAME");
+        when(distant.getAddress()).thenReturn(ramAddr(0x9735));
+
+        Fixture fixture = new Fixture()
+            .withRefs(ref(ramAddr(0x9902), ramAddr(0x98d1),
+                RefType.UNCONDITIONAL_JUMP, SourceType.USER_DEFINED, 0));
+        XrefCallGraphService service = fixture.build();
+        SymbolIterator iterator = mock(SymbolIterator.class);
+        when(iterator.hasNext()).thenReturn(true, false);
+        when(iterator.next()).thenReturn(distant);
+        when(fixture.symbolTable.getPrimarySymbolIterator(
+                any(AddressSetView.class), anyBoolean()))
+            .thenReturn(iterator);
+        // Built before the when(...), or Mockito sees stubbing inside stubbing.
+        MemoryBlock wholeRam = block("RAM", ramAddr(0x0000), ramAddr(0xcfff));
+        when(fixture.memory.getBlock(any(Address.class))).thenReturn(wholeRam);
+
+        Map<String, Object> row =
+            rows(service.getReferencesIntoRange("9680", "98ff", 2000, "")).get(0);
+        assertEquals("PART_FILENAME", row.get("nearest_preceding_symbol"));
+        assertEquals(BigInteger.valueOf(0x9902 - 0x9735),
+            row.get("nearest_preceding_distance"));
+        assertEquals("preceding", row.get("from_symbol_relation"));
+        // The point of the rename: a caller reading only from_symbol cannot print
+        // "PART_FILENAME+461" for code nowhere near PART_FILENAME.
+        assertFalse(row.containsKey("from_symbol"));
+        assertFalse(row.containsKey("from_symbol_offset"));
+    }
+
+    @Test
+    public void relationIsAbsentWheneverTheSymbolFieldsAre() {
+        XrefCallGraphService service = new Fixture()
+            .withRefs(ref(ramAddr(0x0703), ramAddr(0x96a1),
+                RefType.UNCONDITIONAL_CALL, SourceType.USER_DEFINED, 0))
+            .build();
+
+        Map<String, Object> row =
+            rows(service.getReferencesIntoRange("9680", "98ff", 2000, "")).get(0);
+        assertFalse(row.containsKey("from_symbol"));
+        assertFalse(row.containsKey("nearest_preceding_symbol"));
+        assertFalse(row.containsKey("from_symbol_relation"));
     }
 
     @Test
@@ -923,7 +1179,9 @@ public class ReferencesIntoRangeTest {
 
         Map<String, Object> row = rows(service.getReferencesIntoRange(
             "wide:0", "wide:1000", 2000, "")).get(0);
-        assertEquals(BigInteger.valueOf(0x80000000L), row.get("from_symbol_offset"));
+        // A nearest-preceding match, so the distance is the renamed field. Still a BigInteger:
+        // narrowing to int would wrap this to a negative number.
+        assertEquals(BigInteger.valueOf(0x80000000L), row.get("nearest_preceding_distance"));
     }
 
     // ------------------------------------------------------- threading
