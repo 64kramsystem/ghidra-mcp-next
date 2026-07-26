@@ -527,6 +527,12 @@ The fixture's `getReferenceDestinationIterator` stub ignored the `AddressSetView
 
 The empty-range test asserted only `resolved_range` and `overlapping_spaces`; it now also pins `count == 0`, `truncated == false` and `references == []`.
 
+That first attempt was itself checked by mutation, and did not hold up: deleting the space comparison from `inRange` left every test passing. Making the fixture faithful is what caused it — a faithful iterator filters by space and offset itself, so the endpoint's own filter never sees anything to reject and no test can observe it. Fixing a fixture that reimplemented what it verified introduced the opposite problem in the same commit.
+
+The fixture therefore has an opt-in over-delivering mode: the iterator ignores the set it is handed and returns every destination, leaving `inRange` as the only thing between the caller and the wrong occupant. Two tests use it, one per half of the guarantee, and each kills exactly one mutant — delete the space comparison and the space test fails, replace the offset comparison with `true` and the offset test fails. The default stays faithful, since modelling a lenient Ghidra everywhere would be the opposite lie. A third test pins what the endpoint actually controls when the source *is* faithful: it captures the `AddressSetView` handed to `getReferenceDestinationIterator` and asserts the space and both bounds, because asking for the wrong space is then the way this endpoint returns another occupant's references, and nothing was checking the request.
+
+The lesson worth keeping: a test that asserts the right property is not the same as a test that would fail if the property broke. Only mutation told them apart here.
+
 ### Still open: no guaranteed path from incomplete to complete
 
 Pagination was excluded by design and `limit` caps at 10,000. Splitting the destination range does not rescue a caller if a single address carries more than 10,000 incoming references. The cap is honest — `count` and `truncated` say so — but there is no route through this endpoint to the full list in that case. Left as a design decision rather than patched: it needs a cursor contract, which is a larger change than this review.
