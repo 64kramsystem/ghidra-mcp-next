@@ -579,3 +579,47 @@ def test_each_build_command_is_required(repo: Path):
             release.prepare(repo, "minor", runner)
 
         assert target.read_text() == original
+
+
+def test_the_full_gate_set_is_present():
+    """Looping over whatever remains would pass if a gate were deleted."""
+    assert release.GATES == (
+        ("mvn", "-q", "clean", "compile"),
+        ("mvn", "test"),
+        ("uv", "run", "pytest", "tests/unit/"),
+    )
+
+
+def test_publish_does_not_mark_the_release_latest(repo: Path):
+    """Releases here are a record; the extension is built locally."""
+    prepared(repo)
+    commands: list[list[str]] = []
+
+    def runner(command, cwd):
+        commands.append([str(part) for part in command])
+        return publish_runner(repo)(command, cwd)
+
+    release.publish(repo, runner)
+
+    create = next(c for c in commands if c[:3] == ["gh", "release", "create"])
+    assert "--latest=false" in create
+    assert release.MARK_LATEST is False
+
+
+def test_checksums_match_recomputed_artifact_hashes(repo: Path):
+    """Filenames and a line count would pass a file full of zero hashes."""
+    prepared(repo)
+    release.publish(repo, publish_runner(repo))
+
+    manifest = release.read_manifest(repo)
+    expected = {
+        Path(entry["path"]).name: release.sha256(Path(entry["path"]))
+        for entry in manifest["artifacts"]
+    }
+    written = {}
+    for line in (repo / release.CHECKSUMS_PATH).read_text(encoding="utf-8").splitlines():
+        digest, name = line.split("  ", 1)
+        written[name] = digest
+
+    assert written == expected
+    assert all(len(digest) == 64 and set(digest) != {"0"} for digest in written.values())
