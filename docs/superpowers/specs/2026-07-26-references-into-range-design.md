@@ -1,7 +1,7 @@
 # get_references_into_range — design
 
 Date: 2026-07-26
-Status: approved, not yet implemented
+Status: implemented, then amended after review — see [Review amendments](#review-amendments)
 
 ## Motivation
 
@@ -482,3 +482,51 @@ execute checkpoint there fires 256 times. `$073F` is the address to break on for
 Note on step 7: the full `mvn test` run has a known-flaky jump-table failure, a
 pre-existing fixture race. If it is the only red, it is not a signal about this
 change.
+
+## Review amendments
+
+Reviewed after implementation, two ways: a Codex pass over the spec, the implementation and the tests, and a live run of the endpoint against the real Neverending Story program. The live run is what the section above budgeted for and it did get done. Both are recorded here because they found different things, which is the point of running both.
+
+### The live run confirmed the numbers
+
+A physical query for `RAM:9680`–`RAM:98ff` returned **exactly seven** references from five sites — the figure this spec predicted post-retarget, matching the hand-built sweep. An overlay query for `SND_PLAYER::9680`–`SND_PLAYER::98ff` returned 93, of which the 42 RAM-sourced rows are exactly the cross-space edge count derived by hand. Truncation behaved as specified: with `limit=5`, `count` reported 93 and `truncated` was true, so the cap never masquerades as the total.
+
+### Corrected: the field literals in this spec were wrong
+
+The worked example above gives `"ram:0733"`, `"ram:9680 - ram:98ff"`, `["ram"]` and `"STA $9700,Y"`. The endpoint emits `RAM:0733`, `RAM:9680 - RAM:98ff`, `["RAM"]` and `STA 0x9700,Y` on that program. Address rendering follows `Address.toString`, which uses the space name as the program declares it — the case is the program's, not a normalisation this endpoint applies. Operands follow the language module: Ghidra's 6502 renders `0x9700`, not the `$9700` a hand-written listing would use. Treat the shapes above as illustrative and these as the literals.
+
+### Added: `from_symbol_relation`
+
+The three-rule precedence for `from_symbol` was specified but the result was not distinguishable from outside. Rule 3 walks back "no further than the containing memory block", and on a program laid out as one 53 KiB RAM block that bound never bites: the live run produced `PART_FILENAME+461` and `PART_FILENAME+475` for SID-player code, attributing it to a five-byte disk-loader filename buffer, and `SND_VOICE3_CMD_TABLE+131` for an address 103 bytes past a 28-byte table. Those are indistinguishable from the correct `SND_VOICE1_CMD_TABLE+4` by name and offset alone.
+
+Every row carrying `from_symbol` now also carries `from_symbol_relation`: `at` for rule 1, `containing` for rule 2, `preceding` for rule 3. `at` and `containing` mean the offset is an offset *into* the named thing. `preceding` means it is only a distance back to the nearest label, and a caller must not read it as containment. The field is omitted exactly when `from_symbol` is.
+
+Deliberately not done: pruning a preceding symbol once the walk passes the end of its code unit. That would drop the useful cases along with the misleading ones — a label on code is a 1–3 byte instruction, so `SND_V1_FREQ_PULSE_STEP+166` would vanish too. Naming the relation keeps the information and removes the ambiguity.
+
+### Added: `scope`
+
+Every response now carries `scope: "recorded_references_only"`. The caveat belonged in the tool description, but a stored result or a transcript of one no longer has that description in view, and `count: 7` reads as "there are 7" unless the response itself says what was counted.
+
+### Corrected: what a second pass can prove
+
+The section "Tool description must state the limit of the query" claimed the two methods agreeing "is what makes a result exhaustive". That is too strong. Enumerating `JSR`/`JMP` and decoding targets finds missed control flow; it does not find untyped data pointers, and it does not independently verify absolute loads and stores the analyzer left unresolved. In the sweep that motivated this endpoint, decoding every `JSR` and `JMP` still left the three dispatch tables to be reasoned about separately. The honest claim, and the one the tool description now makes, is that the result is complete for what the reference database currently holds, and that a wider sweep raises confidence without proving exhaustiveness.
+
+### Added: symbol-resolved operand rendering
+
+`from_instruction` came from `CodeUnit.toString()`, which renders an operand as a bare number even where a symbol exists for its target: `JSR 0x9695` where a listing shows `JSR SND_PLAYER::SND_TICK`. On this endpoint that is the difference between a row that answers "which occupant does this site mean" and one that restates the bytes. It now goes through the same `CodeUnitFormat` configuration `CompleteListingWriter` uses, with `ShowBlockName.NON_LOCAL` to keep the overlay qualifier on the operand.
+
+For a reference recorded from the interior of an aggregate — a dispatch-table entry, the usual case for a jump table — the whole unit rendered as just `dw[15]`, naming the array and none of its slots. The primitive at `from` is rendered instead.
+
+### Fixed: the registry contract had drifted from the annotation
+
+`EndpointRegistry` advertised "List recorded references whose destination falls in an inclusive address range", omitted the limit semantics, and marked `start`/`end` optional. Live runtimes use `AnnotationScanner`, so nothing was broken in transport, but `generateSchema()` would have published a weaker contract — one that reads as an exhaustive sweep. Registry and annotation now agree, `start`/`end` are required via a new `qStrReq` helper, and `tests/endpoints.json` carries the annotation's description.
+
+### Fixed: the tests mocked away the property under test
+
+The fixture's `getReferenceDestinationIterator` stub ignored the `AddressSetView` it was handed and returned every fixture destination, leaving the endpoint's own `inRange` filter as the only thing under test. The space dimension of that filter — whether a RAM query can see an overlay destination — is the whole reason this endpoint exists, and nothing pinned it. The stub now honours the set, including its space test, and two tests occupy the *same* offset `$9700` in both spaces and assert each query returns only its own occupant, with the overlay case including both a cross-space and a player-internal caller so the query cannot be filtering on the source space instead.
+
+The empty-range test asserted only `resolved_range` and `overlapping_spaces`; it now also pins `count == 0`, `truncated == false` and `references == []`.
+
+### Still open: no guaranteed path from incomplete to complete
+
+Pagination was excluded by design and `limit` caps at 10,000. Splitting the destination range does not rescue a caller if a single address carries more than 10,000 incoming references. The cap is honest — `count` and `truncated` say so — but there is no route through this endpoint to the full list in that case. Left as a design decision rather than patched: it needs a cursor contract, which is a larger change than this review.
