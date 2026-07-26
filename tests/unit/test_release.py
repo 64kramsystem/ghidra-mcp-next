@@ -56,7 +56,8 @@ def repo(tmp_path: Path) -> Path:
     git(root, "add", "-A")
     git(root, "commit", "-qm", "initial")
     # A bare "remote" so ls-remote works without network.
-    remote = tmp_path / "remote.git"
+    remote = tmp_path / "expected" / "owner-repo.git"
+    remote.parent.mkdir(parents=True, exist_ok=True)
     git(tmp_path, "init", "-q", "--bare", str(remote))
     git(root, "remote", "add", "origin", str(remote))
     git(root, "push", "-q", "origin", release.DEFAULT_BRANCH)
@@ -310,12 +311,21 @@ def prepared(repo: Path) -> str:
 
 
 def publish_runner(repo: Path, *, assets: list[str] | None = None):
+    uploaded: list[str] = []
+
     def runner(command, cwd):
-        if command[0] == "git":
+        parts = [str(part) for part in command]
+        if parts[0] == "git":
             return release.run(command, cwd)
-        if [str(part) for part in command][:3] == ["gh", "release", "view"]:
-            names = assets if assets is not None else _expected_names(repo)
-            return "\n".join(names)
+        if parts[:3] == ["gh", "release", "create"]:
+            # Record the real upload: a fake reporting the canonical set
+            # regardless would hide a create call that omitted an artifact.
+            uploaded.extend(
+                Path(part).name for part in parts[3:] if Path(part).is_file()
+            )
+            return ""
+        if parts[:3] == ["gh", "release", "view"]:
+            return "\n".join(assets if assets is not None else uploaded)
         return ""
 
     return runner
@@ -335,9 +345,11 @@ def test_publish_pins_gh_to_the_origin_repository(repo: Path):
     prepared(repo)
     commands: list[list[str]] = []
 
+    inner = publish_runner(repo)
+
     def runner(command, cwd):
         commands.append(list(command))
-        return publish_runner(repo)(command, cwd)
+        return inner(command, cwd)
 
     release.publish(repo, runner)
 
@@ -345,7 +357,9 @@ def test_publish_pins_gh_to_the_origin_repository(repo: Path):
     assert gh_calls
     for call in gh_calls:
         assert "--repo" in call
-        assert call[call.index("--repo") + 1] == release.origin_repo(repo)
+        # A literal: comparing against origin_repo() would be circular, since
+        # that is the function which built the command.
+        assert call[call.index("--repo") + 1] == "expected/owner-repo"
         assert "someone/else" not in call
 
 
@@ -546,9 +560,11 @@ def test_publish_takes_notes_from_the_tag(repo: Path):
     prepared(repo)
     commands: list[list[str]] = []
 
+    inner = publish_runner(repo)
+
     def runner(command, cwd):
         commands.append([str(part) for part in command])
-        return publish_runner(repo)(command, cwd)
+        return inner(command, cwd)
 
     release.publish(repo, runner)
 
@@ -595,9 +611,11 @@ def test_publish_does_not_mark_the_release_latest(repo: Path):
     prepared(repo)
     commands: list[list[str]] = []
 
+    inner = publish_runner(repo)
+
     def runner(command, cwd):
         commands.append([str(part) for part in command])
-        return publish_runner(repo)(command, cwd)
+        return inner(command, cwd)
 
     release.publish(repo, runner)
 
@@ -623,3 +641,43 @@ def test_checksums_match_recomputed_artifact_hashes(repo: Path):
 
     assert written == expected
     assert all(len(digest) == 64 and set(digest) != {"0"} for digest in written.values())
+
+
+def test_every_gate_is_actually_executed(repo: Path):
+    """Asserting the GATES tuple proves it exists, not that the loop runs it.
+
+    Truncating the loop to GATES[:2] silently skipped the bridge unit-test gate
+    and left every other test green. Injecting a failure from each gate in turn
+    is what proves each one is reached.
+    """
+    for gate in release.GATES:
+        marker = " ".join(gate)
+        before_head = release.head_sha(repo)
+
+        with pytest.raises(release.ReleaseError, match="injected failure"):
+            release.prepare(repo, "minor", recording_runner(repo, fail=marker))
+
+        assert release.head_sha(repo) == before_head
+        assert git(repo, "status", "--porcelain").strip() == ""
+        assert git(repo, "tag", "--list").strip() == ""
+
+
+def test_publish_uploads_every_artifact_and_the_checksums(repo: Path):
+    """A create call omitting an artifact would otherwise pass unnoticed."""
+    version = prepared(repo)
+    commands: list[list[str]] = []
+    inner = publish_runner(repo)
+
+    def runner(command, cwd):
+        commands.append([str(part) for part in command])
+        return inner(command, cwd)
+
+    release.publish(repo, runner)
+
+    create = next(c for c in commands if c[:3] == ["gh", "release", "create"])
+    uploaded = sorted(Path(part).name for part in create[3:] if Path(part).is_file())
+    expected = sorted(
+        [path.name for path in release.expected_artifacts(repo, version)]
+        + [release.CHECKSUMS_PATH.name]
+    )
+    assert uploaded == expected
