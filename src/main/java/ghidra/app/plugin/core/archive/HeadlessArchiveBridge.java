@@ -9,7 +9,7 @@
  * against the same package name has package-scope access at runtime.
  *
  * <p><b>Convention exception:</b> ghidra-mcp normally keeps all its code
- * under {@code com.xebyte} (see vendor {@code CLAUDE.md}). This class is the
+ * under {@code com.xebyte} (see vendor {@code AGENTS.md}). This class is the
  * single justified exception — package-private access cannot be granted to
  * an outside package. It carries no {@code @McpTool} annotation, so
  * {@code AnnotationScanner} ignores it; the HTTP surface stays in
