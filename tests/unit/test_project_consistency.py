@@ -85,7 +85,7 @@ class TestBuildIdentity(unittest.TestCase):
         self.assertGreater(total, 250)
         checks = {
             "README.md": PROJECT_ROOT / "README.md",
-            "CLAUDE.md": PROJECT_ROOT / "CLAUDE.md",
+            # CLAUDE.md is a symlink to AGENTS.md, so it is not listed separately.
             "AGENTS.md": PROJECT_ROOT / "AGENTS.md",
             "extension.properties": PROJECT_ROOT / "src" / "main" / "resources" / "extension.properties",
             "MANIFEST.MF": PROJECT_ROOT / "src" / "main" / "resources" / "META-INF" / "MANIFEST.MF",
@@ -98,7 +98,7 @@ class TestBuildIdentity(unittest.TestCase):
         self.assertEqual(exact_claims, [])
 
         for path in (
-            checks["CLAUDE.md"],
+            checks["AGENTS.md"],
             checks["extension.properties"],
             checks["MANIFEST.MF"],
         ):
