@@ -770,6 +770,14 @@ public class EndpointRegistry {
             (q, b) -> xrefCallGraphService.getXrefsFrom(str(q, "address"), num(q, "offset", 0),
                 num(q, "limit", 100), str(q, "program")));
 
+        get("/get_references_into_range",
+            "List recorded references whose destination falls in an inclusive address range",
+            params(qStr("start", "First address of the range, inclusive"),
+                qStr("end", "Last address of the range, inclusive"),
+                qInt("limit", 2000), pProg()),
+            (q, b) -> xrefCallGraphService.getReferencesIntoRange(str(q, "start"),
+                str(q, "end"), num(q, "limit", 2000), str(q, "program")));
+
         get("/get_function_xrefs", "Get cross-references to a function",
             params(qStr("name", "Function name"), qStr("address", "Function address (alternative to name)"), qInt("offset", 0), qInt("limit", 100), pProg()),
             (q, b) -> xrefCallGraphService.getFunctionXrefs(str(q, "name"), str(q, "address"), num(q, "offset", 0),
