@@ -1042,9 +1042,11 @@ public class ReferencesIntoRangeTest {
 
         Map<String, Object> row =
             rows(service.getReferencesIntoRange("9680", "98ff", 2000, "")).get(0);
-        assertEquals("IN_BLOCK_LABEL", row.get("from_symbol"));
-        assertEquals(BigInteger.valueOf(3), row.get("from_symbol_offset"));
+        assertEquals("IN_BLOCK_LABEL", row.get("nearest_preceding_symbol"));
+        assertEquals(BigInteger.valueOf(3), row.get("nearest_preceding_distance"));
         assertEquals("preceding", row.get("from_symbol_relation"));
+        assertFalse("proximity must not be spelled from_symbol",
+            row.containsKey("from_symbol"));
     }
 
     @Test
@@ -1074,9 +1076,14 @@ public class ReferencesIntoRangeTest {
 
         Map<String, Object> row =
             rows(service.getReferencesIntoRange("9680", "98ff", 2000, "")).get(0);
-        assertEquals("PART_FILENAME", row.get("from_symbol"));
-        assertEquals(BigInteger.valueOf(0x9902 - 0x9735), row.get("from_symbol_offset"));
+        assertEquals("PART_FILENAME", row.get("nearest_preceding_symbol"));
+        assertEquals(BigInteger.valueOf(0x9902 - 0x9735),
+            row.get("nearest_preceding_distance"));
         assertEquals("preceding", row.get("from_symbol_relation"));
+        // The point of the rename: a caller reading only from_symbol cannot print
+        // "PART_FILENAME+461" for code nowhere near PART_FILENAME.
+        assertFalse(row.containsKey("from_symbol"));
+        assertFalse(row.containsKey("from_symbol_offset"));
     }
 
     @Test
@@ -1089,6 +1096,7 @@ public class ReferencesIntoRangeTest {
         Map<String, Object> row =
             rows(service.getReferencesIntoRange("9680", "98ff", 2000, "")).get(0);
         assertFalse(row.containsKey("from_symbol"));
+        assertFalse(row.containsKey("nearest_preceding_symbol"));
         assertFalse(row.containsKey("from_symbol_relation"));
     }
 
@@ -1171,7 +1179,9 @@ public class ReferencesIntoRangeTest {
 
         Map<String, Object> row = rows(service.getReferencesIntoRange(
             "wide:0", "wide:1000", 2000, "")).get(0);
-        assertEquals(BigInteger.valueOf(0x80000000L), row.get("from_symbol_offset"));
+        // A nearest-preceding match, so the distance is the renamed field. Still a BigInteger:
+        // narrowing to int would wrap this to a negative number.
+        assertEquals(BigInteger.valueOf(0x80000000L), row.get("nearest_preceding_distance"));
     }
 
     // ------------------------------------------------------- threading
