@@ -123,7 +123,7 @@ public class XrefRangeRenderGhidraTest {
         }
 
         List<Map<String, Object>> rows = rows(service.getReferencesIntoRange(
-            "SND_PLAYER:1000", "SND_PLAYER:101f", 2000, ""));
+            "SND_PLAYER:1000", "SND_PLAYER:101f", 2000, 0, ""));
 
         assertEquals(1, rows.size());
         String rendered = (String) rows.get(0).get("from_instruction");
@@ -161,7 +161,7 @@ public class XrefRangeRenderGhidraTest {
         }
 
         List<Map<String, Object>> rows = rows(service.getReferencesIntoRange(
-            "SND_PLAYER:1010", "SND_PLAYER:1010", 2000, ""));
+            "SND_PLAYER:1010", "SND_PLAYER:1010", 2000, 0, ""));
 
         assertEquals(1, rows.size());
         Map<String, Object> row = rows.get(0);
@@ -192,7 +192,7 @@ public class XrefRangeRenderGhidraTest {
         }
 
         List<Map<String, Object>> rows =
-            rows(service.getReferencesIntoRange("0x1100", "0x1100", 2000, ""));
+            rows(service.getReferencesIntoRange("0x1100", "0x1100", 2000, 0, ""));
 
         assertEquals(1, rows.size());
         String rendered = (String) rows.get(0).get("from_instruction");

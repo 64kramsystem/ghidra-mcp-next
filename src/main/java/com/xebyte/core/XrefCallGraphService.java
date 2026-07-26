@@ -1363,9 +1363,13 @@ public class XrefCallGraphService {
                          + "targets, operands the analyzer left unresolved. No single follow-up pass "
                          + "closes that gap: decoding instructions finds missed control flow but not "
                          + "untyped data pointers, so treat a wider sweep as raising confidence, not "
-                         + "as proving exhaustiveness. Plain hex resolves in the default physical "
-                         + "space; `resolved_range` echoes what was queried and `overlapping_spaces` "
-                         + "lists other spaces occupying those offsets.",
+                         + "as proving exhaustiveness. `search_address_encodings` is the companion "
+                         + "pass for bytes that encode an in-range address without one. Plain hex "
+                         + "resolves in the default physical space; `resolved_range` echoes what "
+                         + "was queried and `overlapping_spaces` lists other spaces occupying "
+                         + "those offsets. Paged with `offset`/`limit`: `count` is the total over "
+                         + "the whole range and `has_more` says whether rows remain after this "
+                         + "page.",
              category = "xref")
     public Response getReferencesIntoRange(
             @Param(value = "start", paramType = "address",
@@ -1375,8 +1379,11 @@ public class XrefCallGraphService {
                    description = "Last address of the range, inclusive. Must resolve in the same "
                                + "address space as `start`.") String endStr,
             @Param(value = "limit", defaultValue = "2000",
-                   description = "Maximum rows returned, 1..10000. `count` still reports total "
-                               + "matches when the cap truncates the list.") int limit,
+                   description = "Maximum rows returned per page, 1..10000. `count` still "
+                               + "reports total matches over the whole range.") int limit,
+            @Param(value = "offset", defaultValue = "0",
+                   description = "Page start within the ordered result, 0-based. An offset past "
+                               + "the end returns an empty page with `count` unchanged.") int offset,
             @Param(value = "program", description = "Target program name (omit to use the active program — always specify when multiple programs are open)", defaultValue = "") String programName) {
         ServiceUtils.ProgramOrError pe = ServiceUtils.getProgramOrError(programProvider, programName);
         if (pe.hasError()) return pe.error();
@@ -1385,6 +1392,11 @@ public class XrefCallGraphService {
         if (limit < 1 || limit > MAX_RANGE_REFERENCE_LIMIT) {
             return Response.err("limit must be in 1.." + MAX_RANGE_REFERENCE_LIMIT
                 + " (got " + limit + ")");
+        }
+        // Rejected, not clamped: a negative offset is a caller bug, and silently
+        // treating it as 0 hands back page one while the caller believes otherwise.
+        if (offset < 0) {
+            return Response.err("offset must not be negative (got " + offset + ")");
         }
 
         // parseAddress records its error in a ThreadLocal, so both endpoints are
@@ -1414,7 +1426,7 @@ public class XrefCallGraphService {
         try {
             return threadingStrategy.executeRead(() ->
                 collectReferencesIntoRange(program, start, end, startSpace,
-                    startOffset, endOffset, limit));
+                    startOffset, endOffset, limit, offset));
         } catch (Exception e) {
             return Response.err("Error listing references into range: " + e.getMessage());
         }
@@ -1422,7 +1434,7 @@ public class XrefCallGraphService {
 
     private Response collectReferencesIntoRange(Program program, Address start, Address end,
                                                 AddressSpace startSpace, BigInteger startOffset,
-                                                BigInteger endOffset, int limit) {
+                                                BigInteger endOffset, int limit, int pageOffset) {
         {
             ReferenceManager refMgr = program.getReferenceManager();
             AddressSet range = new AddressSet(start, end);
@@ -1445,8 +1457,16 @@ public class XrefCallGraphService {
             // comparator get_listing_range uses, so equal from/to never tie.
             matches.sort(ReferenceOrdering.outgoing());
             int total = matches.size();
-            boolean truncated = total > limit;
-            List<Reference> page = truncated ? matches.subList(0, limit) : matches;
+            // The whole result is collected and sorted before the page is cut, which
+            // is why count is exact and why paging is a cheap slice rather than a
+            // second traversal. An offset past the end is an empty page, not an error.
+            int from = Math.min(pageOffset, total);
+            int to = (int) Math.min((long) from + limit, total);
+            List<Reference> page = matches.subList(from, to);
+            int returned = page.size();
+            // long arithmetic: a near-maximum offset would overflow an int sum and
+            // report has_more from a wrapped comparison.
+            boolean hasMore = (long) pageOffset + returned < total;
 
             boolean qualify = ServiceUtils.getOverlaySpaceCount(program) > 0
                 || ServiceUtils.getPhysicalSpaceCount(program) > 1;
@@ -1470,7 +1490,14 @@ public class XrefCallGraphService {
             // the response itself says what was counted.
             result.put("scope", "recorded_references_only");
             result.put("count", total);
-            result.put("truncated", truncated);
+            result.put("offset", pageOffset);
+            result.put("limit", limit);
+            result.put("returned", returned);
+            result.put("has_more", hasMore);
+            // Page continuity holds only while the program is unchanged; the echo is
+            // what lets a caller notice two pages came from different revisions
+            // instead of silently stitching them.
+            result.put("program_modification_number", program.getModificationNumber());
             result.put("references", rows);
             return Response.ok(result);
         }
@@ -1587,7 +1614,9 @@ public class XrefCallGraphService {
      * {@code CodeUnitFormatOptions.simplifyTemplate} dereferences it unconditionally, so passing
      * null throws as soon as an operand resolves to a symbol — the common case here.</p>
      */
-    private static CodeUnitFormat operandAwareFormat() {
+    // Package-private: /search_address_encodings renders its site rows through the
+    // same configuration, so the two endpoints cannot drift in how an operand resolves.
+    static CodeUnitFormat operandAwareFormat() {
         TemplateSimplifier simplifier = new TemplateSimplifier();
         simplifier.setEnabled(false);
         return new CodeUnitFormat(new CodeUnitFormatOptions(

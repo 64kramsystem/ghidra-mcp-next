@@ -1,9 +1,11 @@
 package com.xebyte.offline;
 
+import com.xebyte.core.AddressEncodingSearchService;
 import com.xebyte.core.AnalysisService;
 import com.xebyte.core.BinaryComparisonService;
 import com.xebyte.core.CommentService;
 import com.xebyte.core.ControlFlowService;
+import com.xebyte.core.CoverageService;
 import com.xebyte.core.DataTypeService;
 import com.xebyte.core.DataRegionService;
 import com.xebyte.core.DebuggerService;
@@ -70,6 +72,9 @@ public final class ServiceFactory {
             new ListingRangeService(provider, ts);
         ListingMutationService listingMutationService =
             new ListingMutationService(provider, ts);
+        AddressEncodingSearchService addressEncodingSearchService =
+            new AddressEncodingSearchService(provider, ts);
+        CoverageService coverageService = new CoverageService(provider, ts);
 
         HeadlessManagementService headlessManagementService =
             new HeadlessManagementService(new HeadlessProgramProvider());
@@ -98,6 +103,8 @@ public final class ServiceFactory {
             flowDisassemblyService,
             listingRangeService,
             listingMutationService,
+            addressEncodingSearchService,
+            coverageService,
             headlessManagementService,
             debuggerService,
         };

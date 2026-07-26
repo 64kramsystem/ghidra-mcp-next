@@ -1003,101 +1003,261 @@ public class AnalysisService {
         }
     }
 
-    /**
-     * Search for byte patterns with optional wildcards
-     */
-    public Response searchBytePatterns(String pattern, String mask) {
-        return searchBytePatterns(pattern, mask, null);
-    }
+    /** Upper bound on the requested pattern, in bytes. See the scanner's memory bound. */
+    private static final int MAX_PATTERN_BYTES = 65_536;
 
-    @McpTool(path = "/search_byte_patterns", description = "Search for byte patterns with masks", category = "analysis")
+    /** Upper bound for {@code limit} on a byte-pattern page. */
+    private static final int MAX_BYTE_PATTERN_LIMIT = 10_000;
+
+    @McpTool(path = "/search_byte_patterns",
+        description = "Find every occurrence of a byte pattern in initialized memory. "
+            + "`??` in the pattern is a wildcard byte; an optional `mask` applies "
+            + "Ghidra's bit-mask semantics — a bit set in the mask must match the "
+            + "corresponding pattern bit — and is ANDed with the wildcard default, so "
+            + "neither mechanism can re-enable a bit the other waived. `start`/`end` "
+            + "scope the search to one inclusive range in ONE address space, and the "
+            + "whole match must fit inside it. Results are ordered by address-space "
+            + "name then offset and paged with `offset`/`limit`; `total_matched` is the "
+            + "pre-paging total. LIMITATION: a match straddling the end of one "
+            + "initialized range and the start of the next is not found, because ranges "
+            + "are scanned independently. A read failure is reported as an error naming "
+            + "the block, never as a miss.",
+        category = "search")
     public Response searchBytePatterns(
-            @Param(value = "pattern", description = "Hex byte pattern") String pattern,
-            @Param(value = "mask", description = "Pattern mask (omit or leave empty for exact match)", defaultValue = "") String mask,
+            @Param(value = "pattern",
+                description = "Hex bytes, whitespace ignored; `??` is a wildcard byte "
+                    + "(e.g. '20 ?? 97'). At most 65536 bytes.") String pattern,
+            @Param(value = "mask", defaultValue = "",
+                description = "Optional hex bit mask with the same byte count as "
+                    + "`pattern`. A set bit must match; `f0` matches the high nibble "
+                    + "only.") String mask,
+            @Param(value = "start", defaultValue = "", paramType = "address",
+                description = "Inclusive start of the searched range; requires `end`. "
+                    + "Omit both to search all initialized memory.") String startText,
+            @Param(value = "end", defaultValue = "", paramType = "address",
+                description = "Inclusive end of the searched range; must resolve in the "
+                    + "same address space as `start`.") String endText,
+            @Param(value = "limit", defaultValue = "1000",
+                description = "Maximum matches returned per page, 1..10000.") int limit,
+            @Param(value = "offset", defaultValue = "0",
+                description = "Page start within the ordered result, 0-based.") int offset,
             @Param(value = "program", description = "Target program name (omit to use the active program — always specify when multiple programs are open)", defaultValue = "") String programName) {
         ServiceUtils.ProgramOrError pe = ServiceUtils.getProgramOrError(programProvider, programName);
         if (pe.hasError()) return pe.error();
         Program program = pe.program();
 
-        if (pattern == null || pattern.trim().isEmpty()) {
-            return Response.err("Pattern is required");
+        if (limit < 1 || limit > MAX_BYTE_PATTERN_LIMIT) {
+            return Response.err("limit must be in 1.." + MAX_BYTE_PATTERN_LIMIT
+                + " (got " + limit + ")");
+        }
+        if (offset < 0) {
+            return Response.err("offset must not be negative (got " + offset + ")");
         }
 
+        BytePattern parsed;
         try {
-            // Parse hex pattern (e.g., "E8 ?? ?? ?? ??" or "E8????????")
-            String cleanPattern = pattern.trim().toUpperCase().replaceAll("\\s+", "");
+            parsed = BytePattern.parse(pattern, mask);
+        } catch (IllegalArgumentException invalid) {
+            return Response.err(invalid.getMessage());
+        }
 
-            // Convert pattern to byte array and mask
-            int patternLen = cleanPattern.replace("?", "").length() / 2 + cleanPattern.replace("?", "").length() % 2;
-            if (cleanPattern.contains("?")) {
-                patternLen = cleanPattern.length() / 2;
+        // parseAddress records its failure in a ThreadLocal, so both endpoints resolve
+        // here on the calling thread, before any threading-strategy hop.
+        boolean hasStart = startText != null && !startText.isBlank();
+        boolean hasEnd = endText != null && !endText.isBlank();
+        if (hasStart != hasEnd) {
+            return Response.err("start and end must be given together, or neither.");
+        }
+        Address start = null;
+        Address end = null;
+        if (hasStart) {
+            start = ServiceUtils.parseAddress(program, startText);
+            if (start == null) return Response.err(ServiceUtils.getLastParseError());
+            end = ServiceUtils.parseAddress(program, endText);
+            if (end == null) return Response.err(ServiceUtils.getLastParseError());
+            if (!start.getAddressSpace().getName().equals(end.getAddressSpace().getName())) {
+                return Response.err("start and end must resolve in the same address space; got '"
+                    + start.getAddressSpace().getName() + "' and '"
+                    + end.getAddressSpace().getName()
+                    + "'. A range spanning two spaces has no meaning.");
             }
-
-            byte[] patternBytes = new byte[patternLen];
-            byte[] maskBytes = new byte[patternLen];
-
-            int byteIndex = 0;
-            for (int i = 0; i < cleanPattern.length(); i += 2) {
-                if (cleanPattern.charAt(i) == '?' || (i + 1 < cleanPattern.length() && cleanPattern.charAt(i + 1) == '?')) {
-                    patternBytes[byteIndex] = 0;
-                    maskBytes[byteIndex] = 0;
-                } else {
-                    String hexByte = cleanPattern.substring(i, Math.min(i + 2, cleanPattern.length()));
-                    patternBytes[byteIndex] = (byte) Integer.parseInt(hexByte, 16);
-                    maskBytes[byteIndex] = (byte) 0xFF;
-                }
-                byteIndex++;
+            if (start.getOffsetAsBigInteger().compareTo(end.getOffsetAsBigInteger()) > 0) {
+                return Response.err("start must not be greater than end; got '"
+                    + startText + "' > '" + endText + "'");
             }
+        }
 
-            // Search memory for pattern
-            Memory memory = program.getMemory();
-            List<Map<String, Object>> matches = new ArrayList<>();
-            final int MAX_MATCHES = 1000;
+        final Address scopeStart = start;
+        final Address scopeEnd = end;
+        try {
+            return threadingStrategy.executeRead(() ->
+                runBytePatternSearch(program, parsed, scopeStart, scopeEnd, limit, offset));
+        } catch (Exception e) {
+            return Response.err("Error searching byte patterns: " + e.getMessage());
+        }
+    }
 
-            for (MemoryBlock block : memory.getBlocks()) {
-                if (!block.isInitialized()) continue;
+    /**
+     * A parsed pattern plus its effective mask.
+     *
+     * <p>A literal byte starts at {@code ff} and a {@code ??} byte at {@code 00}; any
+     * caller-supplied mask is ANDed with that default, so neither mechanism can
+     * re-enable a bit the other waived. {@code wildcardCount} counts fully waived
+     * BYTES rather than {@code ??} tokens — the field describes what the search did.</p>
+     */
+    private record BytePattern(byte[] bytes, byte[] mask, String normalized) {
 
-                Address blockStart = block.getStart();
-                long blockSize = block.getSize();
-
-                byte[] blockData = new byte[(int) Math.min(blockSize, Integer.MAX_VALUE)];
-                try {
-                    block.getBytes(blockStart, blockData);
-                } catch (Exception e) {
+        static BytePattern parse(String pattern, String mask) {
+            if (pattern == null || pattern.isBlank()) {
+                throw new IllegalArgumentException("pattern is required");
+            }
+            String clean = pattern.replaceAll("\\s+", "").toLowerCase(java.util.Locale.ROOT);
+            if (clean.length() % 2 != 0) {
+                throw new IllegalArgumentException(
+                    "pattern must contain whole hex bytes (two characters each) or '??' "
+                        + "wildcards; got " + clean.length() + " characters");
+            }
+            int length = clean.length() / 2;
+            if (length > MAX_PATTERN_BYTES) {
+                throw new IllegalArgumentException("pattern must be at most "
+                    + MAX_PATTERN_BYTES + " bytes; got " + length);
+            }
+            byte[] bytes = new byte[length];
+            byte[] bits = new byte[length];
+            for (int index = 0; index < length; index++) {
+                String token = clean.substring(index * 2, index * 2 + 2);
+                if ("??".equals(token)) {
                     continue;
                 }
-
-                for (int i = 0; i <= blockData.length - patternBytes.length; i++) {
-                    boolean matchFound = true;
-                    for (int j = 0; j < patternBytes.length; j++) {
-                        if (maskBytes[j] != 0 && blockData[i + j] != patternBytes[j]) {
-                            matchFound = false;
-                            break;
-                        }
-                    }
-
-                    if (matchFound) {
-                        Address matchAddr = blockStart.add(i);
-                        matches.add(ServiceUtils.addressToJson(matchAddr, program));
-
-                        if (matches.size() >= MAX_MATCHES) {
-                            matches.add(JsonHelper.mapOf("note", "Limited to " + MAX_MATCHES + " matches"));
-                            break;
-                        }
-                    }
+                if (token.indexOf('?') >= 0) {
+                    throw new IllegalArgumentException(
+                        "a wildcard byte must be written '??'; got '" + token
+                            + "' at byte " + index);
                 }
-
-                if (matches.size() >= MAX_MATCHES) break;
+                bytes[index] = (byte) parseHexByte(token, "pattern", index);
+                bits[index] = (byte) 0xff;
             }
 
-            if (matches.isEmpty()) {
-                matches.add(JsonHelper.mapOf("note", "No matches found"));
+            if (mask != null && !mask.isBlank()) {
+                String cleanMask =
+                    mask.replaceAll("\\s+", "").toLowerCase(java.util.Locale.ROOT);
+                if (cleanMask.length() != clean.length()) {
+                    throw new IllegalArgumentException("mask must have the same byte count "
+                        + "as pattern; pattern has " + length + " byte(s), mask has "
+                        + (cleanMask.length() / 2.0) + " byte(s)");
+                }
+                for (int index = 0; index < length; index++) {
+                    int supplied = parseHexByte(
+                        cleanMask.substring(index * 2, index * 2 + 2), "mask", index);
+                    bits[index] = (byte) (bits[index] & supplied);
+                }
             }
-
-            return Response.ok(matches);
-        } catch (Exception e) {
-            return Response.err(e.getMessage());
+            for (int index = 0; index < length; index++) {
+                bytes[index] = (byte) (bytes[index] & bits[index]);
+            }
+            return new BytePattern(bytes, bits, clean);
         }
+
+        private static int parseHexByte(String token, String field, int index) {
+            try {
+                int value = Integer.parseInt(token, 16);
+                if (value < 0 || value > 0xff) throw new NumberFormatException(token);
+                return value;
+            } catch (NumberFormatException invalid) {
+                throw new IllegalArgumentException(field + " byte " + index
+                    + " is not hex: '" + token + "'");
+            }
+        }
+
+        int width() {
+            return bytes.length;
+        }
+
+        int wildcardCount() {
+            int count = 0;
+            for (byte bits : mask) {
+                if (bits == 0) count++;
+            }
+            return count;
+        }
+
+        String effectiveMask() {
+            return java.util.HexFormat.of().formatHex(mask);
+        }
+
+        /** Ghidra's own comparison: {@code (memory & mask) == (pattern & mask)}. */
+        boolean matches(byte[] buffer, int offset) {
+            for (int index = 0; index < bytes.length; index++) {
+                if ((buffer[offset + index] & mask[index]) != bytes[index]) {
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
+
+    /**
+     * The scan itself: streamed through {@link MemorySearchCore}, counting every match
+     * and retaining only the requested page.
+     */
+    private static Response runBytePatternSearch(
+            Program program, BytePattern pattern, Address start, Address end,
+            int limit, int offset) {
+        long modificationBefore = program.getModificationNumber();
+        List<MemorySearchCore.ScanRange> ranges =
+            MemorySearchCore.initializedRanges(program, start, end);
+
+        List<Map<String, Object>> page = new ArrayList<>();
+        long[] total = new long[1];
+        MemorySearchCore.ScanOutcome outcome = MemorySearchCore.scan(
+            MemorySearchCore.memorySource(program.getMemory()), ranges,
+            pattern.width(), MemorySearchCore.DEFAULT_CHUNK_SIZE, pattern::matches,
+            address -> {
+                long index = total[0]++;
+                if (index >= offset && page.size() < limit) {
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    row.put("address", address.toString(false));
+                    row.put("address_full", address.toString(true));
+                    row.put("address_space", address.getAddressSpace().getName());
+                    page.add(row);
+                }
+                return true;
+            });
+        if (outcome.failed()) {
+            return Response.err(outcome.error());
+        }
+        if (program.getModificationNumber() != modificationBefore) {
+            return Response.err("Program changed while searching byte patterns; "
+                + "the match total was never true of any single program state. Retry.");
+        }
+
+        java.util.Set<String> spaceNames = new java.util.LinkedHashSet<>();
+        for (MemorySearchCore.ScanRange range : ranges) {
+            spaceNames.add(range.start().getAddressSpace().getName());
+        }
+        Map<String, Object> scope = new LinkedHashMap<>();
+        if (start == null) {
+            scope.put("mode", "all_initialized_memory");
+        } else {
+            scope.put("mode", "range");
+            scope.put("start", start.toString(true));
+            scope.put("end", end.toString(true));
+        }
+        scope.put("spaces", new ArrayList<>(spaceNames));
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("pattern", pattern.normalized());
+        result.put("effective_mask", pattern.effectiveMask());
+        result.put("wildcard_count", pattern.wildcardCount());
+        result.put("scope", scope);
+        result.put("matches", page);
+        result.put("total_matched", total[0]);
+        result.put("returned", page.size());
+        result.put("limit", limit);
+        result.put("offset", offset);
+        result.put("has_more", (long) offset + page.size() < total[0]);
+        result.put("program_modification_number", modificationBefore);
+        return Response.ok(result);
     }
 
     /**

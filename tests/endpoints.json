@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "description": "GhidraMCP-next REST API Endpoint Specification",
-  "total_endpoints": 260,
+  "total_endpoints": 262,
   "categories": {
     "listing": "List program data",
     "getter": "Get specific data",
@@ -101,6 +101,22 @@
         "program"
       ],
       "description": "Analyze control flow"
+    },
+    {
+      "path": "/analyze_coverage",
+      "method": "GET",
+      "category": "analysis",
+      "params": [
+        "min_run_length",
+        "limit",
+        "offset",
+        "marker_limit",
+        "marker_offset",
+        "unknown_marker_prefix",
+        "generic_prefixes",
+        "program"
+      ],
+      "description": "Report how much of the program is still unexplained: every initialized byte classified as instruction, data or undefined, per address space, plus the undefined runs themselves with their neighbouring labels and incoming reference counts. Unlike find_code_gaps this does not depend on function objects, so it works on a labels-only program. An explicitly applied undefined1..8 counts as UNDEFINED, not as data. A second namespace, annotation_backlog, audits generic symbol names (DAT_, LAB_, ...) and unknown markers (TODO labels and comments) — convention-based, and kept apart from the byte facts on purpose. Statistics are always whole-program; undefined_runs and unknown_markers page independently."
     },
     {
       "path": "/analyze_data_region",
@@ -1658,9 +1674,10 @@
         "start",
         "end",
         "limit",
+        "offset",
         "program"
       ],
-      "description": "List every recorded reference whose DESTINATION falls in [start, end] (inclusive), as a flat list ordered by source address — by (space, offset), so on a multi-space program sources group by space rather than forming one monotonic hex sequence. Answers \"what touches this address span\" in one call — the recurring query on overlay/banked-memory targets. Returns RECORDED REFERENCES ONLY, echoed as `scope`: the result is complete for what Ghidra's reference database currently holds and says nothing beyond that. Bytes that encode an in-range address without a recorded reference never appear — untyped pointer tables, computed targets, operands the analyzer left unresolved. No single follow-up pass closes that gap: decoding instructions finds missed control flow but not untyped data pointers, so treat a wider sweep as raising confidence, not as proving exhaustiveness. Plain hex resolves in the default physical space; `resolved_range` echoes what was queried and `overlapping_spaces` lists other spaces occupying those offsets."
+      "description": "List every recorded reference whose DESTINATION falls in [start, end] (inclusive), as a flat list ordered by source address — by (space, offset), so on a multi-space program sources group by space rather than forming one monotonic hex sequence. Answers \"what touches this address span\" in one call — the recurring query on overlay/banked-memory targets. Returns RECORDED REFERENCES ONLY, echoed as `scope`: the result is complete for what Ghidra's reference database currently holds and says nothing beyond that. Bytes that encode an in-range address without a recorded reference never appear — untyped pointer tables, computed targets, operands the analyzer left unresolved. No single follow-up pass closes that gap: decoding instructions finds missed control flow but not untyped data pointers, so treat a wider sweep as raising confidence, not as proving exhaustiveness. `search_address_encodings` is the companion pass for bytes that encode an in-range address without one. Plain hex resolves in the default physical space; `resolved_range` echoes what was queried and `overlapping_spaces` lists other spaces occupying those offsets. Paged with `offset`/`limit`: `count` is the total over the whole range and `has_more` says whether rows remain after this page."
     },
     {
       "path": "/get_struct_layout",
@@ -2483,15 +2500,36 @@
       "description": "Save current program"
     },
     {
+      "path": "/search_address_encodings",
+      "method": "GET",
+      "category": "search",
+      "params": [
+        "start",
+        "end",
+        "width_bytes",
+        "byte_order",
+        "source_start",
+        "source_end",
+        "limit",
+        "cursor",
+        "program"
+      ],
+      "description": "Find byte windows that numerically decode into an inclusive DESTINATION address range — including untyped pointer tables, unresolved operands and pointers sitting in undefined bytes, none of which appear in get_references_into_range. Every offset is tested, unaligned included, and overlapping windows are separate rows, so the result carries FALSE POSITIVES by construction: `scope` says it is exhaustive over encodings, not over meaning. Each row reports where the window sits (inside_instruction, inside_data_unit or undefined) and any recorded reference whose destination equals the decoded target in BOTH space and offset — so on an overlaid program a RAM query and an overlay query over the same offsets return different references. Paged with an authenticated `cursor`; a whole window must lie inside one initialized range in one block, so a window straddling a block seam is not reported."
+    },
+    {
       "path": "/search_byte_patterns",
       "method": "GET",
       "category": "search",
       "params": [
         "pattern",
         "mask",
+        "start",
+        "end",
+        "limit",
+        "offset",
         "program"
       ],
-      "description": "Search for byte patterns"
+      "description": "Find every occurrence of a byte pattern in initialized memory. `??` in the pattern is a wildcard byte; an optional `mask` applies Ghidra's bit-mask semantics — a bit set in the mask must match the corresponding pattern bit — and is ANDed with the wildcard default, so neither mechanism can re-enable a bit the other waived. `start`/`end` scope the search to one inclusive range in ONE address space, and the whole match must fit inside it. Results are ordered by address-space name then offset and paged with `offset`/`limit`; `total_matched` is the pre-paging total. LIMITATION: a match straddling the end of one initialized range and the start of the next is not found, because ranges are scanned independently. A read failure is reported as an error naming the block, never as a miss."
     },
     {
       "path": "/search_data_types",

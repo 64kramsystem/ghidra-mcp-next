@@ -355,7 +355,7 @@ public class ReferencesIntoRangeTest {
     @Test
     public void rejectsStartAfterEnd() {
         XrefCallGraphService service = new Fixture().build();
-        Response response = service.getReferencesIntoRange("98ff", "9680", 2000, "");
+        Response response = service.getReferencesIntoRange("98ff", "9680", 2000, 0, "");
         assertTrue(isError(response));
     }
 
@@ -364,7 +364,7 @@ public class ReferencesIntoRangeTest {
         AddressSpace player = overlaySpace("SND_PLAYER");
         XrefCallGraphService service = new Fixture().withSpaces(player).build();
         Response response =
-            service.getReferencesIntoRange("9680", "SND_PLAYER:98ff", 2000, "");
+            service.getReferencesIntoRange("9680", "SND_PLAYER:98ff", 2000, 0, "");
         assertTrue(isError(response));
     }
 
@@ -373,7 +373,7 @@ public class ReferencesIntoRangeTest {
         Fixture fixture = new Fixture();
         XrefCallGraphService service = fixture.build();
         Response response =
-            service.getReferencesIntoRange("nonsense", "98ff", 2000, "");
+            service.getReferencesIntoRange("nonsense", "98ff", 2000, 0, "");
         assertTrue(isError(response));
         // Exact equality, not containment: a substring check also passes a
         // production path that wraps or prefixes the parseAddress message.
@@ -385,12 +385,12 @@ public class ReferencesIntoRangeTest {
     @Test
     public void rejectsLimitOutsideBounds() {
         XrefCallGraphService service = new Fixture().build();
-        assertTrue(isError(service.getReferencesIntoRange("9680", "98ff", 0, "")));
-        assertTrue(isError(service.getReferencesIntoRange("9680", "98ff", -1, "")));
+        assertTrue(isError(service.getReferencesIntoRange("9680", "98ff", 0, 0, "")));
+        assertTrue(isError(service.getReferencesIntoRange("9680", "98ff", -1, 0, "")));
         assertTrue(
-            isError(service.getReferencesIntoRange("9680", "98ff", 10001, "")));
+            isError(service.getReferencesIntoRange("9680", "98ff", 10001, 0, "")));
         assertFalse(
-            isError(service.getReferencesIntoRange("9680", "98ff", 10000, "")));
+            isError(service.getReferencesIntoRange("9680", "98ff", 10000, 0, "")));
     }
 
     // ------------------------------------------------------- result set
@@ -410,7 +410,7 @@ public class ReferencesIntoRangeTest {
             .build();
 
         List<Map<String, Object>> rows =
-            rows(service.getReferencesIntoRange("9680", "98ff", 2000, ""));
+            rows(service.getReferencesIntoRange("9680", "98ff", 2000, 0, ""));
         assertEquals(2, rows.size());
         assertEquals("0700", rows.get(0).get("from"));
         assertEquals("0702", rows.get(1).get("from"));
@@ -425,7 +425,7 @@ public class ReferencesIntoRangeTest {
                 ref(source, ramAddr(0x9701), RefType.WRITE, SourceType.ANALYSIS, 0))
             .build();
 
-        Response response = service.getReferencesIntoRange("9680", "98ff", 2000, "");
+        Response response = service.getReferencesIntoRange("9680", "98ff", 2000, 0, "");
         List<Map<String, Object>> rows = rows(response);
         assertEquals(2, rows.size());
         assertEquals("0733", rows.get(0).get("from"));
@@ -447,7 +447,7 @@ public class ReferencesIntoRangeTest {
             .build();
 
         List<Map<String, Object>> rows =
-            rows(service.getReferencesIntoRange("9680", "98ff", 2000, ""));
+            rows(service.getReferencesIntoRange("9680", "98ff", 2000, 0, ""));
         assertEquals(1, rows.size());
         assertEquals("9680", rows.get(0).get("to"));
     }
@@ -467,7 +467,7 @@ public class ReferencesIntoRangeTest {
             .build();
 
         List<Map<String, Object>> rows =
-            rows(service.getReferencesIntoRange("9680", "98ff", 2000, ""));
+            rows(service.getReferencesIntoRange("9680", "98ff", 2000, 0, ""));
         assertEquals(Arrays.asList("0703", "0733", "0733", "0739"),
             Arrays.asList(rows.get(0).get("from"), rows.get(1).get("from"),
                           rows.get(2).get("from"), rows.get(3).get("from")));
@@ -486,38 +486,124 @@ public class ReferencesIntoRangeTest {
             .build();
 
         List<Map<String, Object>> rows =
-            rows(service.getReferencesIntoRange("9680", "98ff", 2000, ""));
+            rows(service.getReferencesIntoRange("9680", "98ff", 2000, 0, ""));
         assertEquals(2, rows.size());
         assertEquals(0, rows.get(0).get("operand_index"));
         assertEquals(1, rows.get(1).get("operand_index"));
     }
 
-    // ------------------------------------------------------- cap semantics
+    // ------------------------------------------------------- paging semantics
 
-    @Test
-    public void truncationReportsMatchesFoundNotRowsReturned() {
+    /** Five references into $9680, from $0700..$0704, in ascending source order. */
+    private Fixture fiveSources() {
         Fixture fixture = new Fixture();
         for (int index = 0; index < 5; index++) {
             fixture.withRefs(ref(ramAddr(0x0700 + index), ramAddr(0x9680),
                 RefType.READ, SourceType.ANALYSIS, 0));
         }
-        Response response =
-            fixture.build().getReferencesIntoRange("9680", "98ff", 2, "");
-
-        assertEquals(5, body(response).get("count"));
-        assertEquals(2, rows(response).size());
-        assertEquals(Boolean.TRUE, body(response).get("truncated"));
+        return fixture;
     }
 
     @Test
-    public void untruncatedResultReportsFalse() {
+    public void countReportsMatchesFoundNotRowsReturned() {
+        Response response =
+            fiveSources().build().getReferencesIntoRange("9680", "98ff", 2, 0, "");
+
+        // Without a case where count exceeds references.length, the two stay
+        // accidentally equal in every test and the distinction is never exercised.
+        assertEquals(5, body(response).get("count"));
+        assertEquals(2, rows(response).size());
+        assertEquals(2, body(response).get("returned"));
+        assertEquals(Boolean.TRUE, body(response).get("has_more"));
+        assertEquals(0, body(response).get("offset"));
+        assertEquals(2, body(response).get("limit"));
+    }
+
+    @Test
+    public void completePageReportsNoMore() {
         XrefCallGraphService service = new Fixture()
             .withRefs(ref(ramAddr(0x0700), ramAddr(0x9680), RefType.READ,
                           SourceType.ANALYSIS, 0))
             .build();
-        assertEquals(Boolean.FALSE,
-            body(service.getReferencesIntoRange("9680", "98ff", 2000, ""))
-                .get("truncated"));
+        Map<String, Object> body =
+            body(service.getReferencesIntoRange("9680", "98ff", 2000, 0, ""));
+        assertEquals(Boolean.FALSE, body.get("has_more"));
+        assertEquals(1, body.get("returned"));
+        assertFalse("truncated is replaced by the page envelope",
+            body.containsKey("truncated"));
+    }
+
+    @Test
+    public void middlePageIsTheExpectedSliceWithNoGapOrDuplicate() {
+        XrefCallGraphService service = fiveSources().build();
+
+        List<Map<String, Object>> first =
+            rows(service.getReferencesIntoRange("9680", "98ff", 2, 0, ""));
+        Response middle = service.getReferencesIntoRange("9680", "98ff", 2, 2, "");
+        List<Map<String, Object>> rows = rows(middle);
+
+        assertEquals(Arrays.asList("0700", "0701"),
+            Arrays.asList(first.get(0).get("from"), first.get(1).get("from")));
+        assertEquals(Arrays.asList("0702", "0703"),
+            Arrays.asList(rows.get(0).get("from"), rows.get(1).get("from")));
+        assertEquals(2, body(middle).get("offset"));
+        assertEquals(Boolean.TRUE, body(middle).get("has_more"));
+    }
+
+    @Test
+    public void offsetPastTheEndYieldsAnEmptyPageWithCountUnchanged() {
+        Response response =
+            fiveSources().build().getReferencesIntoRange("9680", "98ff", 2000, 99, "");
+        assertEquals(5, body(response).get("count"));
+        assertEquals(Collections.emptyList(), body(response).get("references"));
+        assertEquals(0, body(response).get("returned"));
+        assertEquals(Boolean.FALSE, body(response).get("has_more"));
+    }
+
+    @Test
+    public void nearMaximumOffsetDoesNotWrapHasMore() {
+        // offset + returned is computed in long arithmetic; an int addition here
+        // overflows negative and reports has_more incorrectly.
+        Response response = fiveSources().build()
+            .getReferencesIntoRange("9680", "98ff", 2000, Integer.MAX_VALUE, "");
+        assertEquals(5, body(response).get("count"));
+        assertEquals(0, body(response).get("returned"));
+        assertEquals(Boolean.FALSE, body(response).get("has_more"));
+    }
+
+    @Test
+    public void hasMoreIsFalseExactlyAtTheBoundary() {
+        // offset + returned == count: the last full page, nothing after it.
+        Response response =
+            fiveSources().build().getReferencesIntoRange("9680", "98ff", 2, 3, "");
+        assertEquals(2, body(response).get("returned"));
+        assertEquals(Boolean.FALSE, body(response).get("has_more"));
+    }
+
+    @Test
+    public void countIsInvariantAcrossPages() {
+        XrefCallGraphService service = fiveSources().build();
+        for (int offset = 0; offset <= 6; offset += 2) {
+            assertEquals("paging must not be mistaken for filtering", 5,
+                body(service.getReferencesIntoRange("9680", "98ff", 2, offset, ""))
+                    .get("count"));
+        }
+    }
+
+    @Test
+    public void negativeOffsetIsRejectedRatherThanClamped() {
+        assertTrue(isError(
+            fiveSources().build().getReferencesIntoRange("9680", "98ff", 2000, -1, "")));
+    }
+
+    @Test
+    public void modificationNumberIsEchoedSoStitchedPagesAreDetectable() {
+        Fixture fixture = fiveSources();
+        XrefCallGraphService service = fixture.build();
+        when(fixture.program.getModificationNumber()).thenReturn(4213L);
+        assertEquals(4213L,
+            body(service.getReferencesIntoRange("9680", "98ff", 2, 0, ""))
+                .get("program_modification_number"));
     }
 
     // ------------------------------------------------- cross-space isolation
@@ -552,11 +638,11 @@ public class ReferencesIntoRangeTest {
         XrefCallGraphService service = bothOccupants(player).build();
 
         Map<String, Object> body =
-            body(service.getReferencesIntoRange("9680", "98ff", 2000, ""));
+            body(service.getReferencesIntoRange("9680", "98ff", 2000, 0, ""));
         assertEquals(2, body.get("count"));
         List<String> sources = new ArrayList<>();
         for (Map<String, Object> row : rows(service.getReferencesIntoRange(
-                "9680", "98ff", 2000, ""))) {
+                "9680", "98ff", 2000, 0, ""))) {
             sources.add((String) row.get("from"));
             assertEquals("every row must name the RAM occupant",
                 "ram:9700", row.get("to"));
@@ -570,11 +656,11 @@ public class ReferencesIntoRangeTest {
         XrefCallGraphService service = bothOccupants(player).build();
 
         Map<String, Object> body = body(service.getReferencesIntoRange(
-            "SND_PLAYER:9680", "SND_PLAYER:98ff", 2000, ""));
+            "SND_PLAYER:9680", "SND_PLAYER:98ff", 2000, 0, ""));
         assertEquals(2, body.get("count"));
         List<String> sources = new ArrayList<>();
         for (Map<String, Object> row : rows(service.getReferencesIntoRange(
-                "SND_PLAYER:9680", "SND_PLAYER:98ff", 2000, ""))) {
+                "SND_PLAYER:9680", "SND_PLAYER:98ff", 2000, 0, ""))) {
             sources.add((String) row.get("from"));
             assertEquals("every row must name the overlay occupant",
                 "SND_PLAYER::9700", row.get("to"));
@@ -596,11 +682,11 @@ public class ReferencesIntoRangeTest {
             bothOccupants(player).withOverDeliveringDestinations().build();
 
         Map<String, Object> body =
-            body(service.getReferencesIntoRange("9680", "98ff", 2000, ""));
+            body(service.getReferencesIntoRange("9680", "98ff", 2000, 0, ""));
         assertEquals("overlay destinations must not leak into a RAM query",
             2, body.get("count"));
         for (Map<String, Object> row : rows(service.getReferencesIntoRange(
-                "9680", "98ff", 2000, ""))) {
+                "9680", "98ff", 2000, 0, ""))) {
             assertEquals("ram:9700", row.get("to"));
         }
     }
@@ -617,11 +703,11 @@ public class ReferencesIntoRangeTest {
             .build();
 
         Map<String, Object> body =
-            body(service.getReferencesIntoRange("9680", "98ff", 2000, ""));
+            body(service.getReferencesIntoRange("9680", "98ff", 2000, 0, ""));
         assertEquals(1, body.get("count"));
         // Bare, not "ram:9700": one physical space and no overlay, so nothing is qualified.
         assertEquals("9700", rows(service.getReferencesIntoRange(
-            "9680", "98ff", 2000, "")).get(0).get("to"));
+            "9680", "98ff", 2000, 0, "")).get(0).get("to"));
     }
 
     @Test
@@ -633,7 +719,7 @@ public class ReferencesIntoRangeTest {
         Fixture fixture = bothOccupants(player);
         XrefCallGraphService service = fixture.build();
 
-        service.getReferencesIntoRange("SND_PLAYER:9680", "SND_PLAYER:98ff", 2000, "");
+        service.getReferencesIntoRange("SND_PLAYER:9680", "SND_PLAYER:98ff", 2000, 0, "");
 
         assertEquals(1, fixture.requestedSets.size());
         AddressSetView requested = fixture.requestedSets.get(0);
@@ -649,20 +735,21 @@ public class ReferencesIntoRangeTest {
     public void resolvedRangeAlwaysPresentAndOverlapEmptyWithoutOverlays() {
         XrefCallGraphService service = new Fixture().build();
         Map<String, Object> body =
-            body(service.getReferencesIntoRange("9680", "98ff", 2000, ""));
+            body(service.getReferencesIntoRange("9680", "98ff", 2000, 0, ""));
         assertEquals("ram:9680 - ram:98ff", body.get("resolved_range"));
         assertEquals(Collections.emptyList(), body.get("overlapping_spaces"));
     }
 
     @Test
-    public void emptyRangeReportsZeroUntruncatedAndAnEmptyList() {
-        // Asserting resolved_range alone would pass while count, truncated or
-        // references were absent, null, or carried a stale value.
+    public void emptyRangeReportsZeroAndAnEmptyList() {
+        // Asserting resolved_range alone would pass while count, the page
+        // envelope or references were absent, null, or carried a stale value.
         XrefCallGraphService service = new Fixture().build();
         Map<String, Object> body =
-            body(service.getReferencesIntoRange("9680", "98ff", 2000, ""));
+            body(service.getReferencesIntoRange("9680", "98ff", 2000, 0, ""));
         assertEquals(0, body.get("count"));
-        assertEquals(Boolean.FALSE, body.get("truncated"));
+        assertEquals(0, body.get("returned"));
+        assertEquals(Boolean.FALSE, body.get("has_more"));
         assertEquals(Collections.emptyList(), body.get("references"));
     }
 
@@ -671,7 +758,7 @@ public class ReferencesIntoRangeTest {
         // The caveat has to survive being read without the tool description in view.
         XrefCallGraphService service = new Fixture().build();
         assertEquals("recorded_references_only",
-            body(service.getReferencesIntoRange("9680", "98ff", 2000, "")).get("scope"));
+            body(service.getReferencesIntoRange("9680", "98ff", 2000, 0, "")).get("scope"));
     }
 
     @Test
@@ -684,7 +771,7 @@ public class ReferencesIntoRangeTest {
             .build();
 
         assertEquals(Collections.singletonList("SND_PLAYER"),
-            body(service.getReferencesIntoRange("9680", "98ff", 2000, ""))
+            body(service.getReferencesIntoRange("9680", "98ff", 2000, 0, ""))
                 .get("overlapping_spaces"));
     }
 
@@ -698,7 +785,7 @@ public class ReferencesIntoRangeTest {
             .build();
 
         assertEquals(Collections.emptyList(),
-            body(service.getReferencesIntoRange("9680", "98ff", 2000, ""))
+            body(service.getReferencesIntoRange("9680", "98ff", 2000, 0, ""))
                 .get("overlapping_spaces"));
     }
 
@@ -717,7 +804,7 @@ public class ReferencesIntoRangeTest {
 
         assertEquals(Arrays.asList("SND_OTHER", "ram"),
             body(service.getReferencesIntoRange(
-                "SND_PLAYER:9680", "SND_PLAYER:98ff", 2000, ""))
+                "SND_PLAYER:9680", "SND_PLAYER:98ff", 2000, 0, ""))
                 .get("overlapping_spaces"));
     }
 
@@ -733,7 +820,7 @@ public class ReferencesIntoRangeTest {
             .build();
 
         Map<String, Object> row = rows(service.getReferencesIntoRange(
-            "SND_PLAYER:9680", "SND_PLAYER:98ff", 2000, "")).get(0);
+            "SND_PLAYER:9680", "SND_PLAYER:98ff", 2000, 0, "")).get(0);
         assertEquals("SND_PLAYER::9750", row.get("from"));
         assertEquals("SND_PLAYER::9747", row.get("to"));
     }
@@ -745,7 +832,7 @@ public class ReferencesIntoRangeTest {
             .build();
 
         assertEquals(Collections.emptyList(),
-            body(service.getReferencesIntoRange("9680", "98ff", 2000, ""))
+            body(service.getReferencesIntoRange("9680", "98ff", 2000, 0, ""))
                 .get("overlapping_spaces"));
     }
 
@@ -758,7 +845,7 @@ public class ReferencesIntoRangeTest {
             .build();
 
         assertEquals(Collections.emptyList(),
-            body(service.getReferencesIntoRange("9680", "98ff", 2000, ""))
+            body(service.getReferencesIntoRange("9680", "98ff", 2000, 0, ""))
                 .get("overlapping_spaces"));
     }
 
@@ -774,7 +861,7 @@ public class ReferencesIntoRangeTest {
             .build();
 
         assertEquals(Arrays.asList("ALPHA", "ZEBRA"),
-            body(service.getReferencesIntoRange("9680", "98ff", 2000, ""))
+            body(service.getReferencesIntoRange("9680", "98ff", 2000, 0, ""))
                 .get("overlapping_spaces"));
     }
 
@@ -803,7 +890,7 @@ public class ReferencesIntoRangeTest {
 
         XrefCallGraphService service = fixture.build();
         Map<String, Object> body = body(service.getReferencesIntoRange(
-            "wide:7ffffffffffff000", "wide:8000000000000fff", 2000, ""));
+            "wide:7ffffffffffff000", "wide:8000000000000fff", 2000, 0, ""));
         assertEquals(Collections.singletonList("HIGH_OVERLAY"),
             body.get("overlapping_spaces"));
     }
@@ -818,7 +905,7 @@ public class ReferencesIntoRangeTest {
             .build();
 
         Map<String, Object> row =
-            rows(service.getReferencesIntoRange("9680", "98ff", 2000, "")).get(0);
+            rows(service.getReferencesIntoRange("9680", "98ff", 2000, 0, "")).get(0);
         assertEquals("0733", row.get("from"));
         assertEquals("9700", row.get("to"));
     }
@@ -835,7 +922,7 @@ public class ReferencesIntoRangeTest {
             .build();
 
         Map<String, Object> row =
-            rows(service.getReferencesIntoRange("9680", "98ff", 2000, "")).get(0);
+            rows(service.getReferencesIntoRange("9680", "98ff", 2000, 0, "")).get(0);
         assertEquals("ram:0733", row.get("from"));
         assertEquals("ram:9700", row.get("to"));
     }
@@ -849,7 +936,7 @@ public class ReferencesIntoRangeTest {
             .build();
 
         assertEquals("ram:0733",
-            rows(service.getReferencesIntoRange("9680", "98ff", 2000, ""))
+            rows(service.getReferencesIntoRange("9680", "98ff", 2000, 0, ""))
                 .get(0).get("from"));
     }
 
@@ -873,7 +960,7 @@ public class ReferencesIntoRangeTest {
             .build();
 
         List<Map<String, Object>> rows =
-            rows(service.getReferencesIntoRange("9680", "98ff", 2000, ""));
+            rows(service.getReferencesIntoRange("9680", "98ff", 2000, 0, ""));
         assertEquals("user_defined", rows.get(0).get("source_kind"));
         assertEquals("default", rows.get(1).get("source_kind"));
         assertEquals("imported", rows.get(2).get("source_kind"));
@@ -895,7 +982,7 @@ public class ReferencesIntoRangeTest {
         when(fixture.listing.getCodeUnitContaining(any())).thenReturn(instruction);
 
         Map<String, Object> row =
-            rows(service.getReferencesIntoRange("9680", "98ff", 2000, "")).get(0);
+            rows(service.getReferencesIntoRange("9680", "98ff", 2000, 0, "")).get(0);
         assertEquals("instruction", row.get("from_kind"));
         assertEquals("JSR 0x96a1", row.get("from_instruction"));
     }
@@ -911,7 +998,7 @@ public class ReferencesIntoRangeTest {
         when(fixture.listing.getCodeUnitContaining(any())).thenReturn(data);
 
         Map<String, Object> row =
-            rows(service.getReferencesIntoRange("9680", "98ff", 2000, "")).get(0);
+            rows(service.getReferencesIntoRange("9680", "98ff", 2000, 0, "")).get(0);
         assertEquals("data", row.get("from_kind"));
         assertEquals("addr 96A1h", row.get("from_instruction"));
     }
@@ -924,7 +1011,7 @@ public class ReferencesIntoRangeTest {
             .build();
 
         Map<String, Object> row =
-            rows(service.getReferencesIntoRange("9680", "98ff", 2000, "")).get(0);
+            rows(service.getReferencesIntoRange("9680", "98ff", 2000, 0, "")).get(0);
         assertEquals("undefined", row.get("from_kind"));
         assertFalse(row.containsKey("from_instruction"));
     }
@@ -949,7 +1036,7 @@ public class ReferencesIntoRangeTest {
             .thenReturn(function);
 
         Map<String, Object> row =
-            rows(service.getReferencesIntoRange("9680", "98ff", 2000, "")).get(0);
+            rows(service.getReferencesIntoRange("9680", "98ff", 2000, 0, "")).get(0);
         assertEquals("EXACT_LABEL", row.get("from_symbol"));
         assertEquals(BigInteger.ZERO, row.get("from_symbol_offset"));
         assertEquals("at", row.get("from_symbol_relation"));
@@ -979,7 +1066,7 @@ public class ReferencesIntoRangeTest {
             .thenReturn(iterator);
 
         Map<String, Object> row =
-            rows(service.getReferencesIntoRange("9680", "98ff", 2000, "")).get(0);
+            rows(service.getReferencesIntoRange("9680", "98ff", 2000, 0, "")).get(0);
         assertEquals("CONTAINING_FUNC", row.get("from_symbol"));
         assertEquals(BigInteger.valueOf(3), row.get("from_symbol_offset"));
         assertEquals("containing", row.get("from_symbol_relation"));
@@ -1002,7 +1089,7 @@ public class ReferencesIntoRangeTest {
             .thenReturn("INSTALL_DISK_LOADER");
 
         Map<String, Object> row =
-            rows(service.getReferencesIntoRange("9680", "98ff", 2000, "")).get(0);
+            rows(service.getReferencesIntoRange("9680", "98ff", 2000, 0, "")).get(0);
         assertEquals("LAB_0730", row.get("from_symbol"));
     }
 
@@ -1014,7 +1101,7 @@ public class ReferencesIntoRangeTest {
             .build();
 
         Map<String, Object> row =
-            rows(service.getReferencesIntoRange("9680", "98ff", 2000, "")).get(0);
+            rows(service.getReferencesIntoRange("9680", "98ff", 2000, 0, "")).get(0);
         assertFalse(row.containsKey("from_symbol"));
         assertFalse(row.containsKey("from_symbol_offset"));
     }
@@ -1041,7 +1128,7 @@ public class ReferencesIntoRangeTest {
         when(fixture.memory.getBlock(any(Address.class))).thenReturn(codeBlock);
 
         Map<String, Object> row =
-            rows(service.getReferencesIntoRange("9680", "98ff", 2000, "")).get(0);
+            rows(service.getReferencesIntoRange("9680", "98ff", 2000, 0, "")).get(0);
         assertEquals("IN_BLOCK_LABEL", row.get("nearest_preceding_symbol"));
         assertEquals(BigInteger.valueOf(3), row.get("nearest_preceding_distance"));
         assertEquals("preceding", row.get("from_symbol_relation"));
@@ -1075,7 +1162,7 @@ public class ReferencesIntoRangeTest {
         when(fixture.memory.getBlock(any(Address.class))).thenReturn(wholeRam);
 
         Map<String, Object> row =
-            rows(service.getReferencesIntoRange("9680", "98ff", 2000, "")).get(0);
+            rows(service.getReferencesIntoRange("9680", "98ff", 2000, 0, "")).get(0);
         assertEquals("PART_FILENAME", row.get("nearest_preceding_symbol"));
         assertEquals(BigInteger.valueOf(0x9902 - 0x9735),
             row.get("nearest_preceding_distance"));
@@ -1094,7 +1181,7 @@ public class ReferencesIntoRangeTest {
             .build();
 
         Map<String, Object> row =
-            rows(service.getReferencesIntoRange("9680", "98ff", 2000, "")).get(0);
+            rows(service.getReferencesIntoRange("9680", "98ff", 2000, 0, "")).get(0);
         assertFalse(row.containsKey("from_symbol"));
         assertFalse(row.containsKey("nearest_preceding_symbol"));
         assertFalse(row.containsKey("from_symbol_relation"));
@@ -1125,7 +1212,7 @@ public class ReferencesIntoRangeTest {
         MemoryBlock codeBlock = block("CODE", ramAddr(0x0700), ramAddr(0x0fff));
         when(fixture.memory.getBlock(any(Address.class))).thenReturn(codeBlock);
 
-        rows(service.getReferencesIntoRange("9680", "98ff", 2000, ""));
+        rows(service.getReferencesIntoRange("9680", "98ff", 2000, 0, ""));
 
         assertEquals(ramAddr(0x0700), searched.getValue().getMinAddress());
         assertEquals(ramAddr(0x0703), searched.getValue().getMaxAddress());
@@ -1143,7 +1230,7 @@ public class ReferencesIntoRangeTest {
         when(fixture.memory.getBlock(any(Address.class))).thenReturn(null);
 
         Map<String, Object> row =
-            rows(service.getReferencesIntoRange("9680", "98ff", 2000, "")).get(0);
+            rows(service.getReferencesIntoRange("9680", "98ff", 2000, 0, "")).get(0);
         assertFalse(row.containsKey("from_symbol"));
         // Without a block there is no boundary, so no walk may happen at all.
         verify(fixture.symbolTable, never())
@@ -1178,7 +1265,7 @@ public class ReferencesIntoRangeTest {
         when(fixture.memory.getBlock(any(Address.class))).thenReturn(huge);
 
         Map<String, Object> row = rows(service.getReferencesIntoRange(
-            "wide:0", "wide:1000", 2000, "")).get(0);
+            "wide:0", "wide:1000", 2000, 0, "")).get(0);
         // A nearest-preceding match, so the distance is the renamed field. Still a BigInteger:
         // narrowing to int would wrap this to a negative number.
         assertEquals(BigInteger.valueOf(0x80000000L), row.get("nearest_preceding_distance"));
@@ -1206,7 +1293,7 @@ public class ReferencesIntoRangeTest {
             return ramAddr(offset);
         });
 
-        assertFalse(isError(service.getReferencesIntoRange("9680", "98ff", 2000, "")));
+        assertFalse(isError(service.getReferencesIntoRange("9680", "98ff", 2000, 0, "")));
         assertEquals(1, fixture.threading.readCount());
         assertEquals(0, fixture.threading.writeCount());
         assertEquals(Arrays.asList("parse", "parse", "read-hop"), order);
@@ -1223,8 +1310,8 @@ public class ReferencesIntoRangeTest {
     public void validationFailuresNeverEnterTheReadHop() {
         Fixture fixture = new Fixture();
         XrefCallGraphService service = fixture.build();
-        assertTrue(isError(service.getReferencesIntoRange("98ff", "9680", 2000, "")));
-        assertTrue(isError(service.getReferencesIntoRange("9680", "98ff", 0, "")));
+        assertTrue(isError(service.getReferencesIntoRange("98ff", "9680", 2000, 0, "")));
+        assertTrue(isError(service.getReferencesIntoRange("9680", "98ff", 0, 0, "")));
         assertEquals(0, fixture.threading.readCount());
     }
 }
