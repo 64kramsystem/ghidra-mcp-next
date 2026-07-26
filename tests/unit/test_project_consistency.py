@@ -31,45 +31,53 @@ def bridge_source_text() -> str:
 
 
 class TestBuildIdentity(unittest.TestCase):
-    """Verify the extension and bridge use independent automatic identities."""
+    """Verify the extension and bridge share one semantic version."""
 
-    def test_maven_release_artifact_uses_build_timestamp(self):
+    def test_maven_release_artifact_uses_the_project_version(self):
         pom = POM_XML.read_text(encoding="utf-8")
-        self.assertIn("<version>0.0.0</version>", pom)
+        self.assertRegex(pom, r"(?m)^    <version>\d+\.\d+\.\d+</version>$")
+        self.assertNotIn("<version>0.0.0</version>", pom)
         self.assertIn(
-            "<finalName>${project.artifactId}-${release.timestamp}</finalName>",
+            "<finalName>${project.artifactId}-${project.version}</finalName>",
             pom,
         )
 
-    def test_bridge_version_is_dynamic_and_git_scoped(self):
+    def test_bridge_version_comes_from_the_pom(self):
         pyproject = PYPROJECT_TOML.read_text(encoding="utf-8")
         self.assertIn('dynamic = ["version"]', pyproject)
         self.assertNotRegex(pyproject, r'(?m)^version = "\d+\.\d+\.\d+"$')
         self.assertIn('path = "tools/bridge_version.py"', pyproject)
         self.assertIn('"/python/bridge_mcp_ghidra"', pyproject)
         self.assertNotIn('    "CHANGELOG.md",', pyproject)
+        # A wheel built from an extracted sdist reads the pom, so it must ship.
+        self.assertIn('"/pom.xml",', pyproject)
 
-        version_source = (PROJECT_ROOT / "tools" / "bridge_version.py").read_text(encoding="utf-8")
-        for bridge_input in (
-            "python/bridge_mcp_ghidra",
-            "pyproject.toml",
-            "tools/bridge_version.py",
-            "README.md",
-            "LICENSE",
-            "NOTICE",
-            ".gitignore",
-        ):
-            self.assertIn(bridge_input, version_source)
+    def test_bridge_version_equals_the_pom_version(self):
+        """One release, one version: the wheel and the extension must agree."""
+        sys.path.insert(0, str(PROJECT_ROOT))
+        try:
+            from tools.bridge_version import get_bridge_version
+        finally:
+            sys.path.pop(0)
 
-    def test_plugin_metadata_uses_build_timestamp(self):
+        pom = POM_XML.read_text(encoding="utf-8")
+        match = re.search(r"(?m)^    <version>(\d+\.\d+\.\d+)</version>$", pom)
+        assert match is not None
+        self.assertEqual(get_bridge_version(PROJECT_ROOT), match.group(1))
+
+    def test_plugin_metadata_uses_the_project_version(self):
         version_properties = (
             PROJECT_ROOT / "src" / "main" / "resources" / "com" / "xebyte" / "version.properties"
         ).read_text(encoding="utf-8")
         manifest = (PROJECT_ROOT / "src" / "main" / "resources" / "META-INF" / "MANIFEST.MF").read_text(
             encoding="utf-8"
         )
-        self.assertIn("app.version=${release.timestamp}", version_properties)
-        self.assertIn("Plugin-Version: ${release.timestamp}", manifest)
+        self.assertIn("app.version=${project.version}", version_properties)
+        self.assertIn("Plugin-Version: ${project.version}", manifest)
+        # Build metadata stays a real timestamp: a field named build.timestamp
+        # holding a semantic version would lie.
+        self.assertIn("build.timestamp=${release.timestamp}", version_properties)
+        self.assertIn("build.number=${release.timestamp}", version_properties)
 
     def test_user_visible_tool_counts_use_stable_lower_bound(self):
         """User-visible descriptions should not hardcode the exact catalog size."""

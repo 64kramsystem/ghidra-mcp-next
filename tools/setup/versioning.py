@@ -23,6 +23,20 @@ def read_pom_ghidra_version(repo_root: Path) -> str:
     return find_text("m:properties/m:ghidra.version" if namespace else "properties/ghidra.version")
 
 
+def read_pom_project_version(repo_root: Path) -> str:
+    """Return the pom's own ``<version>``, the project's semantic version.
+
+    Distinct from :func:`read_pom_ghidra_version`, which returns the
+    ``<ghidra.version>`` property. Both live in the same file and confusing them
+    yields Ghidra's version where the project's was wanted.
+    """
+    # Delegates so the pom-version parse exists once. bridge_version.py owns it
+    # because hatch runs that file with no package context.
+    from tools.bridge_version import get_bridge_version
+
+    return get_bridge_version(repo_root)
+
+
 _GHIDRA_PATH_RE = re.compile(r"ghidra_([0-9]+(?:\.[0-9]+){1,3})_(PUBLIC|DEV)")
 
 

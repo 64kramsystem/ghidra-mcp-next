@@ -54,6 +54,9 @@ include = [
     "/LICENSE",
     "/NOTICE",
     "/tools/bridge_version.py",
+    # The version comes from the pom, so a wheel built from an extracted sdist
+    # needs it; tools/bridge_version.py parses it without further imports.
+    "/pom.xml",
 ]
 
 # ---------------------------------------------------------------------------
