@@ -136,6 +136,9 @@ public class ReferencesIntoRangeTest {
         final List<Address> extraDestinations = new ArrayList<>();
         final RecordingThreadingStrategy threading = new RecordingThreadingStrategy();
         final List<Boolean> modelAccessInsideRead = new ArrayList<>();
+        /** See {@link #withOverDeliveringDestinations()}. */
+        boolean overDeliverDestinations = false;
+        final List<AddressSetView> requestedSets = new ArrayList<>();
 
         Fixture() {
             // Every model access records whether it happened inside the read hop.
@@ -182,6 +185,23 @@ public class ReferencesIntoRangeTest {
             return this;
         }
 
+        /**
+         * Makes the destination iterator ignore the set it is given and hand back every
+         * destination in the fixture, so the endpoint's own {@code inRange} filter is the only
+         * thing standing between the caller and the wrong occupant.
+         *
+         * <p>A faithful iterator filters by space and offset itself, which leaves
+         * {@code inRange} with nothing observable to do: delete its space check and every test
+         * still passes. That is a real gap — {@code inRange} is the endpoint's own guarantee, not
+         * the mock's, and on real Ghidra data it is what holds if the iterator is ever handed a
+         * set built in the wrong space. Modelling a source that over-delivers is how that
+         * guarantee gets tested. Use it only for that; the default is the faithful behaviour.</p>
+         */
+        Fixture withOverDeliveringDestinations() {
+            overDeliverDestinations = true;
+            return this;
+        }
+
         XrefCallGraphService build() {
             when(factory.getAddressSpaces())
                 .thenReturn(spaces.toArray(new AddressSpace[0]));
@@ -198,7 +218,11 @@ public class ReferencesIntoRangeTest {
             // of that filter — whether a RAM query can see an overlay destination — is
             // precisely the property this endpoint exists to get right.
             when(refMgr.getReferenceDestinationIterator(any(AddressSetView.class), anyBoolean()))
-                .thenAnswer(invocation -> destinationIterator(invocation.getArgument(0)));
+                .thenAnswer(invocation -> {
+                    AddressSetView requested = invocation.getArgument(0);
+                    requestedSets.add(requested);
+                    return destinationIterator(requested);
+                });
             when(refMgr.getReferencesTo(any(Address.class)))
                 .thenAnswer(invocation -> {
                     Address target = invocation.getArgument(0);
@@ -250,11 +274,11 @@ public class ReferencesIntoRangeTest {
                 AddressSetView requested) {
             List<Address> targets = new ArrayList<>();
             for (Address extra : extraDestinations) {
-                if (containedIn(requested, extra)) targets.add(extra);
+                if (overDeliverDestinations || containedIn(requested, extra)) targets.add(extra);
             }
             for (Reference reference : references) {
                 Address destination = reference.getToAddress();
-                if (!containedIn(requested, destination)) continue;
+                if (!overDeliverDestinations && !containedIn(requested, destination)) continue;
                 boolean seen = false;
                 for (Address existing : targets) {
                     if (sameAddress(existing, destination)) {
@@ -560,6 +584,63 @@ public class ReferencesIntoRangeTest {
         // mock addresses compare on offset alone; source ordering has its own test.
         Collections.sort(sources);
         assertEquals(Arrays.asList("SND_PLAYER::9695", "ram:a884"), sources);
+    }
+
+    @Test
+    public void inRangeRejectsTheWrongSpaceEvenWhenTheSourceOverDelivers() {
+        // Kills the mutant the two tests above do not: delete the space comparison from
+        // inRange and this fails, because the iterator is deliberately handing back both
+        // occupants' destinations and inRange is the only thing left to separate them.
+        AddressSpace player = overlaySpace("SND_PLAYER");
+        XrefCallGraphService service =
+            bothOccupants(player).withOverDeliveringDestinations().build();
+
+        Map<String, Object> body =
+            body(service.getReferencesIntoRange("9680", "98ff", 2000, ""));
+        assertEquals("overlay destinations must not leak into a RAM query",
+            2, body.get("count"));
+        for (Map<String, Object> row : rows(service.getReferencesIntoRange(
+                "9680", "98ff", 2000, ""))) {
+            assertEquals("ram:9700", row.get("to"));
+        }
+    }
+
+    @Test
+    public void inRangeRejectsOffsetsOutsideTheRangeEvenWhenTheSourceOverDelivers() {
+        // The offset half of the same guarantee. $9700 is in range, $a884 is not.
+        XrefCallGraphService service = new Fixture()
+            .withOverDeliveringDestinations()
+            .withRefs(ref(ramAddr(0x0453), ramAddr(0x9700),
+                          RefType.UNCONDITIONAL_CALL, SourceType.DEFAULT, 0),
+                      ref(ramAddr(0x0456), ramAddr(0xa884),
+                          RefType.UNCONDITIONAL_CALL, SourceType.DEFAULT, 0))
+            .build();
+
+        Map<String, Object> body =
+            body(service.getReferencesIntoRange("9680", "98ff", 2000, ""));
+        assertEquals(1, body.get("count"));
+        // Bare, not "ram:9700": one physical space and no overlay, so nothing is qualified.
+        assertEquals("9700", rows(service.getReferencesIntoRange(
+            "9680", "98ff", 2000, "")).get(0).get("to"));
+    }
+
+    @Test
+    public void theRangeHandedToTheIteratorIsExactlyTheQueriedSpaceAndBounds() {
+        // What the endpoint actually controls. A faithful iterator does the filtering, so
+        // asking for the wrong space or the wrong bounds is the failure mode that would
+        // silently return another occupant's references on real Ghidra data.
+        AddressSpace player = overlaySpace("SND_PLAYER");
+        Fixture fixture = bothOccupants(player);
+        XrefCallGraphService service = fixture.build();
+
+        service.getReferencesIntoRange("SND_PLAYER:9680", "SND_PLAYER:98ff", 2000, "");
+
+        assertEquals(1, fixture.requestedSets.size());
+        AddressSetView requested = fixture.requestedSets.get(0);
+        assertEquals("SND_PLAYER",
+            requested.getMinAddress().getAddressSpace().getName());
+        assertEquals(0x9680L, requested.getMinAddress().getOffset());
+        assertEquals(0x98ffL, requested.getMaxAddress().getOffset());
     }
 
     // ------------------------------------------------------- range echo
