@@ -6,6 +6,10 @@ Complete version history for the GhidraMCP-next project.
 
 ## Unreleased
 
+### Added
+
+- Added `tools/release`, replacing the retired CI release job. `prepare --major|--minor|--patch` writes the version, rolls the changelog, runs the full gate set against that release candidate, builds, then commits, records a manifest and tags — in that order, so a gate sees the mutation it exists to catch. `publish` then creates the GitHub release from the pushed tag. Two phases because `gh release create` needs its target commit on the remote, and the script deliberately does not push: you push between them. A failed release restores the working tree, the index and the branch ref, so it is a no-op rather than a mess to unpick. Every `gh` call is pinned with `--repo` derived from `origin`, because `gh` otherwise resolves through `upstream` in this repository — a different project entirely. `publish` verifies the peeled remote tag points at the released commit and that each artifact still hashes to what `prepare` recorded, so an artifact rebuilt from another commit cannot be published under the same version.
+
 ### Changed
 
 - Versioning moves from build timestamps to semantic versions, starting at `0.99.0`. The extension zip is now `GhidraMCP-next-<version>.zip`, `app.version` and `Plugin-Version` carry the project version, and `extension.properties` gains `pluginVersion` alongside the `version` field Ghidra owns and gates installation on. `build.timestamp` and `build.number` remain real build timestamps: they are surfaced through the bridge handshake, and a field named `build_timestamp` holding a semantic version would lie. The bridge wheel now takes the same version from `pom.xml` rather than deriving its own PEP 440 timestamp, so one release carries one version — and that also removes a latent defect, since PEP 440 strips leading zeros from release segments and a bridge built between 00:00 and 09:59 UTC produced a version its own validation then rejected.
