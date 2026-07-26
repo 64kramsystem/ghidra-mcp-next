@@ -1,6 +1,7 @@
 package com.xebyte.core;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
@@ -39,7 +40,12 @@ public class VersionPayloadTest {
         assertEquals("headless", headless.get("mode").getAsString());
         assertEquals(17, gui.get("endpoint_count").getAsInt());
         assertEquals(19, headless.get("endpoint_count").getAsInt());
-        assertEquals(
+        // plugin_version is the semantic version; build_timestamp is the build
+        // time. They were identical while both came from release.timestamp, and
+        // asserting that again would re-couple two deliberately separate facts.
+        assertTrue("plugin_version must be semantic",
+            gui.get("plugin_version").getAsString().matches("\\d+\\.\\d+\\.\\d+"));
+        assertNotEquals(
             gui.get("build_timestamp").getAsString(),
             gui.get("plugin_version").getAsString());
         assertEquals(
