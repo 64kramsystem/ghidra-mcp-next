@@ -1660,7 +1660,7 @@
         "limit",
         "program"
       ],
-      "description": "List every recorded reference whose DESTINATION falls in [start, end] (inclusive), as a flat list ordered by source address. Answers \"what touches this address span\" in one call — the recurring query on overlay/banked-memory targets. Returns RECORDED REFERENCES ONLY: untyped bytes that happen to encode an in-range address produce no Reference and will not appear, so an exhaustive sweep also needs an instruction-decoding pass. Plain hex resolves in the default physical space; `resolved_range` echoes what was queried and `overlapping_spaces` lists other spaces occupying those offsets."
+      "description": "List every recorded reference whose DESTINATION falls in [start, end] (inclusive), as a flat list ordered by source address — by (space, offset), so on a multi-space program sources group by space rather than forming one monotonic hex sequence. Answers \"what touches this address span\" in one call — the recurring query on overlay/banked-memory targets. Returns RECORDED REFERENCES ONLY, echoed as `scope`: the result is complete for what Ghidra's reference database currently holds and says nothing beyond that. Bytes that encode an in-range address without a recorded reference never appear — untyped pointer tables, computed targets, operands the analyzer left unresolved. No single follow-up pass closes that gap: decoding instructions finds missed control flow but not untyped data pointers, so treat a wider sweep as raising confidence, not as proving exhaustiveness. Plain hex resolves in the default physical space; `resolved_range` echoes what was queried and `overlapping_spaces` lists other spaces occupying those offsets."
     },
     {
       "path": "/get_struct_layout",
