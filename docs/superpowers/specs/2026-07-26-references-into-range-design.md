@@ -495,11 +495,15 @@ A physical query for `RAM:9680`–`RAM:98ff` returned **exactly seven** referenc
 
 The worked example above gives `"ram:0733"`, `"ram:9680 - ram:98ff"`, `["ram"]` and `"STA $9700,Y"`. The endpoint emits `RAM:0733`, `RAM:9680 - RAM:98ff`, `["RAM"]` and `STA 0x9700,Y` on that program. Address rendering follows `Address.toString`, which uses the space name as the program declares it — the case is the program's, not a normalisation this endpoint applies. Operands follow the language module: Ghidra's 6502 renders `0x9700`, not the `$9700` a hand-written listing would use. Treat the shapes above as illustrative and these as the literals.
 
-### Added: `from_symbol_relation`
+### Added: `from_symbol_relation`, and separate names for proximity
 
 The three-rule precedence for `from_symbol` was specified but the result was not distinguishable from outside. Rule 3 walks back "no further than the containing memory block", and on a program laid out as one 53 KiB RAM block that bound never bites: the live run produced `PART_FILENAME+461` and `PART_FILENAME+475` for SID-player code, attributing it to a five-byte disk-loader filename buffer, and `SND_VOICE3_CMD_TABLE+131` for an address 103 bytes past a 28-byte table. Those are indistinguishable from the correct `SND_VOICE1_CMD_TABLE+4` by name and offset alone.
 
-Every row carrying `from_symbol` now also carries `from_symbol_relation`: `at` for rule 1, `containing` for rule 2, `preceding` for rule 3. `at` and `containing` mean the offset is an offset *into* the named thing. `preceding` means it is only a distance back to the nearest label, and a caller must not read it as containment. The field is omitted exactly when `from_symbol` is.
+Every row now carries `from_symbol_relation`: `at` for rule 1, `containing` for rule 2, `preceding` for rule 3.
+
+A qualifier alone was not enough. A caller that keeps reading `from_symbol` and `from_symbol_offset` and ignores the rest can still print `PART_FILENAME+475`, and agent callers cherry-pick fields routinely. So containment and proximity have **different field names**: `from_symbol` with `from_symbol_offset` is emitted only for `at` and `containing`, where the offset really indexes into the named thing, and the rule-3 guess is `nearest_preceding_symbol` with `nearest_preceding_distance`. A caller has to ask for the weaker thing by name.
+
+This matters on every row of a labels-only program, not just the pathological ones: with zero Ghidra functions there is no rule-2 match, so the live sweep returned `preceding` for all seven of its rows.
 
 Deliberately not done: pruning a preceding symbol once the walk passes the end of its code unit. That would drop the useful cases along with the misleading ones — a label on code is a 1–3 byte instruction, so `SND_V1_FREQ_PULSE_STEP+166` would vanish too. Naming the relation keeps the information and removes the ambiguity.
 
@@ -513,7 +517,9 @@ The section "Tool description must state the limit of the query" claimed the two
 
 ### Added: symbol-resolved operand rendering
 
-`from_instruction` came from `CodeUnit.toString()`, which renders an operand as a bare number even where a symbol exists for its target: `JSR 0x9695` where a listing shows `JSR SND_PLAYER::SND_TICK`. On this endpoint that is the difference between a row that answers "which occupant does this site mean" and one that restates the bytes. It now goes through the same `CodeUnitFormat` configuration `CompleteListingWriter` uses, with `ShowBlockName.NON_LOCAL` to keep the overlay qualifier on the operand.
+`from_instruction` came from `CodeUnit.toString()`, which renders an operand as a bare number even where a symbol exists for its target. On this endpoint that is the difference between a row that answers "which occupant does this site mean" and one that restates the bytes. It now goes through the same `CodeUnitFormat` configuration `CompleteListingWriter` uses, with `ShowBlockName.NON_LOCAL` to keep the overlay qualifier on the operand.
+
+Two corrections, both from deploying the build and querying the real program rather than reading the code. First, the obvious call — `CodeUnitFormat.getRepresentationString(CodeUnit)` — does **not** resolve an operand across address spaces: `RAM:$9910 JMP $97A9` into the overlay came back as a bare `JMP 97a9`, no symbol and not even an `0x`, which is worse than the `toString()` being replaced. Rendering **operand by operand**, exactly as the full-listing writer does, yields `JMP SND_PLAYER:SND_V1_STREAM_ADVANCE3`. Second, the operand resolves through the **primary** reference, and four sites in the target program had non-primary cross-space references, so they rendered as bare offsets whatever the formatter did. That was a defect in the program, not in this endpoint, and it masked the fix on the first site tried.
 
 For a reference recorded from the interior of an aggregate — a dispatch-table entry, the usual case for a jump table — the whole unit rendered as just `dw[15]`, naming the array and none of its slots. The primitive at `from` is rendered instead.
 
