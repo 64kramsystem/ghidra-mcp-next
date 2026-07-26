@@ -1,22 +1,62 @@
 # Releases
 
-Releases are automatic timestamp snapshots, not semantic-version milestones.
-After all tests pass, `.github/workflows/tests.yml` publishes a release-worthy
-push to `main`. A manual dispatch from `main` forces publication.
+Releases are semantic-version milestones cut locally by the maintainer. One
+command does all of it:
 
-Release names use `GhidraMCP-next <UTC timestamp>` and tags use
-`build-<UTC timestamp>-<12-character commit>`. Each release contains the tested
-Ghidra extension ZIP, Python wheel, Python source distribution,
-`release-metadata.json`, and `SHA256SUMS`.
+```bash
+tools/release <major|minor|patch>
+```
 
-The extension artifact and server identify themselves with the release build
-timestamp. The bridge has an independent PEP 440 timestamp derived
-automatically from the latest commit that changed bridge or bridge-packaging
-inputs, so extension-only changes do not alter the bridge version.
+CI does not release. `.github/workflows/tests.yml` runs the gates and uploads
+run artifacts; it creates no tag and publishes nothing. Do not hand-roll a
+version bump, a tag, or a `gh release`.
 
-Add user-visible changes under `Unreleased` in
-[`../../CHANGELOG.md`](../../CHANGELOG.md). After publication, the workflow
-moves those entries under the timestamp release heading and pushes the
-changelog update as `github-actions[bot]`.
+## What the command does
 
-No manual release preparation, version selection, or release tag is required.
+In order: refuse unless the checkout is on `main`, clean, and exactly in sync
+with `origin`; write the version; roll the changelog; run the full gate set
+against that release candidate; build and inspect the artifacts; commit; tag;
+push the branch and the tag; publish the GitHub release.
+
+The order is deliberate. Everything fallible happens *before* the push, because
+the push is a one-way door: after it the tag is public and nothing here can
+retract it. Until then a failure restores the working tree, the index and the
+branch ref, so a failed release is a no-op rather than a mess to unpick.
+
+If the push succeeds but publishing fails, re-run the same command. It sees HEAD
+already tagged and that tag already on `origin`, skips to publishing, and says
+so — it does not bump the version again.
+
+## Version identity
+
+The version lives in `pom.xml`, which is the single source of truth. The Ghidra
+extension and the Python bridge are built from one commit and released together
+carrying that one version: extension identity is `${project.version}`, and
+`tools/bridge_version.py` derives the bridge version from the same pom. The
+`release.timestamp` property is build metadata only (`build.timestamp` and
+`build.number` in `version.properties`), never release identity.
+
+Each release carries the extension ZIP, the Python wheel and source
+distribution, plus `release-manifest.json` and `SHA256SUMS`. Publishing verifies
+that the peeled remote tag points at the released commit and that every artifact
+still hashes to what the build produced, so an artifact rebuilt from another
+commit cannot be published under the same version. Releases are a record here —
+the extension is built locally by `update_ghidra` — so they are not marked
+`latest`.
+
+## Changelog
+
+Add user-visible changes under `## Unreleased` in
+[`../../CHANGELOG.md`](../../CHANGELOG.md). The command retitles that heading as
+`## X.Y.Z`, inserts a fresh empty `## Unreleased` above it, and refuses to
+release when `Unreleased` is empty.
+
+Sections titled `## GhidraMCP-next <timestamp>` are published history from the
+retired CI job. New releases are plain semver.
+
+## Do not test the release script
+
+No unit tests, no fixtures, no mutation checks, no CI assertions about
+`tools/release`. It is verified by running it and seeing what happens; a test
+suite around it has repeatedly cost more than it caught. If a release breaks,
+fix the script. This is a standing maintainer instruction, not an oversight.

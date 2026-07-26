@@ -2,7 +2,7 @@
 
 | File | Purpose |
 | --- | --- |
-| `tests.yml` | Pull-request and push gates for Python, Java/Maven, catalog, packaging, and documentation contracts; release-worthy green `main` pushes also publish timestamp builds. |
+| `tests.yml` | Pull-request and push gates for Python, Java/Maven, catalog, packaging, and documentation contracts. Gates only: it publishes nothing. |
 
 ## Pull requests
 
@@ -16,23 +16,18 @@ python -m tools.setup build
 mvn clean package assembly:single -DskipTests
 ```
 
-## Timestamp builds
+## No release automation
 
-A green, release-worthy push to `main` publishes the extension ZIP, Python
-wheel and source distribution from that exact workflow run. Release names use
-`GhidraMCP-next <UTC timestamp>` and tags use
-`build-<UTC timestamp>-<12-character commit>`.
+CI does not release. It has no `contents: write`, creates no tag, and calls no
+`gh release`. Releasing is a local command — see
+[`../../docs/releases/README.md`](../../docs/releases/README.md).
 
-The workflow examines the complete push range and skips publication when no
-distributed plugin or bridge input changed. Manual dispatches from `main`
-publish explicitly. Release creation is serialized without canceling an
-in-flight publication, and only that job receives `contents: write`.
-
-Each timestamp release includes `release-metadata.json` and `SHA256SUMS` with
-the Ghidra version, build timestamp, commit, sizes, and artifact hashes. After
-publication, the workflow moves the `Unreleased` changelog entries under the
-timestamp release heading and pushes that changelog-only commit as
-`github-actions[bot]`.
+What the workflow does upload, as ordinary run artifacts for inspection rather
+than as published downloads, is `java-test-results` (surefire reports),
+`jacoco-coverage-report` (an offline-tier baseline, not a gate), and
+`GhidraMCP-next-artifact` (the packaged extension ZIP, kept here so the build
+output stays available without a second workflow re-downloading Ghidra and
+rebuilding).
 
 ## Live regression
 
