@@ -22,7 +22,7 @@ import java.util.Set;
 /**
  * Lock in parity between the runtime annotation scan and
  * {@code tests/endpoints.json} — the authoritative catalog that
- * {@code CLAUDE.md} points at as the public tool inventory.
+ * {@code AGENTS.md} points at as the public tool inventory.
  *
  * <p>When a developer adds a new {@code @McpTool} but forgets to update
  * {@code tests/endpoints.json} (or vice versa) the catalog silently drifts.
