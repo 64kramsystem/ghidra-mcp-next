@@ -1596,6 +1596,11 @@ public class XrefCallGraphService {
             null, true, true, true, true, true, true, true, simplifier));
     }
 
+    /** How one operand of a code unit is rendered. Seam so {@link #render} is testable. */
+    interface OperandRenderer {
+        String render(CodeUnit unit, int operandIndex);
+    }
+
     /**
      * The source code unit as a listing would show it, with operands resolved to symbols.
      *
@@ -1626,10 +1631,6 @@ public class XrefCallGraphService {
      * {@code CodeUnitFormat} is a real defect and silently degrading a classification row would
      * hide it.</p>
      */
-    /** How one operand of a code unit is rendered. Seam so {@link #render} is testable. */
-    interface OperandRenderer {
-        String render(CodeUnit unit, int operandIndex);
-    }
 
     static String render(OperandRenderer operands, CodeUnit unit, Address from) {
         CodeUnit target = unit;
