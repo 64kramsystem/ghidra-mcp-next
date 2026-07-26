@@ -26,6 +26,24 @@ Public community actions remain read-only by default. Do not modify, close, comm
 or merge another contributor's issue or pull request without the maintainer's explicit
 per-action authorization. Draft text for review when asked.
 
+## Scope and compatibility
+
+Do not weigh release cost when scoping work. "That needs a release" is not an argument
+for cutting a tool, deferring an endpoint, or leaving a capability as a throwaway script
+outside the repository. Releasing is one command. Decide what to build on usefulness and
+correctness alone.
+
+Do not preserve compatibility for its own sake. Breaking changes to endpoint names,
+parameter names, and response shapes are acceptable whenever they produce a better
+contract. Do not add a parallel legacy response, a deprecation shim, a compatibility
+flag, or a second versioned endpoint in order to avoid a break: change the contract,
+regenerate `tests/endpoints.json`, and record the change in `CHANGELOG.md`.
+
+Breaking changes ride a **minor** version bump (`tools/release minor`). A major bump is
+not reserved for them.
+
+This is a standing instruction from the maintainer, not an oversight to correct.
+
 ## Conventions
 
 - Keep GUI and headless endpoint schemas in parity.
