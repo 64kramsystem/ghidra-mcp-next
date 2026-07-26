@@ -1,5 +1,6 @@
 package com.xebyte.core;
 
+import ghidra.app.util.template.TemplateSimplifier;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressIterator;
 import ghidra.program.model.address.AddressSet;
@@ -1351,14 +1352,20 @@ public class XrefCallGraphService {
 
     @McpTool(path = "/get_references_into_range",
              description = "List every recorded reference whose DESTINATION falls in [start, end] "
-                         + "(inclusive), as a flat list ordered by source address. Answers "
-                         + "\"what touches this address span\" in one call — the recurring query on "
-                         + "overlay/banked-memory targets. Returns RECORDED REFERENCES ONLY: untyped "
-                         + "bytes that happen to encode an in-range address produce no Reference and "
-                         + "will not appear, so an exhaustive sweep also needs an instruction-decoding "
-                         + "pass. Plain hex resolves in the default physical space; `resolved_range` "
-                         + "echoes what was queried and `overlapping_spaces` lists other spaces "
-                         + "occupying those offsets.",
+                         + "(inclusive), as a flat list ordered by source address — by (space, "
+                         + "offset), so on a multi-space program sources group by space rather than "
+                         + "forming one monotonic hex sequence. Answers \"what touches this address "
+                         + "span\" in one call — the recurring query on overlay/banked-memory "
+                         + "targets. Returns RECORDED REFERENCES ONLY, echoed as `scope`: the result "
+                         + "is complete for what Ghidra's reference database currently holds and "
+                         + "says nothing beyond that. Bytes that encode an in-range address without "
+                         + "a recorded reference never appear — untyped pointer tables, computed "
+                         + "targets, operands the analyzer left unresolved. No single follow-up pass "
+                         + "closes that gap: decoding instructions finds missed control flow but not "
+                         + "untyped data pointers, so treat a wider sweep as raising confidence, not "
+                         + "as proving exhaustiveness. Plain hex resolves in the default physical "
+                         + "space; `resolved_range` echoes what was queried and `overlapping_spaces` "
+                         + "lists other spaces occupying those offsets.",
              category = "xref")
     public Response getReferencesIntoRange(
             @Param(value = "start", paramType = "address",
@@ -1444,15 +1451,24 @@ public class XrefCallGraphService {
             boolean qualify = ServiceUtils.getOverlaySpaceCount(program) > 0
                 || ServiceUtils.getPhysicalSpaceCount(program) > 1;
 
+            // One format per request, not per row: operands must resolve to symbols,
+            // including overlay-qualified ones. See operandAwareFormat.
+            CodeUnitFormat format = operandAwareFormat();
+            OperandRenderer operands = format::getOperandRepresentationString;
             List<Map<String, Object>> rows = new ArrayList<>(page.size());
             for (Reference reference : page) {
-                rows.add(describeReference(program, reference, qualify));
+                rows.add(describeReference(program, reference, qualify, operands));
             }
 
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("resolved_range", start.toString(true) + " - " + end.toString(true));
             result.put("overlapping_spaces",
                 overlappingSpaces(program, startSpace, startOffset, endOffset));
+            // The completeness boundary travels with the data. A caller reading a
+            // stored result, or a transcript of one, no longer has the tool
+            // description in view, and "count: 7" reads as "there are 7" unless
+            // the response itself says what was counted.
+            result.put("scope", "recorded_references_only");
             result.put("count", total);
             result.put("truncated", truncated);
             result.put("references", rows);
@@ -1504,35 +1520,45 @@ public class XrefCallGraphService {
 
     /** One flat row per reference. */
     private static Map<String, Object> describeReference(Program program, Reference reference,
-                                                         boolean qualify) {
+                                                         boolean qualify, OperandRenderer operands) {
         Address from = reference.getFromAddress();
         Address to = reference.getToAddress();
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("from", format(from, qualify));
 
+        // Containment and proximity get DIFFERENT FIELD NAMES, not one field plus a qualifier.
+        // A caller that reads from_symbol and from_symbol_offset and ignores everything else
+        // must not be able to print "PART_FILENAME+475" for code 475 bytes past a five-byte
+        // buffer. from_symbol is emitted only when the offset really indexes into the named
+        // thing; the nearest-label guess is a separate pair a caller has to ask for by name.
+        // On a labels-only program with zero functions this matters on every single row: the
+        // sweep this endpoint was built for produced `preceding` for all 7 of them.
         Symbol exact = program.getSymbolTable().getPrimarySymbol(from);
         Function containing = program.getFunctionManager().getFunctionContaining(from);
         if (exact != null) {
             row.put("from_symbol", exact.getName());
             row.put("from_symbol_offset", BigInteger.ZERO);
+            row.put("from_symbol_relation", "at");
         } else if (containing != null && containing.getEntryPoint() != null) {
             row.put("from_symbol", containing.getName());
             row.put("from_symbol_offset", delta(containing.getEntryPoint(), from));
+            row.put("from_symbol_relation", "containing");
         } else {
             Symbol preceding = nearestPrecedingSymbol(program, from);
             if (preceding != null) {
-                row.put("from_symbol", preceding.getName());
-                row.put("from_symbol_offset", delta(preceding.getAddress(), from));
+                row.put("nearest_preceding_symbol", preceding.getName());
+                row.put("nearest_preceding_distance", delta(preceding.getAddress(), from));
+                row.put("from_symbol_relation", "preceding");
             }
         }
 
         CodeUnit unit = program.getListing().getCodeUnitContaining(from);
         if (unit instanceof Instruction) {
             row.put("from_kind", "instruction");
-            row.put("from_instruction", unit.toString());
+            row.put("from_instruction", render(operands, unit, from));
         } else if (unit != null) {
             row.put("from_kind", "data");
-            row.put("from_instruction", unit.toString());
+            row.put("from_instruction", render(operands, unit, from));
         } else {
             // References can be recorded from mapped-but-undefined addresses;
             // rendering must be absent rather than an empty string.
@@ -1547,8 +1573,110 @@ public class XrefCallGraphService {
     }
 
     /**
+     * The same {@link CodeUnitFormat} configuration Ghidra's own exporter and
+     * {@code CompleteListingWriter} use.
+     *
+     * <p>{@code CodeUnit.toString()} and {@code getDefaultOperandRepresentation} render an
+     * operand as a bare number even where a symbol exists for its target, so a call into a
+     * recovered overlay reads as {@code JSR 0x9695} rather than
+     * {@code JSR SND_PLAYER::SND_TICK}. On this endpoint that is the difference between a row
+     * that answers "which occupant does this site mean" and one that restates the bytes.
+     * {@code ShowBlockName.NON_LOCAL} is what keeps the overlay qualifier on the operand.</p>
+     *
+     * <p>The simplifier must be non-null and disabled, exactly as Ghidra's exporter builds it:
+     * {@code CodeUnitFormatOptions.simplifyTemplate} dereferences it unconditionally, so passing
+     * null throws as soon as an operand resolves to a symbol — the common case here.</p>
+     */
+    private static CodeUnitFormat operandAwareFormat() {
+        TemplateSimplifier simplifier = new TemplateSimplifier();
+        simplifier.setEnabled(false);
+        return new CodeUnitFormat(new CodeUnitFormatOptions(
+            CodeUnitFormatOptions.ShowBlockName.NON_LOCAL,
+            CodeUnitFormatOptions.ShowNamespace.NON_LOCAL,
+            null, true, true, true, true, true, true, true, simplifier));
+    }
+
+    /**
+     * The source code unit as a listing would show it, with operands resolved to symbols.
+     *
+     * <p>Assembled mnemonic-then-operands, one operand at a time, exactly as
+     * {@code CompleteListingWriter} does it — and deliberately NOT through
+     * {@code CodeUnitFormat.getRepresentationString(CodeUnit)}. That overload does not resolve an
+     * operand whose reference target lies in another address space. Measured on the program this
+     * endpoint was built for: {@code RAM:$9910 JMP $97A9} into the SND_PLAYER overlay rendered as
+     * {@code "JMP 0x97a9"} through the {@code toString()} this replaced, and as a bare
+     * {@code "JMP 97a9"} through that overload — losing precisely the cross-space symbol the row
+     * exists to show. The per-operand call renders
+     * {@code "JMP SND_PLAYER:SND_V1_STREAM_ADVANCE3"}.</p>
+     *
+     * <p>A caveat learned while verifying that: the operand resolves through the PRIMARY
+     * reference. A site whose cross-space reference was added while the operand still carried its
+     * original one is left non-primary, and renders as a bare offset however this method behaves.
+     * That is a defect in the program's references, not in the rendering.</p>
+     *
+     * <p>For a reference recorded from the interior of an aggregate — a dispatch table entry, the
+     * usual case for a jump table — the whole unit renders as just {@code dw[15]}, naming the
+     * array and none of its slots. The primitive at {@code from} is rendered instead, so the row
+     * carries the entry that actually holds the in-range address.</p>
+     *
+     * <p>A null mnemonic falls back to {@code toString()}. That guard is narrow on purpose and
+     * should not be read as protection against a malformed unit: for a real {@code DataDB} the
+     * fallback itself calls {@code getMnemonicString()}, so it is no safer than the thing it
+     * replaces. Formatter exceptions are deliberately not caught — a throw from
+     * {@code CodeUnitFormat} is a real defect and silently degrading a classification row would
+     * hide it.</p>
+     */
+    /** How one operand of a code unit is rendered. Seam so {@link #render} is testable. */
+    interface OperandRenderer {
+        String render(CodeUnit unit, int operandIndex);
+    }
+
+    static String render(OperandRenderer operands, CodeUnit unit, Address from) {
+        CodeUnit target = unit;
+        Address unitStart = unit.getMinAddress();
+        if (unit instanceof Data && unitStart != null && !from.equals(unitStart)) {
+            BigInteger offset = delta(unitStart, from);
+            // Non-negative and inside a positive signed int. intValueExact would throw on the
+            // 32-bit boundary rather than fall back, and an aggregate that large is not worth
+            // failing a whole request over.
+            if (offset.signum() >= 0 && offset.bitLength() < 32) {
+                Data primitive = ((Data) unit).getPrimitiveAt(offset.intValue());
+                if (primitive != null) target = primitive;
+            }
+        }
+        String mnemonic = target.getMnemonicString();
+        if (mnemonic == null) return target.toString();
+
+        StringBuilder rendered = new StringBuilder(mnemonic);
+        if (target instanceof Instruction) {
+            Instruction instruction = (Instruction) target;
+            for (int index = 0; index < instruction.getNumOperands(); index++) {
+                rendered.append(index == 0 ? " " : ",");
+                rendered.append(operands.render(instruction, index));
+            }
+        } else if (target instanceof Data) {
+            String value = operands.render(target, 0);
+            if (value == null || value.isBlank()) {
+                value = ((Data) target).getDefaultValueRepresentation();
+            }
+            if (value != null && !value.isBlank()) rendered.append(' ').append(value);
+        }
+
+        String text = rendered.toString().trim();
+        return text.isBlank() ? target.toString() : text;
+    }
+
+    /**
      * Nearest preceding primary label or function entry, never crossing out of the
      * source's own memory block. Plate comments are not symbols and are not consulted.
+     *
+     * <p>The block boundary is the only bound, and on a program laid out as one large block it
+     * does not bite: a 53 KiB RAM block will happily report a label 475 bytes back, which is why
+     * every row says which of the three rules matched. {@code from_symbol_relation} is
+     * {@code at} or {@code containing} when the offset is an offset *into* the named thing, and
+     * {@code preceding} when it is only a distance to the nearest label behind it. A caller must
+     * not read a {@code preceding} row as containment; the two are indistinguishable from the
+     * name and offset alone.</p>
      */
     private static Symbol nearestPrecedingSymbol(Program program, Address from) {
         MemoryBlock block = program.getMemory().getBlock(from);
