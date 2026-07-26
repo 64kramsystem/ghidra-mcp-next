@@ -24,6 +24,23 @@ This makes the top of `CHANGELOG.md` a standing conflict point. To avoid it:
 - Sanity check: every bullet under a timestamped section must already be in that published
   release. If you wrote it after that release was cut, it belongs under `Unreleased`.
 
+## Shell scripts
+
+- Call `getopt` unqualified and let `$PATH` resolve it. On this machine that is GNU
+  `getopt` (util-linux, from Homebrew `gnu-getopt`), which sits on `$PATH` ahead of
+  `/usr/bin/getopt`.
+- Never hardcode `/usr/bin/getopt`. That is the ancient BSD build: it has no long
+  options, no `--`-terminated output, and mangles arguments containing whitespace.
+- So long options work. Do not hand-roll a `while`/`case` argument parser or drop to
+  short-only flags on the assumption that macOS `getopt` is too old — that assumption
+  is what this section exists to correct.
+- Use the standard GNU invocation and quote the result:
+
+  ```bash
+  args=$(getopt -o hv --long help,verbose -n "$0" -- "$@") || exit 1
+  eval set -- "$args"
+  ```
+
 ## Verification
 
 - Java: `mvn test`
