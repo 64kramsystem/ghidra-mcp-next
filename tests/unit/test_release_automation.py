@@ -283,9 +283,13 @@ def test_classify_cli_reads_null_terminated_git_paths():
     assert result.returncode == 0
     assert result.stdout.splitlines() == [b"true"]
     assert result.stderr == b""
+def test_workflow_no_longer_publishes_releases():
+    """CI must not publish: releasing moved to tools/release, run locally.
 
-
-def test_timestamp_release_workflow_contract():
+    Replaces the old automatic-release contract test. Asserting the job's
+    absence is the point -- a job reintroduced by a merge would silently
+    resurrect the CHANGELOG-rewriting push that fought local work.
+    """
     repo_root = Path(__file__).resolve().parents[2]
     workflow_path = repo_root / ".github" / "workflows" / "tests.yml"
     workflow_text = workflow_path.read_text(encoding="utf-8")
@@ -295,39 +299,17 @@ def test_timestamp_release_workflow_contract():
     assert workflow["permissions"] == {"contents": "read"}
 
     jobs = workflow["jobs"]
+    assert "automatic-release" not in jobs
+
+    # No job may hold write access: without one, nothing can create a release
+    # or push a commit, whatever its steps say.
+    assert all(
+        job.get("permissions", {}).get("contents") != "write"
+        for job in jobs.values()
+    )
+    assert "gh release create" not in workflow_text
+    assert "git push" not in workflow_text
+
     java = jobs["java-build"]
     assert "strategy" not in java
     assert set(java["outputs"]) == {"build_timestamp", "ghidra_version"}
-
-    release = jobs["automatic-release"]
-    assert release["permissions"] == {"contents": "write"}
-    assert release["needs"] == ["java-build", "build-status"]
-    assert "success()" in release["if"]
-    assert release["concurrency"] == {
-        "group": "automatic-release-${{ github.repository }}",
-        "cancel-in-progress": "false",
-    }
-    assert all(
-        job_name == "automatic-release" or job.get("permissions", {}).get("contents") != "write"
-        for job_name, job in jobs.items()
-    )
-
-    steps = {step["name"]: step for step in release["steps"]}
-    assert steps["Checkout release commit"]["with"]["fetch-depth"] == "0"
-    classifier = steps["Check whether distributed artifacts can change"]["run"]
-    assert 'git diff --name-only -z "$BEFORE" "$AFTER"' in classifier
-    assert "python -m tools.release_automation classify --null" in classifier
-    assert "github.event.before" in workflow_text
-    prepare = steps["Prepare release metadata"]["run"]
-    assert "--project-version" not in prepare
-    create = steps["Create timestamp release"]["run"]
-    assert '--title "${{ steps.prepare.outputs.name }}"' in create
-    roll = steps["Roll released changelog entries"]["run"]
-    assert "python -m tools.release_automation roll-changelog" in roll
-    assert "git push origin HEAD:main" in roll
-
-    python_steps = {step["name"]: step for step in jobs["python-tests"]["steps"] if "name" in step}
-    expected_condition = "matrix.python-version == '3.14' && success()"
-    assert python_steps["Build Python distributions"]["if"] == expected_condition
-    assert python_steps["Upload release Python distributions"]["if"] == expected_condition
-    assert python_steps["Upload release Python distributions"]["with"]["if-no-files-found"] == "error"
