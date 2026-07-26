@@ -1,4 +1,4 @@
-"""Enable ``python -m bridge_mcp_ghidra``."""
+"""Enable ``python -m ghidra_mcp_bridge``."""
 
 from .cli import main
 

@@ -16,7 +16,7 @@ multiple clients or programs share a process. Enable strict bridge routing:
 
 ```bash
 export GHIDRA_MCP_REQUIRE_PROGRAM_SELECTORS=1
-uv run bridge-mcp-ghidra
+uv run ghidra-mcp-bridge
 ```
 
 With strict routing, any scoped call that omits its selector fails before it is

@@ -24,13 +24,13 @@ class TestTransportModes(unittest.TestCase):
 
     def test_initial_state(self):
         """Transport mode should be set after module init (may auto-connect)."""
-        import bridge_mcp_ghidra as bridge
+        import ghidra_mcp_bridge as bridge
 
         self.assertIn(bridge.state._transport_mode, ("none", "uds", "tcp"))
 
     def test_do_request_raises_when_disconnected(self):
         """do_request should raise ConnectionError when no transport active."""
-        import bridge_mcp_ghidra as bridge
+        import ghidra_mcp_bridge as bridge
 
         old_mode = bridge.state._transport_mode
         bridge.state._transport_mode = "none"
@@ -46,21 +46,21 @@ class TestStaticTools(unittest.TestCase):
 
     def test_list_instances_registered(self):
         """list_instances should be available as a static tool."""
-        import bridge_mcp_ghidra as bridge
+        import ghidra_mcp_bridge as bridge
 
         tools = bridge.mcp._tool_manager._tools
         self.assertIn("list_instances", tools)
 
     def test_connect_instance_registered(self):
         """connect_instance should be available as a static tool."""
-        import bridge_mcp_ghidra as bridge
+        import ghidra_mcp_bridge as bridge
 
         tools = bridge.mcp._tool_manager._tools
         self.assertIn("connect_instance", tools)
 
     def test_list_instances_returns_json(self):
         """list_instances should return valid JSON."""
-        from bridge_mcp_ghidra import list_instances
+        from ghidra_mcp_bridge import list_instances
 
         result = list_instances()
         data = json.loads(result)
@@ -72,45 +72,45 @@ class TestToolGroupManagement(unittest.TestCase):
     """Test tool group management tools."""
 
     def test_core_profile_is_default(self):
-        import bridge_mcp_ghidra as bridge
+        import ghidra_mcp_bridge as bridge
 
         self.assertEqual(bridge.state._tool_profile.name, "core")
         self.assertTrue(bridge.state._tool_profile.lazy)
 
     def test_list_tool_groups_registered(self):
-        import bridge_mcp_ghidra as bridge
+        import ghidra_mcp_bridge as bridge
 
         tools = bridge.mcp._tool_manager._tools
         self.assertIn("list_tool_groups", tools)
 
     def test_load_tool_group_registered(self):
-        import bridge_mcp_ghidra as bridge
+        import ghidra_mcp_bridge as bridge
 
         tools = bridge.mcp._tool_manager._tools
         self.assertIn("load_tool_group", tools)
 
     def test_unload_tool_group_registered(self):
-        import bridge_mcp_ghidra as bridge
+        import ghidra_mcp_bridge as bridge
 
         tools = bridge.mcp._tool_manager._tools
         self.assertIn("unload_tool_group", tools)
 
     def test_list_tool_groups_returns_json(self):
-        from bridge_mcp_ghidra import list_tool_groups
+        from ghidra_mcp_bridge import list_tool_groups
 
         result = json.loads(list_tool_groups())
         # Either an error (no schema) or a groups list
         self.assertTrue("error" in result or "groups" in result)
 
     def test_core_groups_defined(self):
-        from bridge_mcp_ghidra import CORE_GROUPS
+        from ghidra_mcp_bridge import CORE_GROUPS
 
         self.assertIn("listing", CORE_GROUPS)
         self.assertIn("function", CORE_GROUPS)
 
     def test_unload_core_group_blocked(self):
         import asyncio
-        import bridge_mcp_ghidra as bridge
+        import ghidra_mcp_bridge as bridge
 
         previous = bridge.state._connection
         try:
@@ -133,7 +133,7 @@ class TestToolGroupManagement(unittest.TestCase):
 
     def test_load_group_with_schema(self):
         """Loading a group after register_tools_from_schema should work."""
-        from bridge_mcp_ghidra import (
+        from ghidra_mcp_bridge import (
             register_tools_from_schema,
             _load_group,
             _loaded_groups,
@@ -166,7 +166,7 @@ class TestToolGroupManagement(unittest.TestCase):
         self.assertIn("grp_beta", _loaded_groups)
 
     def test_load_group_rejects_bad_tool_without_partial_publication(self):
-        import bridge_mcp_ghidra as bridge
+        import ghidra_mcp_bridge as bridge
 
         schema = [
             {
@@ -213,7 +213,7 @@ class TestConnectInstance(unittest.TestCase):
     """Test connect_instance eager-loading behavior."""
 
     def test_connect_instance_eager_loads_all_tools_and_notifies(self):
-        import bridge_mcp_ghidra as bridge
+        import ghidra_mcp_bridge as bridge
 
         schema = {
             "count": 2,
@@ -311,19 +311,19 @@ class TestEndpointTimeouts(unittest.TestCase):
     """Test endpoint timeout configuration."""
 
     def test_all_timeouts_positive(self):
-        from bridge_mcp_ghidra import ENDPOINT_TIMEOUTS
+        from ghidra_mcp_bridge import ENDPOINT_TIMEOUTS
 
         for name, timeout in ENDPOINT_TIMEOUTS.items():
             self.assertGreater(timeout, 0, f"Timeout for {name} should be positive")
 
     def test_script_timeouts_high(self):
-        from bridge_mcp_ghidra import ENDPOINT_TIMEOUTS
+        from ghidra_mcp_bridge import ENDPOINT_TIMEOUTS
 
         self.assertGreaterEqual(ENDPOINT_TIMEOUTS.get("run_ghidra_script", 0), 600)
         self.assertGreaterEqual(ENDPOINT_TIMEOUTS.get("run_script_inline", 0), 600)
 
     def test_default_exists(self):
-        from bridge_mcp_ghidra import ENDPOINT_TIMEOUTS
+        from ghidra_mcp_bridge import ENDPOINT_TIMEOUTS
 
         self.assertIn("default", ENDPOINT_TIMEOUTS)
 
@@ -333,7 +333,7 @@ class TestSchemaFormat(unittest.TestCase):
 
     def test_register_with_all_json_types(self):
         """Schema with all JSON types should produce correct Python signatures."""
-        from bridge_mcp_ghidra import _build_tool_function
+        from ghidra_mcp_bridge import _build_tool_function
         import inspect
 
         schema = {
@@ -352,7 +352,7 @@ class TestSchemaFormat(unittest.TestCase):
 
     def test_schema_with_descriptions(self):
         """Schema properties with descriptions should not affect function building."""
-        from bridge_mcp_ghidra import _build_tool_function
+        from ghidra_mcp_bridge import _build_tool_function
 
         schema = {
             "properties": {
@@ -368,7 +368,7 @@ class TestSchemaFormat(unittest.TestCase):
 
     def test_parsed_schema_tool_names_match_capi_regex(self):
         """Every parsed MCP-visible tool name should be safe for Copilot/CAPI."""
-        from bridge_mcp_ghidra import _parse_schema
+        from ghidra_mcp_bridge import _parse_schema
 
         raw = {
             "tools": [

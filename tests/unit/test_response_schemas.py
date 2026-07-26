@@ -20,7 +20,7 @@ class TestDispatchErrorResponses(unittest.TestCase):
     """Test that dispatch functions return valid JSON error responses."""
 
     def test_get_no_connection_returns_json(self):
-        import bridge_mcp_ghidra as bridge
+        import ghidra_mcp_bridge as bridge
         old = bridge.state._transport_mode
         bridge.state._transport_mode = "none"
         try:
@@ -32,7 +32,7 @@ class TestDispatchErrorResponses(unittest.TestCase):
             bridge.state._transport_mode = old
 
     def test_post_no_connection_returns_json(self):
-        import bridge_mcp_ghidra as bridge
+        import ghidra_mcp_bridge as bridge
         old = bridge.state._transport_mode
         bridge.state._transport_mode = "none"
         try:
@@ -48,7 +48,7 @@ class TestUdsRequestFormat(unittest.TestCase):
 
     def test_uds_request_builds_path_with_params(self):
         """Verify URL query string construction."""
-        from bridge_mcp_ghidra import UnixHTTPConnection
+        from ghidra_mcp_bridge import UnixHTTPConnection
         # Just verify the class can be instantiated
         conn = UnixHTTPConnection("/tmp/nonexistent.sock", timeout=5)
         self.assertEqual(conn.socket_path, "/tmp/nonexistent.sock")
@@ -58,7 +58,7 @@ class TestSchemaJsonFormat(unittest.TestCase):
     """Test that register_tools_from_schema handles various schema formats."""
 
     def test_minimal_schema(self):
-        from bridge_mcp_ghidra import register_tools_from_schema
+        from ghidra_mcp_bridge import register_tools_from_schema
         schema = [
             {
                 "name": "schema_test_minimal",
@@ -73,7 +73,7 @@ class TestSchemaJsonFormat(unittest.TestCase):
 
     def test_schema_with_category(self):
         """Schema entries may include a category field (used by tool groups)."""
-        from bridge_mcp_ghidra import register_tools_from_schema
+        from ghidra_mcp_bridge import register_tools_from_schema
         schema = [
             {
                 "name": "schema_test_category",
@@ -89,7 +89,7 @@ class TestSchemaJsonFormat(unittest.TestCase):
 
     def test_schema_preserves_description(self):
         """Registered tool should preserve the description from schema."""
-        from bridge_mcp_ghidra import register_tools_from_schema, mcp
+        from ghidra_mcp_bridge import register_tools_from_schema, mcp
         desc = "Decompile a function and return pseudocode"
         schema = [
             {
@@ -108,7 +108,7 @@ class TestSchemaJsonFormat(unittest.TestCase):
         # batch_set_comments declares its two arrays as Object so the raw value reaches the strict
         # decoder; the scanner then infers "any" for them and there is no way to override that
         # field. Only the fragment stops the bridge from publishing both arrays as strings.
-        from bridge_mcp_ghidra import _parse_schema
+        from ghidra_mcp_bridge import _parse_schema
 
         fragment = {
             "type": "array",
@@ -150,7 +150,7 @@ class TestSchemaJsonFormat(unittest.TestCase):
         )
 
     def test_nested_region_schema_is_preserved(self):
-        from bridge_mcp_ghidra import (
+        from ghidra_mcp_bridge import (
             _parse_schema,
             mcp,
             register_tools_from_schema,
@@ -209,7 +209,7 @@ class TestSchemaJsonFormat(unittest.TestCase):
         parsed["original_name"] = "nested_region_registration_test"
         try:
             with patch(
-                "bridge_mcp_ghidra.dispatch.dispatch_post",
+                "ghidra_mcp_bridge.dispatch.dispatch_post",
                 return_value='{"committed": false}',
             ) as dispatch:
                 register_tools_from_schema([parsed])

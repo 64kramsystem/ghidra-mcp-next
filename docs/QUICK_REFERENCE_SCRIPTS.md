@@ -19,8 +19,8 @@ mvn clean package assembly:single -DskipTests
 ## Run the bridge
 
 ```bash
-uv run bridge-mcp-ghidra
-uv run bridge-mcp-ghidra --transport streamable-http --mcp-host 127.0.0.1 --mcp-port 8081
+uv run ghidra-mcp-bridge
+uv run ghidra-mcp-bridge --transport streamable-http --mcp-host 127.0.0.1 --mcp-port 8081
 ```
 
 ## Tool discovery

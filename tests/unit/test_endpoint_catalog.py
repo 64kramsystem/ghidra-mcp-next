@@ -23,7 +23,7 @@ JAVA_SRC = PROJECT_ROOT / "src" / "main" / "java" / "com" / "xebyte"
 CORE_SRC = JAVA_SRC / "core"
 ENDPOINTS_JSON = PROJECT_ROOT / "tests" / "endpoints.json"
 # The bridge is now a package split across multiple modules under python/.
-BRIDGE_PKG = PROJECT_ROOT / "python" / "bridge_mcp_ghidra"
+BRIDGE_PKG = PROJECT_ROOT / "python" / "ghidra_mcp_bridge"
 
 
 def _bridge_sources() -> list[Path]:
@@ -161,8 +161,8 @@ class TestEndpointsJson(unittest.TestCase):
             ["output_path", "start", "end", "overwrite", "program"],
         )
 
-        from bridge_mcp_ghidra import _parse_schema
-        from bridge_mcp_ghidra.registry import _build_tool_function
+        from ghidra_mcp_bridge import _parse_schema
+        from ghidra_mcp_bridge.registry import _build_tool_function
 
         tool = _parse_schema(
             {
@@ -257,8 +257,8 @@ class TestEndpointsJson(unittest.TestCase):
             ],
         )
 
-        from bridge_mcp_ghidra import _parse_schema
-        from bridge_mcp_ghidra.registry import _build_tool_function
+        from ghidra_mcp_bridge import _parse_schema
+        from ghidra_mcp_bridge.registry import _build_tool_function
 
         raw_tool = {
             "path": endpoint["path"],
@@ -339,7 +339,7 @@ class TestEndpointsJson(unittest.TestCase):
             all(ep["category"] == "analysis" for ep in endpoints.values())
         )
 
-        import bridge_mcp_ghidra as bridge
+        import ghidra_mcp_bridge as bridge
 
         raw_schema = {
             "tools": [
@@ -474,7 +474,7 @@ class TestEndpointsJson(unittest.TestCase):
             {ep["path"] for ep in data.get("endpoints", [])},
         )
 
-        import bridge_mcp_ghidra as bridge
+        import ghidra_mcp_bridge as bridge
 
         raw_schema = {
             "tools": [
@@ -570,7 +570,7 @@ class TestEndpointsJson(unittest.TestCase):
     @unittest.skipUnless(ENDPOINTS_JSON.exists(), "endpoints.json not found")
     def test_catalog_tool_names_are_capi_safe_after_bridge_parsing(self):
         """The generated endpoint catalog should produce valid exposed MCP names."""
-        from bridge_mcp_ghidra import _parse_schema
+        from ghidra_mcp_bridge import _parse_schema
 
         data = json.loads(ENDPOINTS_JSON.read_text())
         raw_schema = {
@@ -598,7 +598,7 @@ class TestBridgeIsDynamic(unittest.TestCase):
 
         TraceRMI tools are discovered dynamically from Ghidra's schema.
         """
-        import bridge_mcp_ghidra as bridge
+        import ghidra_mcp_bridge as bridge
 
         content = _bridge_source_text()
         mgmt_count = len(re.findall(r"@mcp\.tool\(\)", content))
@@ -628,7 +628,7 @@ class TestBridgeIsDynamic(unittest.TestCase):
         2500 (2026-06-26, tier 1+2 security/correctness: CORS header removal,
         IPv6 support, multi-UDS handling, emulation max_steps bounding, plugin
         lifecycle handoff) -> 2550 (2026-06-26, GHIDRA_MCP_REQUIRE_PROGRAM_SELECTORS
-        strict mode, #339). Split into the python/bridge_mcp_ghidra package on
+        strict mode, #339). Split into the python/ghidra_mcp_bridge package on
         2026-06-19 (carrying the accumulated history above forward into the new
         module layout); now enforced per-module.
         """

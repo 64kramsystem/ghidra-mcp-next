@@ -110,7 +110,7 @@ def test_trace_rmi_workflow_endpoints_are_cataloged():
 
 
 def test_copy_memory_tool_keeps_exact_public_name():
-    from bridge_mcp_ghidra import _parse_schema
+    from ghidra_mcp_bridge import _parse_schema
 
     schema = _parse_schema({"tools": [{
         "path": "/copy_debugger_memory_to_program",

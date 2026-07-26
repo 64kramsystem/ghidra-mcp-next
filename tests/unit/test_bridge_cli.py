@@ -1,4 +1,4 @@
-"""Tests for the bridge CLI entry point (python/bridge_mcp_ghidra/cli.py).
+"""Tests for the bridge CLI entry point (python/ghidra_mcp_bridge/cli.py).
 
 cli.py was at 14% coverage: argument parsing, lazy-mode/default-group wiring,
 and the DNS-rebinding-protection matrix were exercised only manually. These
@@ -14,8 +14,8 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-from bridge_mcp_ghidra import cli, state  # noqa: E402
-from bridge_mcp_ghidra.server import mcp  # noqa: E402
+from ghidra_mcp_bridge import cli, state  # noqa: E402
+from ghidra_mcp_bridge.server import mcp  # noqa: E402
 
 
 class _CliHarness(unittest.TestCase):
@@ -36,7 +36,7 @@ class _CliHarness(unittest.TestCase):
     def run_main(self, *argv, env=None):
         """Invoke cli.main() with the given argv; returns the mcp.run mock."""
         patches = [
-            patch.object(sys, "argv", ["bridge-mcp-ghidra", *argv]),
+            patch.object(sys, "argv", ["ghidra-mcp-bridge", *argv]),
             patch.object(cli, "_auto_connect"),
             patch.object(mcp, "run"),
         ]

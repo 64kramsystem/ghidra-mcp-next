@@ -2173,7 +2173,7 @@ def build_bridge_wheel(repo_root: Path, *, dry_run: bool = False) -> Path | None
     """Build the bridge wheel with ``uv build`` and return its path.
 
     The Python bridge ships as a wheel (``ghidra_mcp_bridge-*.whl``) rather than
-    a loose ``bridge_mcp_ghidra.py`` script. Returns the newest built wheel, or
+    a loose ``ghidra_mcp_bridge.py`` script. Returns the newest built wheel, or
     None on a dry run / when no wheel is produced.
     """
     from .requirements import ensure_uv_available

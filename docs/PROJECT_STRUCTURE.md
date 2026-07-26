@@ -11,7 +11,7 @@ ghidra-mcp/
 │   ├── core/                      # analysis, program, project, and utility services
 │   └── headless/                  # local headless launcher and endpoint handler
 ├── src/test/java/com/xebyte/      # offline contracts and Ghidra-aware tests
-├── python/bridge_mcp_ghidra/      # MCP bridge, schema normalization, transports
+├── python/ghidra_mcp_bridge/      # MCP bridge, schema normalization, transports
 ├── tools/setup/                   # setup/build/deploy/version CLI
 ├── ghidra_scripts/                # exact reviewed generic-script allowlist
 ├── tests/
@@ -47,7 +47,7 @@ symbol detection is read-only and used only for filtering/audit signals.
 
 ## Python ownership
 
-The `bridge_mcp_ghidra` package:
+The `ghidra_mcp_bridge` package:
 
 - discovers running GUI/headless instances;
 - handshakes the server version and complete endpoint schema into one
@@ -76,5 +76,5 @@ python -m tools.setup build
 mvn clean package assembly:single -DskipTests
 ```
 
-The Python wheel contains only `python/bridge_mcp_ghidra`. `uv` dependency
+The Python wheel contains only `python/ghidra_mcp_bridge`. `uv` dependency
 groups provide development and test tooling.

@@ -11,7 +11,7 @@ import requests
 from pathlib import Path
 
 # The bridge package lives under python/ (split out of the historical
-# single-file bridge_mcp_ghidra.py). Make it importable as `bridge_mcp_ghidra`
+# single-file ghidra_mcp_bridge.py). Make it importable as `ghidra_mcp_bridge`
 # even when tests run without an editable `uv sync` install.
 _PYTHON_DIR = Path(__file__).resolve().parent.parent / "python"
 if str(_PYTHON_DIR) not in sys.path:
