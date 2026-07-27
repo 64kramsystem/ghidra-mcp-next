@@ -16,7 +16,6 @@ import ghidra.program.model.address.AddressSet;
 import ghidra.program.model.address.AddressSpace;
 import ghidra.program.model.data.ArrayDataType;
 import ghidra.program.model.data.BitFieldDataType;
-import ghidra.program.model.data.ByteDataType;
 import ghidra.program.model.data.DataType;
 import ghidra.program.model.data.Dynamic;
 import ghidra.program.model.data.FactoryDataType;
@@ -468,8 +467,9 @@ final class DataRegionCore {
         }
         validateSplitRanges(
             first, second, request.count());
-        DataType byteType = ByteDataType.dataType.clone(
-            program.getDataTypeManager());
+        DataType byteType = Objects.requireNonNull(
+            bindWellKnownType(program, "byte", true),
+            "well-known byte datatype is unavailable");
         List<Address> firstSources = new ArrayList<>();
         List<Address> secondSources = new ArrayList<>();
         for (int i = 0; i < request.count(); i++) {
@@ -639,18 +639,63 @@ final class DataRegionCore {
             }
         }
         if (type == null) {
-            DataType wellKnown =
-                ServiceUtils.resolveWellKnownType(name);
-            if (wellKnown != null) {
-                type = wellKnown.clone(
-                    program.getDataTypeManager());
-            }
+            type = bindWellKnownType(program, name, false);
         }
         if (type == null) {
             throw new IllegalArgumentException(
                 "datatype not found: " + name);
         }
         return requireFixedPlaceable(type, name);
+    }
+
+    private static DataType bindWellKnownType(
+            Program program, String name, boolean splitPointerSource) {
+        DataType wellKnown =
+            ServiceUtils.resolveWellKnownType(name);
+        if (wellKnown == null) {
+            return null;
+        }
+        DataType candidate =
+            wellKnown.clone(program.getDataTypeManager());
+        DataType existing = program.getDataTypeManager()
+            .getDataType(candidate.getPathName());
+        if (existing == null) {
+            return candidate;
+        }
+        if (existing.isEquivalent(candidate)
+                || candidate.isEquivalent(existing)) {
+            return existing;
+        }
+        boolean existingPlaceable = false;
+        if (existing.getLength() == candidate.getLength()) {
+            try {
+                requireFixedPlaceable(existing, existing.getName());
+                existingPlaceable = true;
+            }
+            catch (IllegalArgumentException ignored) {
+                // Preserve the canonical collision error below.
+            }
+        }
+        if (splitPointerSource
+                && existingPlaceable
+                && existing.getLength() == 1) {
+            return existing;
+        }
+        String request = splitPointerSource
+            ? "requested=" + name + ", usage=split_pointer_source"
+            : "type_name=" + name;
+        String alternative =
+            !splitPointerSource && existingPlaceable
+                ? "; or request the existing program datatype "
+                    + "with type_name=" + existing.getName()
+                : "";
+        throw new IllegalArgumentException(
+            "well-known datatype path conflicts: " + request
+                + ", canonical_path=" + candidate.getPathName()
+                + ", occupant_length=" + existing.getLength()
+                + "; rename or remove the program datatype at "
+                + candidate.getPathName()
+                + alternative);
     }
 
     static DataType requireFixedPlaceable(
