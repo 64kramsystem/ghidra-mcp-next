@@ -16,6 +16,7 @@ import ghidra.program.model.address.AddressSet;
 import ghidra.program.model.address.AddressSpace;
 import ghidra.program.model.data.ArrayDataType;
 import ghidra.program.model.data.BitFieldDataType;
+import ghidra.program.model.data.ByteDataType;
 import ghidra.program.model.data.DataType;
 import ghidra.program.model.data.Dynamic;
 import ghidra.program.model.data.FactoryDataType;
@@ -467,11 +468,8 @@ final class DataRegionCore {
         }
         validateSplitRanges(
             first, second, request.count());
-        DataType byteType = resolveFixedType(program, "byte");
-        if (byteType.getLength() != 1) {
-            throw new IllegalArgumentException(
-                "program byte datatype is not one byte");
-        }
+        DataType byteType = ByteDataType.dataType.clone(
+            program.getDataTypeManager());
         List<Address> firstSources = new ArrayList<>();
         List<Address> secondSources = new ArrayList<>();
         for (int i = 0; i < request.count(); i++) {

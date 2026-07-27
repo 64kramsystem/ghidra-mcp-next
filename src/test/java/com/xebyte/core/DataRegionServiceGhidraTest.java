@@ -10,6 +10,7 @@ import static org.junit.Assert.assertTrue;
 import static org.junit.Assume.assumeTrue;
 
 import java.io.File;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -41,6 +42,7 @@ import ghidra.program.model.data.TypedefDataType;
 import ghidra.program.model.data.Undefined1DataType;
 import ghidra.program.model.data.WordDataType;
 import ghidra.program.model.listing.CommentType;
+import ghidra.program.model.listing.Data;
 import ghidra.program.model.symbol.Namespace;
 import ghidra.program.model.symbol.RefType;
 import ghidra.program.model.symbol.Reference;
@@ -152,6 +154,80 @@ public class DataRegionServiceGhidraTest {
         assertEquals(4, result.getAsJsonArray("references").size());
         assertEquals(2, program.getReferenceManager().getReferenceCountTo(
             program.getAddressFactory().getAddress("0x3000")));
+    }
+
+    @Test
+    public void pristineSplitTableUsesBuiltinByte() throws Exception {
+        ProgramBuilder pristineBuilder = new ProgramBuilder(
+            "pristine-split-6502",
+            "6502:LE:16:default", "default", this);
+        try {
+            ProgramDB pristineProgram = pristineBuilder.getProgram();
+            pristineBuilder.createMemory("ram", "0x0800", 0x7800);
+            pristineBuilder.setBytes("0x2000", "00 10");
+            pristineBuilder.setBytes("0x2040", "30 30");
+            assertNull(pristineProgram.getDataTypeManager()
+                .getDataType("byte"));
+            assertNull(pristineProgram.getDataTypeManager()
+                .getDataType("/byte"));
+            List<DataType> namedByte = new ArrayList<>();
+            pristineProgram.getDataTypeManager()
+                .findDataTypes("byte", namedByte);
+            assertTrue(namedByte.isEmpty());
+
+            HeadlessProgramProvider provider =
+                new HeadlessProgramProvider();
+            provider.setCurrentProgram(pristineProgram);
+            DataRegionService pristineService = new DataRegionService(
+                provider, new DirectThreadingStrategy());
+            Map<String, Object> split = new LinkedHashMap<>();
+            split.put("kind", "split_pointer_table");
+            split.put("first_start", "0x2000");
+            split.put("second_start", "0x2040");
+            split.put("count", 2);
+            split.put("layout", "split_low_high");
+            split.put("target_space", pristineProgram
+                .getAddressFactory().getDefaultAddressSpace().getName());
+            split.put("create_references", true);
+            split.put("validate_targets", true);
+
+            JsonObject preview = response(
+                pristineService.applyDataRegions(
+                    List.of(split), true, ""));
+            assertNull(pristineProgram.getDataTypeManager()
+                .getDataType("/byte"));
+            JsonObject committed = response(
+                pristineService.applyDataRegions(
+                    List.of(split), false, ""));
+            assertPlanFieldsEqual(preview, committed);
+
+            Data low = pristineProgram.getListing().getDefinedDataAt(
+                pristineBuilder.addr("0x2000"));
+            Data high = pristineProgram.getListing().getDefinedDataAt(
+                pristineBuilder.addr("0x2040"));
+            assertNotNull(low);
+            assertNotNull(high);
+            assertEquals(2, low.getLength());
+            assertEquals(2, high.getLength());
+            assertEquals(1, low.getComponent(0).getLength());
+            assertEquals(1, high.getComponent(0).getLength());
+            assertEquals(2, pristineProgram.getReferenceManager()
+                .getReferenceCountTo(pristineBuilder.addr("0x3000")));
+            assertEquals(2, pristineProgram.getReferenceManager()
+                .getReferenceCountTo(pristineBuilder.addr("0x3010")));
+
+            JsonObject repeated = response(
+                pristineService.applyDataRegions(
+                    List.of(split), true, ""));
+            repeated.getAsJsonArray("created_data").forEach(
+                item -> assertEquals(
+                    "unchanged",
+                    item.getAsJsonObject()
+                        .get("action").getAsString()));
+        }
+        finally {
+            pristineBuilder.dispose();
+        }
     }
 
     @Test
