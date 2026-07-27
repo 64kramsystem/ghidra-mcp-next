@@ -542,6 +542,45 @@ def test_run_deploy_tests_default_does_not_import_benchmark(
     assert calls == ["smoke"]
 
 
+def test_debugger_live_skip_happens_before_windows_fixture_reset(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+):
+    from tools.setup import ghidra
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        ghidra,
+        "_debugger_live_supported_platform",
+        lambda: False,
+    )
+    monkeypatch.setattr(
+        ghidra,
+        "run_default_smoke_test",
+        lambda *args: calls.append("smoke"),
+    )
+    monkeypatch.setattr(
+        ghidra,
+        "reset_benchmark_fixture",
+        lambda *args: calls.append("reset"),
+    )
+    monkeypatch.setattr(
+        ghidra,
+        "run_debugger_live_test",
+        lambda *args: calls.append("debugger"),
+    )
+
+    run_deploy_tests(
+        Path("/repo"),
+        "http://127.0.0.1:8089",
+        ["debugger-live"],
+    )
+
+    assert calls == ["smoke"]
+    assert "currently Windows-only" in capsys.readouterr().out
+    assert not ghidra._deploy_tests_use_benchmark(["debugger-live"])
+
+
 def test_reset_benchmark_fixture_builds_generic_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     from tools.setup import ghidra
 
