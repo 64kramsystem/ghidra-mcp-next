@@ -109,7 +109,10 @@ schema-discovered names:
 ```text
 load_tool_group("debugger")
 debugger_launch_offers()
-debugger_launch(offer=..., arguments=...)
+debugger_launch(
+    offer=...,
+    launcher_args={"env:OPT_PRG_FILE": "/absolute/path/game.d64"},
+)
 debugger_status()
 debugger_traces()
 debugger_modules()

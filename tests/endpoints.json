@@ -773,6 +773,7 @@
         "timeout_seconds",
         "program",
         "offer",
+        "launcher_args",
         "python_executable"
       ],
       "description": "Launch an executable through Ghidra's Trace RMI debugger launcher"
