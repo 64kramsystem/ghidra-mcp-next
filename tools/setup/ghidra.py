@@ -688,7 +688,11 @@ def _project_state_path_from_gpr(project_path: str) -> Path | None:
 
 
 def _deploy_tests_use_benchmark(test_modes: list[str]) -> bool:
-    return any(mode in BENCHMARK_DEPLOY_TEST_MODES for mode in test_modes)
+    return any(
+        mode in BENCHMARK_DEPLOY_TEST_MODES
+        and (mode != "debugger-live" or _debugger_live_supported_platform())
+        for mode in test_modes
+    )
 
 
 def clear_restored_benchmark_tools(repo_root: Path, *, dry_run: bool = False) -> int:
@@ -1395,6 +1399,10 @@ class DebuggerLiveTestSkipped(Exception):
     """
 
 
+def _debugger_live_supported_platform() -> bool:
+    return os.name == "nt"
+
+
 # Substrings in a /debugger/launch error payload that indicate an
 # environmental setup gap (missing WDK, dbgeng wiring, etc.) rather
 # than a real regression. Each is observed in production logs:
@@ -1415,7 +1423,7 @@ _DEBUGGER_LAUNCH_SKIP_HINTS = (
 
 
 def run_debugger_live_test(repo_root: Path, mcp_url: str) -> None:
-    if os.name != "nt":
+    if not _debugger_live_supported_platform():
         raise DebuggerLiveTestSkipped("Debugger live regression is currently Windows-only.")
     benchmark_debug_exe = repo_root / DEFAULT_BENCHMARK_DEBUG_EXE
     if not benchmark_debug_exe.is_file():
@@ -1958,8 +1966,12 @@ def run_deploy_tests(repo_root: Path, mcp_url: str, test_modes: list[str]) -> No
         elif mode == "selected-contract":
             run_selected_endpoint_contract_test(repo_root, mcp_url)
         elif mode == "debugger-live":
-            reset_benchmark_fixture(repo_root, mcp_url)
             try:
+                if not _debugger_live_supported_platform():
+                    raise DebuggerLiveTestSkipped(
+                        "Debugger live regression is currently Windows-only."
+                    )
+                reset_benchmark_fixture(repo_root, mcp_url)
                 run_debugger_live_test(repo_root, mcp_url)
             except DebuggerLiveTestSkipped as skip:
                 print(f"SKIPPED debugger live test: {skip}")
