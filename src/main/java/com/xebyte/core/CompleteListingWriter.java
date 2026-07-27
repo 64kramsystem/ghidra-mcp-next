@@ -672,18 +672,39 @@ final class CompleteListingWriter {
     private String missingContent(java.util.stream.Stream<String> emittedLines) {
         Map<Character, List<String>> byLastCharacter = new java.util.HashMap<>();
         Map<String, Integer> tokens = new java.util.HashMap<>();
+        boolean[] referenceContinuation = { false };
         emittedLines.forEach(raw -> {
             String line = rstrip(raw);
             if (line.isEmpty()) {
+                referenceContinuation[0] = false;
                 return;
             }
             byLastCharacter
                 .computeIfAbsent(line.charAt(line.length() - 1), key -> new ArrayList<>())
                 .add(line);
-            // Reference tokens carry no spaces and are comma-separated, so splitting on those
-            // recovers them exactly, wrapped lines included.
-            for (String piece : line.split("[ ,]+")) {
-                if (piece.endsWith(")") && piece.indexOf('(') > 0) {
+
+            String payload = null;
+            if (line.startsWith(ADDRESS_INDENT + "; XREF")) {
+                int headingEnd = line.indexOf("]: ");
+                if (headingEnd >= 0) {
+                    payload = line.substring(headingEnd + 3);
+                }
+            }
+            else if (referenceContinuation[0]) {
+                payload = line.stripLeading();
+            }
+            referenceContinuation[0] = payload != null && payload.endsWith(",");
+            if (payload == null) {
+                return;
+            }
+            if (payload.endsWith(",")) {
+                payload = payload.substring(0, payload.length() - 1);
+            }
+            // Address text may itself contain spaces: Ghidra's synthetic external-entry-point
+            // source renders as "Entry Point". Commas are the writer's actual token delimiter,
+            // including on wrapped continuation lines, so preserve all other characters.
+            for (String piece : payload.split(",\\s*")) {
+                if (!piece.isEmpty()) {
                     tokens.merge(piece, 1, Integer::sum);
                 }
             }

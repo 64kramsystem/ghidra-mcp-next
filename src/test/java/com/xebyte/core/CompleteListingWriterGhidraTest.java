@@ -520,6 +520,29 @@ public class CompleteListingWriterGhidraTest {
             missing != null && missing.contains("00001100"));
     }
 
+    /**
+     * Ghidra represents an external entry point as a synthetic reference whose source address
+     * is the named external location {@code Entry Point}. The space is part of the address
+     * text, so the content audit must not split the rendered {@code Entry Point(*)} token and
+     * falsely reject an otherwise complete export.
+     */
+    @Test
+    public void entryPointReferenceWithSpacePassesContentAudit() throws Exception {
+        int transaction = program.startTransaction("entry point");
+        try {
+            program.getSymbolTable().addExternalEntryPoint(
+                builder.addr("0x1000"));
+        }
+        finally {
+            program.endTransaction(transaction, true);
+        }
+
+        String listing = exportWholeProgram();
+
+        assertTrue("the synthetic entry-point reference must be emitted",
+            listing.contains("Entry Point(*)"));
+    }
+
     /** Accumulates everything written, so a test can drop lines the way a bad sink would. */
     private static final class CollectingWriter extends java.io.Writer {
         private final StringBuilder sink;

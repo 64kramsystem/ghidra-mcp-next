@@ -150,7 +150,6 @@ public class XrefRangeRenderGhidraTest {
         try {
             program.getSymbolTable().createLabel(handler, "SND_INIT_ALL", SourceType.USER_DEFINED);
             // A word[4] table at 0x1100; the reference comes from its second slot.
-            builder.createMemory(".data", "0x1100", 0x10);
             program.getListing().createData(builder.addr("0x1100"),
                 new ArrayDataType(WordDataType.dataType, 4, 2));
             program.getReferenceManager().addMemoryReference(builder.addr("0x1102"), handler,

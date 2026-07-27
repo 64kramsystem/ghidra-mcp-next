@@ -65,7 +65,9 @@ public class ControlFlowServiceGhidraTest {
         targetSpaceName =
             program.getAddressFactory().getDefaultAddressSpace().getName();
         builder.createMemory("ram", "0x0800", 0x7800);
-        builder.setBytes("0x1000", "4c 00 20");
+        // Keep this ordinary direct jump away from the table at 0x2000. ProgramBuilder's
+        // disassembly can follow the jump and race the table-typing test by defining BRK there.
+        builder.setBytes("0x1000", "4c 00 23");
         builder.setBytes("0x1010", "8d 01 12");
         builder.setBytes("0x1100", "a9 00");
         builder.setBytes("0x1200", "6c 00 20");
@@ -76,6 +78,17 @@ public class ControlFlowServiceGhidraTest {
         builder.disassemble("0x1100", 2);
         builder.disassemble("0x1200", 3);
         builder.disassemble("0x1300", 1);
+        // If another live fixture has already run ClassSearcher, Ghidra's discovered scalar-
+        // operand analyzer can define the JMP ($2000) pointer bytes as data while disassembling
+        // 0x1200. This fixture needs those bytes raw so describeJumpTable can type them itself.
+        int tableTx = program.startTransaction("restore raw table fixture");
+        try {
+            program.getListing().clearCodeUnits(
+                builder.addr("0x2000"), builder.addr("0x2003"), false);
+        }
+        finally {
+            program.endTransaction(tableTx, true);
+        }
         int dataTypeTx = program.startTransaction("add table datatypes");
         try {
             program.getDataTypeManager().addDataType(
@@ -246,7 +259,7 @@ public class ControlFlowServiceGhidraTest {
         Map<String, Object> valid = reference(
             "0x1300", "0x3020", "data", -1);
         Map<String, Object> incompatible = reference(
-            "0x1000", "0x2000", "data", 0);
+            "0x1000", "0x2300", "data", 0);
 
         Response rejected = service.batchUpdateReferences(
             List.of(valid, incompatible), List.of(),
@@ -257,7 +270,7 @@ public class ControlFlowServiceGhidraTest {
             builder.addr("0x1300"), builder.addr("0x3020"),
             Reference.MNEMONIC));
         Reference original = program.getReferenceManager().getReference(
-            builder.addr("0x1000"), builder.addr("0x2000"), 0);
+            builder.addr("0x1000"), builder.addr("0x2300"), 0);
         assertNotNull(original);
         assertEquals(
             RefType.UNCONDITIONAL_JUMP,
