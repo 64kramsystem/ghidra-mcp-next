@@ -30,6 +30,26 @@ public class SymbolLabelService {
         this.threadingStrategy = threadingStrategy;
     }
 
+    /**
+     * Pre-flight overlay-ambiguity check for the batch label endpoints.
+     *
+     * <p>Runs before the transaction opens so one ambiguous entry fails the whole
+     * request rather than being reported alongside a set of already-applied labels.
+     *
+     * @return the refusal message naming the offending address, or null when every
+     *     entry is unambiguous
+     */
+    private static String firstAmbiguousLabelAddress(
+            Program program, List<Map<String, String>> labels) {
+        List<String> addresses = new ArrayList<>();
+        for (Map<String, String> entry : labels) {
+            if (entry != null) {
+                addresses.add(entry.get("address"));
+            }
+        }
+        return ServiceUtils.firstAmbiguousUnqualifiedAddress(program, addresses);
+    }
+
     // -----------------------------------------------------------------------
     // Label Methods
     // -----------------------------------------------------------------------
@@ -117,7 +137,7 @@ public class SymbolLabelService {
         Program program = pe.program();
 
         try {
-            Address address = ServiceUtils.parseAddress(program, addressStr);
+            Address address = ServiceUtils.parseMutationAddress(program, addressStr);
             if (address == null) {
                 return Response.err(ServiceUtils.getLastParseError());
             }
@@ -187,7 +207,7 @@ public class SymbolLabelService {
         }
 
         try {
-            Address address = ServiceUtils.parseAddress(program, addressStr);
+            Address address = ServiceUtils.parseMutationAddress(program, addressStr);
             if (address == null) {
                 return Response.err(ServiceUtils.getLastParseError());
             }
@@ -248,6 +268,11 @@ public class SymbolLabelService {
             return Response.err("No labels provided");
         }
 
+        String ambiguous = firstAmbiguousLabelAddress(program, labels);
+        if (ambiguous != null) {
+            return Response.err("batch_create_labels wrote nothing: " + ambiguous);
+        }
+
         final AtomicInteger successCount = new AtomicInteger(0);
         final AtomicInteger skipCount = new AtomicInteger(0);
         final AtomicInteger errorCount = new AtomicInteger(0);
@@ -275,7 +300,7 @@ public class SymbolLabelService {
                         }
 
                         try {
-                            Address address = ServiceUtils.parseAddress(program, addressStr);
+                            Address address = ServiceUtils.parseMutationAddress(program, addressStr);
                             if (address == null) {
                                 errors.add(ServiceUtils.getLastParseError());
                                 errorCount.incrementAndGet();
@@ -367,7 +392,7 @@ public class SymbolLabelService {
             return Response.err("Name is required");
         }
 
-        Address address = ServiceUtils.parseAddress(program, addressStr);
+        Address address = ServiceUtils.parseMutationAddress(program, addressStr);
         if (address == null) {
             return Response.err(ServiceUtils.getLastParseError());
         }
@@ -400,7 +425,7 @@ public class SymbolLabelService {
         }
 
         try {
-            Address address = ServiceUtils.parseAddress(program, addressStr);
+            Address address = ServiceUtils.parseMutationAddress(program, addressStr);
             if (address == null) {
                 return Response.err(ServiceUtils.getLastParseError());
             }
@@ -477,6 +502,11 @@ public class SymbolLabelService {
             return Response.err("No labels provided");
         }
 
+        String ambiguous = firstAmbiguousLabelAddress(program, labels);
+        if (ambiguous != null) {
+            return Response.err("batch_delete_labels deleted nothing: " + ambiguous);
+        }
+
         final AtomicInteger deletedCount = new AtomicInteger(0);
         final AtomicInteger skippedCount = new AtomicInteger(0);
         final AtomicInteger errorCount = new AtomicInteger(0);
@@ -499,7 +529,7 @@ public class SymbolLabelService {
                         }
 
                         try {
-                            Address address = ServiceUtils.parseAddress(program, addressStr);
+                            Address address = ServiceUtils.parseMutationAddress(program, addressStr);
                             if (address == null) {
                                 errors.add(ServiceUtils.getLastParseError());
                                 errorCount.incrementAndGet();
@@ -581,7 +611,7 @@ public class SymbolLabelService {
         Program program = pe.program();
 
         // Resolve address before entering SwingUtilities lambda
-        Address addr = ServiceUtils.parseAddress(program, addressStr);
+        Address addr = ServiceUtils.parseMutationAddress(program, addressStr);
         if (addr == null) return Response.err(ServiceUtils.getLastParseError());
 
         final AtomicBoolean success = new AtomicBoolean(false);
@@ -732,7 +762,7 @@ public class SymbolLabelService {
         Program program = pe.program();
 
         try {
-            Address addr = ServiceUtils.parseAddress(program, address);
+            Address addr = ServiceUtils.parseMutationAddress(program, address);
             if (addr == null) return Response.err(ServiceUtils.getLastParseError());
             ExternalManager extMgr = program.getExternalManager();
 

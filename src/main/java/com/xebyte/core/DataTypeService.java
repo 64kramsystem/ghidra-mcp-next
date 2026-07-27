@@ -1157,9 +1157,12 @@ public class DataTypeService {
             return Response.text("Data type name is required");
         }
 
-        Address address = ServiceUtils.parseAddress(program, addressStr);
+        Address address = ServiceUtils.parseMutationAddress(program, addressStr);
         if (address == null) {
-            return Response.text(ServiceUtils.getLastParseError());
+            // A refused mutation is an error, not a plain-text result: an unqualified
+            // address that is mapped in several spaces stops here, and the caller has
+            // to see that as a failure rather than as endpoint output.
+            return Response.err(ServiceUtils.getLastParseError());
         }
 
         DataTypeManager dtm = program.getDataTypeManager();
@@ -2795,7 +2798,7 @@ public class DataTypeService {
         final List<String> operations = new ArrayList<>();
 
         try {
-            Address addr = ServiceUtils.parseAddress(program, addressStr);
+            Address addr = ServiceUtils.parseMutationAddress(program, addressStr);
             if (addr == null) {
                 return Response.err(ServiceUtils.getLastParseError());
             }
@@ -3752,7 +3755,7 @@ public class DataTypeService {
         Program program = pe.program();
 
         if (addressStr == null || addressStr.isEmpty()) return Response.err("address is required");
-        Address addr = ServiceUtils.parseAddress(program, addressStr);
+        Address addr = ServiceUtils.parseMutationAddress(program, addressStr);
         if (addr == null) return Response.err(ServiceUtils.getLastParseError());
 
         DataType resolvedType = null;

@@ -5,6 +5,8 @@ import ghidra.program.model.address.AddressFactory;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.FunctionManager;
 import ghidra.program.model.listing.Program;
+import ghidra.program.model.mem.Memory;
+import ghidra.program.model.mem.MemoryBlock;
 import org.junit.Test;
 import org.mockito.InOrder;
 
@@ -207,8 +209,15 @@ public class FunctionServiceNoReturnTest {
         FunctionDouble terminal = new FunctionDouble("target", true);
         FunctionDouble thunk = new FunctionDouble("thunk", true).linkTo(terminal);
 
+        // The mutating endpoints run the overlay-ambiguity guard, which walks the
+        // program's memory blocks; an empty memory is enough to make the offset
+        // unambiguous here.
+        Memory memory = mock(Memory.class);
+        when(memory.getBlocks()).thenReturn(new MemoryBlock[0]);
+
         when(addressFactory.getAddress("0x1000")).thenReturn(address);
         when(program.getAddressFactory()).thenReturn(addressFactory);
+        when(program.getMemory()).thenReturn(memory);
         when(program.getFunctionManager()).thenReturn(functionManager);
         when(functionManager.getFunctionAt(address)).thenReturn(thunk.function);
         when(provider.getCurrentProgram()).thenReturn(program);

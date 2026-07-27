@@ -1193,7 +1193,7 @@ public final class FlowDisassemblyService {
         if (text == null || text.isBlank()) {
             throw new IllegalArgumentException(fieldName + " is required");
         }
-        Address address = ServiceUtils.parseAddress(program, text);
+        Address address = ServiceUtils.parseMutationAddress(program, text);
         if (address == null) {
             throw new IllegalArgumentException(
                 fieldName + ": " + ServiceUtils.getLastParseError());

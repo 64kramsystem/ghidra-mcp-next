@@ -182,9 +182,9 @@ public class XrefCallGraphService {
         if (fromAddressStr == null || fromAddressStr.isEmpty()) return Response.err("from_address is required");
         if (toAddressStr == null || toAddressStr.isEmpty()) return Response.err("to_address is required");
 
-        Address fromAddr = ServiceUtils.parseAddress(program, fromAddressStr);
+        Address fromAddr = ServiceUtils.parseMutationAddress(program, fromAddressStr);
         if (fromAddr == null) return Response.err("from_address: " + ServiceUtils.getLastParseError());
-        Address toAddr = ServiceUtils.parseAddress(program, toAddressStr);
+        Address toAddr = ServiceUtils.parseMutationAddress(program, toAddressStr);
         if (toAddr == null) return Response.err("to_address: " + ServiceUtils.getLastParseError());
 
         RefType refType = resolveMemoryRefType(refTypeStr);
@@ -251,9 +251,9 @@ public class XrefCallGraphService {
         if (fromAddressStr == null || fromAddressStr.isEmpty()) return Response.err("from_address is required");
         if (toAddressStr == null || toAddressStr.isEmpty()) return Response.err("to_address is required");
 
-        Address fromAddr = ServiceUtils.parseAddress(program, fromAddressStr);
+        Address fromAddr = ServiceUtils.parseMutationAddress(program, fromAddressStr);
         if (fromAddr == null) return Response.err("from_address: " + ServiceUtils.getLastParseError());
-        Address toAddr = ServiceUtils.parseAddress(program, toAddressStr);
+        Address toAddr = ServiceUtils.parseMutationAddress(program, toAddressStr);
         if (toAddr == null) return Response.err("to_address: " + ServiceUtils.getLastParseError());
 
         // Collect the matching references up front, then delete inside the transaction.

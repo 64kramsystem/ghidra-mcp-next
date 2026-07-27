@@ -653,7 +653,7 @@ final class MemoryBlockCore {
             throw new IllegalArgumentException(
                 "conflict_policy must be error or overwrite_bytes");
         }
-        Address start = parseAddress(program, startText, "start");
+        Address start = parseAddress(program, startText, "start", true);
         Address end = checkedEnd(start, requested.length);
         MemoryBlock block = program.getMemory().getBlock(start);
         if (block == null) {
@@ -985,12 +985,30 @@ final class MemoryBlockCore {
         return block;
     }
 
+    /**
+     * Resolve a block-scoped address. No overlay-ambiguity guard: the endpoints that
+     * use this either name the block whose space the address must match — and reject a
+     * mismatch outright — or are placing a block that does not exist yet, so there is
+     * no existing occupant a bare offset could silently pick the wrong one of.
+     */
     private static Address parseAddress(
             Program program, String text, String name) {
+        return parseAddress(program, text, name, false);
+    }
+
+    /**
+     * @param guardAmbiguity when true, refuse an unqualified address whose offset is
+     *     mapped in several spaces. Set for addresses that select the bytes to be
+     *     changed, where picking the wrong occupant corrupts it silently.
+     */
+    private static Address parseAddress(
+            Program program, String text, String name, boolean guardAmbiguity) {
         if (normalizeOptional(text) == null) {
             throw new IllegalArgumentException(name + " is required");
         }
-        Address address = ServiceUtils.parseAddress(program, text);
+        Address address = guardAmbiguity
+            ? ServiceUtils.parseMutationAddress(program, text)
+            : ServiceUtils.parseAddress(program, text);
         if (address == null || address.isExternalAddress()) {
             String detail = ServiceUtils.getLastParseError();
             throw new IllegalArgumentException(

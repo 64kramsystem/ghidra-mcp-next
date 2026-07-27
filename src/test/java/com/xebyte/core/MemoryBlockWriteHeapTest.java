@@ -131,6 +131,8 @@ public class MemoryBlockWriteHeapTest {
         when(end.toString(false)).thenReturn("3d18ff");
         when(space.getName()).thenReturn("ram");
         when(memory.getBlock(start)).thenReturn(block);
+        // write_memory_bytes runs the overlay-ambiguity guard, which walks the blocks.
+        when(memory.getBlocks()).thenReturn(new MemoryBlock[] { block });
         when(block.contains(end)).thenReturn(true);
         when(block.isInitialized()).thenReturn(true);
         when(block.getName()).thenReturn("ram");

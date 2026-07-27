@@ -1,16 +1,11 @@
 package com.xebyte.core;
 
-import java.util.ArrayList;
-import java.util.LinkedHashSet;
-import java.util.List;
 import java.util.Objects;
-import java.util.Set;
 
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressSpace;
 import ghidra.program.model.listing.CommentType;
 import ghidra.program.model.listing.Program;
-import ghidra.program.model.mem.MemoryBlock;
 
 /**
  * Transaction-neutral planning and application for exact-address comments.
@@ -80,20 +75,10 @@ final class AddressCommentCore {
         if (resolved == null) {
             throw new IllegalArgumentException(ServiceUtils.getLastParseError());
         }
-        if (!addressText.contains(":")) {
-            List<Address> candidates =
-                mappedCandidatesAtOffset(program, resolved.getOffset());
-            if (candidates.size() > 1) {
-                String choices = candidates.stream()
-                    .map(Address::toString)
-                    .toList()
-                    .toString();
-                throw new IllegalArgumentException(
-                    "Ambiguous unqualified address '" + addressText
-                        + "' maps to multiple program address spaces: "
-                        + choices
-                        + ". Use a qualified <space>:<hex> address.");
-            }
+        String ambiguity = ServiceUtils.ambiguousUnqualifiedAddressError(
+            program, addressText, resolved);
+        if (ambiguity != null) {
+            throw new IllegalArgumentException(ambiguity);
         }
         validateAddress(program, resolved, requireMapped);
         return new ResolvedAddress(program, resolved);
@@ -208,30 +193,5 @@ final class AddressCommentCore {
             return previous;
         }
         return previous + "\n" + requested;
-    }
-
-    private static List<Address> mappedCandidatesAtOffset(
-            Program program, long offset) {
-        Set<Address> candidates = new LinkedHashSet<>();
-        for (MemoryBlock block : program.getMemory().getBlocks()) {
-            Address start = block.getStart();
-            Address end = block.getEnd();
-            if (Long.compareUnsigned(offset, start.getOffset()) < 0
-                    || Long.compareUnsigned(
-                        offset, end.getOffset()) > 0) {
-                continue;
-            }
-            try {
-                Address candidate =
-                    start.getAddressSpace().getAddress(offset);
-                if (block.contains(candidate)) {
-                    candidates.add(candidate);
-                }
-            }
-            catch (RuntimeException ignored) {
-                // The offset is outside this address space.
-            }
-        }
-        return new ArrayList<>(candidates);
     }
 }

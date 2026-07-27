@@ -68,7 +68,7 @@ public class CommentService {
         }
 
         // Resolve address before entering SwingUtilities lambda
-        Address addr = ServiceUtils.parseAddress(program, addressStr);
+        Address addr = ServiceUtils.parseMutationAddress(program, addressStr);
         if (addr == null) return Response.err(ServiceUtils.getLastParseError());
 
         final AtomicBoolean success = new AtomicBoolean(false);
@@ -409,9 +409,14 @@ public class CommentService {
         for (int i = 0; i < items.size(); i++) {
             Map<String, String> item = items.get(i);
             String addressStr = item == null ? null : item.get("address");
-            if (addressStr != null && ServiceUtils.parseAddress(program, addressStr) == null) {
+            if (addressStr != null && ServiceUtils.parseMutationAddress(program, addressStr) == null) {
+                // parseMutationAddress rejects an unqualified address that is mapped in more
+                // than one space, so the reason is carried through rather than flattened to
+                // "could not be resolved" — the caller needs to know which spaces collide.
+                String reason = ServiceUtils.getLastParseError();
                 problems.add(field + "[" + i + "] address \"" + addressStr
-                        + "\" could not be resolved");
+                        + "\" could not be resolved"
+                        + (reason == null || reason.isBlank() ? "" : ": " + reason));
             }
         }
     }
@@ -510,7 +515,7 @@ public class CommentService {
                             String addrStr = commentEntry.get("address");
                             String cmt = commentEntry.get("comment");
                             if (addrStr != null && cmt != null) {
-                                Address address = ServiceUtils.parseAddress(program, addrStr);
+                                Address address = ServiceUtils.parseMutationAddress(program, addrStr);
                                 if (address != null) {
                                     String existing = listing.getComment(CommentType.PRE, address);
                                     if (existing != null && !existing.isEmpty()) {
@@ -528,7 +533,7 @@ public class CommentService {
                             String addrStr = commentEntry.get("address");
                             String cmt = commentEntry.get("comment");
                             if (addrStr != null && cmt != null) {
-                                Address address = ServiceUtils.parseAddress(program, addrStr);
+                                Address address = ServiceUtils.parseMutationAddress(program, addrStr);
                                 if (address != null) {
                                     String existing = listing.getComment(CommentType.EOL, address);
                                     if (existing != null && !existing.isEmpty()) {
@@ -605,7 +610,7 @@ public class CommentService {
         }
 
         // Resolve address before entering SwingUtilities lambda
-        Address resolvedAddr = ServiceUtils.parseAddress(program, functionAddress);
+        Address resolvedAddr = ServiceUtils.parseMutationAddress(program, functionAddress);
         if (resolvedAddr == null) return Response.err(ServiceUtils.getLastParseError());
 
         final AtomicBoolean success = new AtomicBoolean(false);

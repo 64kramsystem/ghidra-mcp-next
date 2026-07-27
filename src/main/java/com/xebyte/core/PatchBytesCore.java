@@ -472,7 +472,7 @@ final class PatchBytesCore {
 
     private static Address parseAddress(
             Program program, String text, String parameter) {
-        Address address = ServiceUtils.parseAddress(program, text);
+        Address address = ServiceUtils.parseMutationAddress(program, text);
         if (address == null || address.isExternalAddress()) {
             String detail = ServiceUtils.getLastParseError();
             throw new IllegalArgumentException(

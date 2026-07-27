@@ -246,12 +246,12 @@ public final class ListingMutationService {
     }
 
     private Planned plan(Program program, Request request) {
-        Address start = ServiceUtils.parseAddress(program, request.startText());
+        Address start = ServiceUtils.parseMutationAddress(program, request.startText());
         if (start == null) {
             throw new IllegalArgumentException("Invalid start address: "
                 + usefulParseError(request.startText()));
         }
-        Address end = ServiceUtils.parseAddress(program, request.endText());
+        Address end = ServiceUtils.parseMutationAddress(program, request.endText());
         if (end == null) {
             throw new IllegalArgumentException("Invalid end address: "
                 + usefulParseError(request.endText()));

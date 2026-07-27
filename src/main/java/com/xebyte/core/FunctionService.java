@@ -655,6 +655,12 @@ public class FunctionService {
             return Response.err("Function name or address is required");
         }
 
+        // function_address may also carry a name, so probe rather than parse: only a
+        // value that really is an unqualified, doubly-mapped address is refused.
+        String addressAmbiguity =
+            ServiceUtils.probeMutationAddressAmbiguity(program, functionAddress);
+        if (addressAmbiguity != null) return Response.err(addressAmbiguity);
+
         DecompInterface decomp = ServiceUtils.createConfiguredDecompiler(program);
         try {
             String functionRef = (functionAddress != null && !functionAddress.isEmpty()) ? functionAddress : functionName;
@@ -802,6 +808,12 @@ public class FunctionService {
         if (newName == null || newName.isEmpty()) {
             return Response.err("New function name is required");
         }
+
+        // function_address may also carry a name, so probe rather than parse: only a
+        // value that really is an unqualified, doubly-mapped address is refused.
+        String addressAmbiguity =
+            ServiceUtils.probeMutationAddressAmbiguity(program, functionAddrStr);
+        if (addressAmbiguity != null) return Response.err(addressAmbiguity);
 
         Function targetFunc = ServiceUtils.resolveFunction(program, functionAddrStr);
         if (targetFunc == null) {
@@ -983,7 +995,7 @@ public class FunctionService {
                                        String callingConvention, AtomicBoolean success, StringBuilder errorMessage) {
         try {
             // Get the address and function
-            Address addr = ServiceUtils.parseAddress(program, functionAddrStr);
+            Address addr = ServiceUtils.parseMutationAddress(program, functionAddrStr);
             if (addr == null) {
                 String msg = ServiceUtils.getLastParseError();
                 errorMessage.append(msg);
@@ -1256,7 +1268,7 @@ public class FunctionService {
         }
 
         // Resolve address before entering threading lambda
-        Address addr = ServiceUtils.parseAddress(program, functionAddrStr);
+        Address addr = ServiceUtils.parseMutationAddress(program, functionAddrStr);
         if (addr == null) return Response.err(ServiceUtils.getLastParseError());
 
         final StringBuilder resultMsg = new StringBuilder();
@@ -1457,7 +1469,7 @@ public class FunctionService {
         if (pe.hasError()) return pe.error();
         Program program = pe.program();
 
-        Address addr = ServiceUtils.parseAddress(program, functionAddrStr);
+        Address addr = ServiceUtils.parseMutationAddress(program, functionAddrStr);
         if (addr == null) return Response.err(ServiceUtils.getLastParseError());
 
         final StringBuilder resultMsg = new StringBuilder();
@@ -1862,7 +1874,7 @@ public class FunctionService {
         }
 
         // Resolve address before entering threading lambda
-        Address addr = ServiceUtils.parseAddress(program, functionAddrStr);
+        Address addr = ServiceUtils.parseMutationAddress(program, functionAddrStr);
         if (addr == null) return Response.err(ServiceUtils.getLastParseError());
 
         final StringBuilder resultMsg = new StringBuilder();
@@ -1951,7 +1963,7 @@ public class FunctionService {
         }
 
         // Resolve address before entering threading lambda
-        Address addr = ServiceUtils.parseAddress(program, functionAddrStr);
+        Address addr = ServiceUtils.parseMutationAddress(program, functionAddrStr);
         if (addr == null) return Response.err(ServiceUtils.getLastParseError());
 
         final StringBuilder resultMsg = new StringBuilder();
@@ -2275,7 +2287,7 @@ public class FunctionService {
         Program program = pe.program();
 
         // Resolve address before entering threading lambda
-        Address addr = ServiceUtils.parseAddress(program, functionAddress);
+        Address addr = ServiceUtils.parseMutationAddress(program, functionAddress);
         if (addr == null) return Response.err(ServiceUtils.getLastParseError());
 
         final AtomicBoolean success = new AtomicBoolean(false);
@@ -2384,7 +2396,7 @@ public class FunctionService {
         }
 
         // Resolve address before entering threading lambda
-        Address addr = ServiceUtils.parseAddress(program, addressStr);
+        Address addr = ServiceUtils.parseMutationAddress(program, addressStr);
         if (addr == null) return Response.err(ServiceUtils.getLastParseError());
 
         final AtomicReference<Map<String, Object>> resultData = new AtomicReference<>(null);
@@ -2454,7 +2466,7 @@ public class FunctionService {
         }
 
         // Resolve address before entering threading lambda
-        Address addr = ServiceUtils.parseAddress(program, addressStr);
+        Address addr = ServiceUtils.parseMutationAddress(program, addressStr);
         if (addr == null) return Response.err(ServiceUtils.getLastParseError());
 
         final AtomicReference<Map<String, Object>> resultData = new AtomicReference<>(null);
@@ -2570,12 +2582,12 @@ public class FunctionService {
         if (pe.hasError()) return pe.error();
         Program program = pe.program();
 
-        Address start = ServiceUtils.parseAddress(program, startAddress);
+        Address start = ServiceUtils.parseMutationAddress(program, startAddress);
         if (start == null) return Response.err(ServiceUtils.getLastParseError());
 
         Address seedEnd = start;
         if (endAddress != null && !endAddress.isEmpty()) {
-            Address end = ServiceUtils.parseAddress(program, endAddress);
+            Address end = ServiceUtils.parseMutationAddress(program, endAddress);
             if (end == null) return Response.err(ServiceUtils.getLastParseError());
             if (!end.getAddressSpace().equals(start.getAddressSpace())) {
                 return Response.err("end_address must be in the same address space as start_address");
@@ -2851,7 +2863,7 @@ public class FunctionService {
         Program program = pe.program();
 
         // Resolve address before entering SwingUtilities lambda
-        Address addr = ServiceUtils.parseAddress(program, functionAddress);
+        Address addr = ServiceUtils.parseMutationAddress(program, functionAddress);
         if (addr == null) return Response.err(ServiceUtils.getLastParseError());
 
         final AtomicBoolean success = new AtomicBoolean(false);
@@ -3068,7 +3080,7 @@ public class FunctionService {
         if (pe.hasError()) return pe.error();
         Program program = pe.program();
 
-        Address addr = ServiceUtils.parseAddress(program, functionAddress);
+        Address addr = ServiceUtils.parseMutationAddress(program, functionAddress);
         if (addr == null) return Response.err(ServiceUtils.getLastParseError());
 
         // Parse the variables JSON into a map of oldName -> {name?, type?}.
@@ -3333,7 +3345,7 @@ public class FunctionService {
         Program program = pe.program();
 
         // Resolve address before entering SwingUtilities lambda
-        Address addr = ServiceUtils.parseAddress(program, functionAddress);
+        Address addr = ServiceUtils.parseMutationAddress(program, functionAddress);
         if (addr == null) return Response.err(ServiceUtils.getLastParseError());
 
         final AtomicInteger variablesRenamed = new AtomicInteger(0);
@@ -3403,7 +3415,7 @@ public class FunctionService {
         Program program = pe.program();
 
         // Resolve address before entering SwingUtilities lambda
-        Address addr = ServiceUtils.parseAddress(program, functionAddress);
+        Address addr = ServiceUtils.parseMutationAddress(program, functionAddress);
         if (addr == null) return Response.err(ServiceUtils.getLastParseError());
 
         final AtomicReference<Map<String, Object>> resultData = new AtomicReference<>(null);
@@ -3583,6 +3595,10 @@ public class FunctionService {
         List<String> tagNames = splitTagList(tagsCsv);
         if (tagNames.isEmpty()) return Response.err("tags is required (comma-separated list)");
 
+        String addressAmbiguity =
+            ServiceUtils.probeMutationAddressAmbiguity(program, functionRef);
+        if (addressAmbiguity != null) return Response.err(addressAmbiguity);
+
         Function func = ServiceUtils.resolveFunction(program, functionRef);
         if (func == null) return Response.err("No function found for " + functionRef);
 
@@ -3628,6 +3644,10 @@ public class FunctionService {
         if (functionRef == null || functionRef.isEmpty()) return Response.err("function is required");
         List<String> tagNames = splitTagList(tagsCsv);
         if (tagNames.isEmpty()) return Response.err("tags is required (comma-separated list)");
+
+        String addressAmbiguity =
+            ServiceUtils.probeMutationAddressAmbiguity(program, functionRef);
+        if (addressAmbiguity != null) return Response.err(addressAmbiguity);
 
         Function func = ServiceUtils.resolveFunction(program, functionRef);
         if (func == null) return Response.err("No function found for " + functionRef);
@@ -3846,6 +3866,28 @@ public class FunctionService {
                 "functions", page));
     }
 
+    /**
+     * Pre-flight overlay-ambiguity check for the batch function-tag endpoints.
+     *
+     * <p>Runs before the transaction opens so one ambiguous reference fails the whole
+     * request rather than being reported alongside a set of already-tagged functions.
+     * `function` may be a name, so the probe passes non-addresses through untouched.
+     */
+    private static String firstAmbiguousAssignmentAddress(
+            Program program, List<Map<String, String>> assignments) {
+        for (Map<String, String> entry : assignments) {
+            if (entry == null) {
+                continue;
+            }
+            String ambiguity = ServiceUtils.probeMutationAddressAmbiguity(
+                program, entry.get("function"));
+            if (ambiguity != null) {
+                return ambiguity;
+            }
+        }
+        return null;
+    }
+
     @McpTool(path = "/batch_add_function_tags", method = "POST",
              description = "Attach tags to many functions in one transaction. Body: [{\"function\":\"0x140200ae6\",\"tags\":\"syscall,lpe-surface\"}, ...]. Tags auto-create.",
              category = "function")
@@ -3857,6 +3899,9 @@ public class FunctionService {
         if (pe.hasError()) return pe.error();
         Program program = pe.program();
         if (assignments == null || assignments.isEmpty()) return Response.err("assignments is required (non-empty array)");
+
+        String ambiguous = firstAmbiguousAssignmentAddress(program, assignments);
+        if (ambiguous != null) return Response.err("no tags were changed: " + ambiguous);
 
         List<Map<String, Object>> results = new ArrayList<>();
         AtomicInteger tagsAdded = new AtomicInteger(0);
@@ -3927,6 +3972,9 @@ public class FunctionService {
         if (pe.hasError()) return pe.error();
         Program program = pe.program();
         if (assignments == null || assignments.isEmpty()) return Response.err("assignments is required (non-empty array)");
+
+        String ambiguous = firstAmbiguousAssignmentAddress(program, assignments);
+        if (ambiguous != null) return Response.err("no tags were changed: " + ambiguous);
 
         List<Map<String, Object>> results = new ArrayList<>();
         AtomicInteger tagsRemoved = new AtomicInteger(0);

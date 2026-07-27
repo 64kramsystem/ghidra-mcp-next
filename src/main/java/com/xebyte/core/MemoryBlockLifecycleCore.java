@@ -1320,6 +1320,11 @@ final class MemoryBlockLifecycleCore {
         }
     }
 
+    /**
+     * Resolve {@code new_end} for a resize. No overlay-ambiguity guard: the endpoint
+     * names the block being resized and rejects an address outside that block's space,
+     * so a bare offset can never silently select the wrong occupant.
+     */
     private static Address parseAddress(
             Program program, String text, String name) {
         Address address = ServiceUtils.parseAddress(program, text);
