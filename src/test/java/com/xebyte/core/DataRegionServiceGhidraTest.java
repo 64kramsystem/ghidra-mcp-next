@@ -31,15 +31,18 @@ import ghidra.framework.Application;
 import ghidra.framework.ApplicationConfiguration;
 import ghidra.program.database.ProgramBuilder;
 import ghidra.program.database.ProgramDB;
-import ghidra.program.model.data.ByteDataType;
 import ghidra.program.model.data.BitFieldDataType;
+import ghidra.program.model.data.ByteDataType;
+import ghidra.program.model.data.CategoryPath;
 import ghidra.program.model.data.DataType;
 import ghidra.program.model.data.DataTypeConflictHandler;
 import ghidra.program.model.data.InvalidDataTypeException;
 import ghidra.program.model.data.StructureDataType;
 import ghidra.program.model.data.StringDataType;
 import ghidra.program.model.data.TypedefDataType;
+import ghidra.program.model.data.TypeDef;
 import ghidra.program.model.data.Undefined1DataType;
+import ghidra.program.model.data.UnsignedCharDataType;
 import ghidra.program.model.data.WordDataType;
 import ghidra.program.model.listing.CommentType;
 import ghidra.program.model.listing.Data;
@@ -333,6 +336,430 @@ public class DataRegionServiceGhidraTest {
         }
         finally {
             x86Builder.dispose();
+        }
+    }
+
+    @Test
+    public void wellKnownCollisionsAreRejectedWithoutMutation()
+            throws Exception {
+        ProgramBuilder shadowBuilder = new ProgramBuilder(
+            "shadowed-byte-6502",
+            "6502:LE:16:default", "default", this);
+        try {
+            ProgramDB shadowProgram = shadowBuilder.getProgram();
+            shadowBuilder.createMemory("ram", "0x0800", 0x7800);
+            StructureDataType localByte =
+                new StructureDataType("byte", 2);
+            int transaction = shadowProgram.startTransaction(
+                "add local two-byte datatype");
+            try {
+                shadowProgram.getDataTypeManager().addDataType(
+                    localByte,
+                    DataTypeConflictHandler.REPLACE_HANDLER);
+            }
+            finally {
+                shadowProgram.endTransaction(transaction, true);
+            }
+
+            HeadlessProgramProvider provider =
+                new HeadlessProgramProvider();
+            provider.setCurrentProgram(shadowProgram);
+            DataRegionService shadowService = new DataRegionService(
+                provider, new DirectThreadingStrategy());
+            Map<String, Object> contiguousByte = contiguous(
+                "0x2300", "0x2303", "byte");
+            JsonObject contiguousPreview = response(
+                shadowService.applyDataRegions(
+                    List.of(contiguousByte), true, ""));
+            assertEquals(2, contiguousPreview
+                .getAsJsonArray("regions").get(0).getAsJsonObject()
+                .get("data_length").getAsInt());
+            response(shadowService.applyDataRegions(
+                List.of(contiguousByte), false, ""));
+            Data committedLocalByte = shadowProgram.getListing()
+                .getDefinedDataAt(shadowBuilder.addr("0x2300"));
+            assertEquals(2, committedLocalByte.getLength());
+            assertEquals(
+                "/byte",
+                committedLocalByte.getDataType().getPathName());
+            int dataTypeCountBeforeCollisions =
+                shadowProgram.getDataTypeManager()
+                    .getDataTypeCount(true);
+
+            shadowBuilder.setBytes("0x2400", "00 10");
+            shadowBuilder.setBytes("0x2440", "30 30");
+            Map<String, Object> split = new LinkedHashMap<>();
+            split.put("kind", "split_pointer_table");
+            split.put("first_start", "0x2400");
+            split.put("second_start", "0x2440");
+            split.put("count", 2);
+            split.put("layout", "split_low_high");
+            split.put("target_space", shadowProgram
+                .getAddressFactory().getDefaultAddressSpace().getName());
+
+            Response splitPreview = shadowService.applyDataRegions(
+                List.of(split), true, "");
+            assertTrue(splitPreview instanceof Response.Err);
+            assertTrue(splitPreview.toJson().contains(
+                "well-known datatype path conflicts"));
+            assertTrue(splitPreview.toJson().contains(
+                "requested=byte"));
+            assertTrue(splitPreview.toJson().contains(
+                "usage=split_pointer_source"));
+            assertTrue(splitPreview.toJson().contains(
+                "canonical_path=/byte"));
+            assertTrue(splitPreview.toJson().contains(
+                "occupant_length=2"));
+            assertTrue(splitPreview.toJson().contains(
+                "rename or remove the program datatype at /byte"));
+            assertFalse(splitPreview.toJson().contains(
+                "type_name="));
+            assertNull(shadowProgram.getListing().getDefinedDataAt(
+                shadowBuilder.addr("0x2400")));
+            assertNull(shadowProgram.getListing().getDefinedDataAt(
+                shadowBuilder.addr("0x2440")));
+            assertEquals(2, shadowProgram.getDataTypeManager()
+                .getDataType("/byte").getLength());
+            assertEquals(
+                dataTypeCountBeforeCollisions,
+                shadowProgram.getDataTypeManager()
+                    .getDataTypeCount(true));
+
+            Response splitCommit = shadowService.applyDataRegions(
+                List.of(split), false, "");
+            assertTrue(splitCommit instanceof Response.Err);
+            assertNull(shadowProgram.getListing().getDefinedDataAt(
+                shadowBuilder.addr("0x2400")));
+            assertNull(shadowProgram.getListing().getDefinedDataAt(
+                shadowBuilder.addr("0x2440")));
+            assertEquals(2, shadowProgram.getDataTypeManager()
+                .getDataType("/byte").getLength());
+            assertEquals(
+                dataTypeCountBeforeCollisions,
+                shadowProgram.getDataTypeManager()
+                    .getDataTypeCount(true));
+
+            Map<String, Object> mixedCaseByte = contiguous(
+                "0x2500", "0x2500", "BYTE");
+            Response mixedCasePreview =
+                shadowService.applyDataRegions(
+                    List.of(mixedCaseByte), true, "");
+            assertTrue(mixedCasePreview instanceof Response.Err);
+            assertTrue(mixedCasePreview.toJson().contains(
+                "well-known datatype path conflicts"));
+            assertTrue(mixedCasePreview.toJson().contains(
+                "type_name=BYTE"));
+            assertTrue(mixedCasePreview.toJson().contains(
+                "canonical_path=/byte"));
+            assertTrue(mixedCasePreview.toJson().contains(
+                "occupant_length=2"));
+            assertTrue(mixedCasePreview.toJson().contains(
+                "rename or remove the program datatype at /byte"));
+            Response mixedCaseCommit =
+                shadowService.applyDataRegions(
+                    List.of(mixedCaseByte), false, "");
+            assertTrue(mixedCaseCommit instanceof Response.Err);
+            assertNull(shadowProgram.getListing().getDefinedDataAt(
+                shadowBuilder.addr("0x2500")));
+            assertEquals(2, shadowProgram.getDataTypeManager()
+                .getDataType("/byte").getLength());
+            assertEquals(
+                dataTypeCountBeforeCollisions,
+                shadowProgram.getDataTypeManager()
+                    .getDataTypeCount(true));
+
+            Map<String, Object> aliasedByte = contiguous(
+                "0x2510", "0x2510", "uint8");
+            Response aliasPreview = shadowService.applyDataRegions(
+                List.of(aliasedByte), true, "");
+            assertTrue(aliasPreview instanceof Response.Err);
+            assertTrue(aliasPreview.toJson().contains(
+                "type_name=uint8"));
+            assertTrue(aliasPreview.toJson().contains(
+                "canonical_path=/byte"));
+            assertTrue(aliasPreview.toJson().contains(
+                "occupant_length=2"));
+            assertTrue(aliasPreview.toJson().contains(
+                "rename or remove the program datatype at /byte"));
+            Response aliasCommit = shadowService.applyDataRegions(
+                List.of(aliasedByte), false, "");
+            assertTrue(aliasCommit instanceof Response.Err);
+            assertNull(shadowProgram.getListing().getDefinedDataAt(
+                shadowBuilder.addr("0x2510")));
+            assertEquals(2, shadowProgram.getDataTypeManager()
+                .getDataType("/byte").getLength());
+            assertEquals(
+                dataTypeCountBeforeCollisions,
+                shadowProgram.getDataTypeManager()
+                    .getDataTypeCount(true));
+        }
+        finally {
+            shadowBuilder.dispose();
+        }
+    }
+
+    @Test
+    public void splitReusesFixedOneByteProgramOccupant()
+            throws Exception {
+        ProgramBuilder typedefBuilder = new ProgramBuilder(
+            "typedef-byte-6502",
+            "6502:LE:16:default", "default", this);
+        try {
+            ProgramDB typedefProgram = typedefBuilder.getProgram();
+            typedefBuilder.createMemory("ram", "0x0800", 0x7800);
+            int transaction = typedefProgram.startTransaction(
+                "add one-byte typedef");
+            try {
+                typedefProgram.getDataTypeManager().addDataType(
+                    new TypedefDataType(
+                        "byte", UnsignedCharDataType.dataType),
+                    DataTypeConflictHandler.REPLACE_HANDLER);
+            }
+            finally {
+                typedefProgram.endTransaction(transaction, true);
+            }
+            DataType original =
+                typedefProgram.getDataTypeManager()
+                    .getDataType("/byte");
+            assertTrue(original instanceof TypeDef);
+            assertEquals(1, original.getLength());
+
+            HeadlessProgramProvider provider =
+                new HeadlessProgramProvider();
+            provider.setCurrentProgram(typedefProgram);
+            DataRegionService typedefService = new DataRegionService(
+                provider, new DirectThreadingStrategy());
+            typedefBuilder.setBytes("0x2600", "00 10");
+            typedefBuilder.setBytes("0x2640", "30 30");
+            Map<String, Object> split = new LinkedHashMap<>();
+            split.put("kind", "split_pointer_table");
+            split.put("first_start", "0x2600");
+            split.put("second_start", "0x2640");
+            split.put("count", 2);
+            split.put("layout", "split_low_high");
+            split.put("target_space", typedefProgram
+                .getAddressFactory().getDefaultAddressSpace().getName());
+
+            JsonObject preview = response(
+                typedefService.applyDataRegions(
+                    List.of(split), true, ""));
+            assertEquals(
+                original.getUniversalID(),
+                typedefProgram.getDataTypeManager()
+                    .getDataType("/byte").getUniversalID());
+            response(typedefService.applyDataRegions(
+                List.of(split), false, ""));
+            Data low = typedefProgram.getListing().getDefinedDataAt(
+                typedefBuilder.addr("0x2600"));
+            Data high = typedefProgram.getListing().getDefinedDataAt(
+                typedefBuilder.addr("0x2640"));
+            assertEquals(
+                "/byte",
+                low.getComponent(0).getDataType().getPathName());
+            assertEquals(1, low.getComponent(0).getLength());
+            assertEquals(
+                "/byte",
+                high.getComponent(0).getDataType().getPathName());
+            assertEquals(1, high.getComponent(0).getLength());
+            assertEquals(
+                original.getUniversalID(),
+                typedefProgram.getDataTypeManager()
+                    .getDataType("/byte").getUniversalID());
+
+            JsonObject repeated = response(
+                typedefService.applyDataRegions(
+                    List.of(split), true, ""));
+            assertStablePlanFieldsEqual(preview, repeated);
+            repeated.getAsJsonArray("created_data").forEach(
+                item -> assertEquals(
+                    "unchanged",
+                    item.getAsJsonObject()
+                        .get("action").getAsString()));
+
+            Map<String, Object> alias = contiguous(
+                "0x2680", "0x2680", "uint8");
+            Response aliasPreview = typedefService.applyDataRegions(
+                List.of(alias), true, "");
+            assertTrue(aliasPreview instanceof Response.Err);
+            assertTrue(aliasPreview.toJson().contains(
+                "type_name=uint8"));
+            assertTrue(aliasPreview.toJson().contains(
+                "request the existing program datatype "
+                    + "with type_name=byte"));
+            Response aliasCommit = typedefService.applyDataRegions(
+                List.of(alias), false, "");
+            assertTrue(aliasCommit instanceof Response.Err);
+            assertNull(typedefProgram.getListing().getDefinedDataAt(
+                typedefBuilder.addr("0x2680")));
+            assertEquals(
+                original.getUniversalID(),
+                typedefProgram.getDataTypeManager()
+                    .getDataType("/byte").getUniversalID());
+        }
+        finally {
+            typedefBuilder.dispose();
+        }
+    }
+
+    @Test
+    public void splitRejectsNonPlaceableOneByteProgramOccupant()
+            throws Exception {
+        ProgramBuilder undefinedBuilder = new ProgramBuilder(
+            "undefined-byte-6502",
+            "6502:LE:16:default", "default", this);
+        try {
+            ProgramDB undefinedProgram = undefinedBuilder.getProgram();
+            undefinedBuilder.createMemory(
+                "ram", "0x0800", 0x7800);
+            int transaction = undefinedProgram.startTransaction(
+                "add undefined byte typedef");
+            try {
+                undefinedProgram.getDataTypeManager().addDataType(
+                    new TypedefDataType(
+                        "byte", Undefined1DataType.dataType),
+                    DataTypeConflictHandler.REPLACE_HANDLER);
+            }
+            finally {
+                undefinedProgram.endTransaction(transaction, true);
+            }
+            DataType original = undefinedProgram.getDataTypeManager()
+                .getDataType("/byte");
+            int originalTypeCount =
+                undefinedProgram.getDataTypeManager().getDataTypeCount(true);
+            assertEquals(1, original.getLength());
+
+            HeadlessProgramProvider provider =
+                new HeadlessProgramProvider();
+            provider.setCurrentProgram(undefinedProgram);
+            DataRegionService undefinedService = new DataRegionService(
+                provider, new DirectThreadingStrategy());
+            undefinedBuilder.setBytes("0x2700", "00 10");
+            undefinedBuilder.setBytes("0x2740", "30 30");
+            Map<String, Object> split = new LinkedHashMap<>();
+            split.put("kind", "split_pointer_table");
+            split.put("first_start", "0x2700");
+            split.put("second_start", "0x2740");
+            split.put("count", 2);
+            split.put("layout", "split_low_high");
+            split.put("target_space", undefinedProgram
+                .getAddressFactory().getDefaultAddressSpace().getName());
+
+            Response preview = undefinedService.applyDataRegions(
+                List.of(split), true, "");
+            assertTrue(preview instanceof Response.Err);
+            assertTrue(preview.toJson().contains(
+                "well-known datatype path conflicts"));
+            assertTrue(preview.toJson().contains(
+                "occupant_length=1"));
+            assertFalse(preview.toJson().contains(
+                "request the existing program datatype"));
+            assertNull(undefinedProgram.getListing()
+                .getDefinedDataAt(undefinedBuilder.addr("0x2700")));
+            assertNull(undefinedProgram.getListing()
+                .getDefinedDataAt(undefinedBuilder.addr("0x2740")));
+            assertEquals(
+                original.getUniversalID(),
+                undefinedProgram.getDataTypeManager()
+                    .getDataType("/byte").getUniversalID());
+            assertEquals(
+                originalTypeCount,
+                undefinedProgram.getDataTypeManager()
+                    .getDataTypeCount(true));
+
+            Map<String, Object> alias = contiguous(
+                "0x2780", "0x2780", "uint8");
+            Response aliasPreview = undefinedService.applyDataRegions(
+                List.of(alias), true, "");
+            assertTrue(aliasPreview instanceof Response.Err);
+            assertTrue(aliasPreview.toJson().contains(
+                "well-known datatype path conflicts"));
+            assertTrue(aliasPreview.toJson().contains(
+                "occupant_length=1"));
+            assertFalse(aliasPreview.toJson().contains(
+                "request the existing program datatype"));
+            assertNull(undefinedProgram.getListing()
+                .getDefinedDataAt(undefinedBuilder.addr("0x2780")));
+            assertEquals(
+                original.getUniversalID(),
+                undefinedProgram.getDataTypeManager()
+                    .getDataType("/byte").getUniversalID());
+            assertEquals(
+                originalTypeCount,
+                undefinedProgram.getDataTypeManager()
+                    .getDataTypeCount(true));
+        }
+        finally {
+            undefinedBuilder.dispose();
+        }
+    }
+
+    @Test
+    public void wellKnownFallbackPreservesNegativeBehavior()
+            throws Exception {
+        ProgramBuilder pristineBuilder = new ProgramBuilder(
+            "well-known-negative-6502",
+            "6502:LE:16:default", "default", this);
+        try {
+            ProgramDB pristineProgram = pristineBuilder.getProgram();
+            pristineBuilder.createMemory("ram", "0x0800", 0x7800);
+            HeadlessProgramProvider provider =
+                new HeadlessProgramProvider();
+            provider.setCurrentProgram(pristineProgram);
+            DataRegionService pristineService = new DataRegionService(
+                provider, new DirectThreadingStrategy());
+
+            Response unknown = pristineService.applyDataRegions(
+                List.of(contiguous(
+                    "0x2500", "0x2500", "NoSuchType")),
+                true, "");
+            assertTrue(unknown instanceof Response.Err);
+            assertTrue(unknown.toJson().contains(
+                "datatype not found: NoSuchType"));
+
+            Response voidType = pristineService.applyDataRegions(
+                List.of(contiguous(
+                    "0x2510", "0x2510", "void")),
+                true, "");
+            assertTrue(voidType instanceof Response.Err);
+            assertTrue(voidType.toJson().contains(
+                "fixed and placeable"));
+
+            JsonObject mixedCase = response(
+                pristineService.applyDataRegions(
+                List.of(contiguous(
+                    "0x2520", "0x2521", "WoRd")),
+                    true, ""));
+            assertEquals(2, mixedCase
+                .getAsJsonArray("regions").get(0).getAsJsonObject()
+                .get("data_length").getAsInt());
+
+            int transaction = pristineProgram.startTransaction(
+                "add ambiguous word datatypes");
+            try {
+                pristineProgram.getDataTypeManager().addDataType(
+                    new StructureDataType(
+                        new CategoryPath("/a"), "word", 2),
+                    DataTypeConflictHandler.REPLACE_HANDLER);
+                pristineProgram.getDataTypeManager().addDataType(
+                    new StructureDataType(
+                        new CategoryPath("/b"), "word", 2),
+                    DataTypeConflictHandler.REPLACE_HANDLER);
+            }
+            finally {
+                pristineProgram.endTransaction(transaction, true);
+            }
+            assertNull(pristineProgram.getDataTypeManager()
+                .getDataType("/word"));
+            Response ambiguous = pristineService.applyDataRegions(
+                List.of(contiguous(
+                    "0x2530", "0x2531", "word")),
+                true, "");
+            assertTrue(ambiguous instanceof Response.Err);
+            assertTrue(ambiguous.toJson().contains(
+                "ambiguous datatype name: word"));
+        }
+        finally {
+            pristineBuilder.dispose();
         }
     }
 
@@ -1150,6 +1577,15 @@ public class DataRegionServiceGhidraTest {
         for (String field : List.of(
                 "regions", "created_data", "symbols", "references",
                 "namespaces", "comments", "conflicts", "clear_plan")) {
+            assertEquals(field, expected.get(field), actual.get(field));
+        }
+    }
+
+    private static void assertStablePlanFieldsEqual(
+            JsonObject expected, JsonObject actual) {
+        for (String field : List.of(
+                "regions", "symbols", "references", "namespaces",
+                "comments", "conflicts", "clear_plan")) {
             assertEquals(field, expected.get(field), actual.get(field));
         }
     }

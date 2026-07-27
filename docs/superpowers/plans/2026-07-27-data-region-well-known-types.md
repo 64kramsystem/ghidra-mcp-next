@@ -10,9 +10,11 @@ architecture-dependent types on non-default data organizations.
 
 **Architecture:** Preserve program-first lookup for caller-supplied
 contiguous-region types, then fall back to the shared well-known map and clone
-the result into the target program datatype manager before planning. Give
-split-pointer source halves their contractually fixed built-in byte directly,
-independent of program-local name shadowing.
+the result into the target program datatype manager before planning. Preflight
+the target-bound candidate's canonical path so Ghidra cannot replace a
+non-equivalent program datatype during built-in resolution. Give split-pointer
+source halves their contractually fixed built-in byte through the same
+preflight.
 
 **Tech stack:** Java 21, Ghidra 12.1.2 APIs, JUnit 4, Maven.
 
@@ -46,9 +48,10 @@ Commit and assert:
 - each array element length is one;
 - the expected target references exist.
 
-Preview again, compare stable plan fields with the first preview through the
-existing `assertPlanFieldsEqual` helper, and require both data actions to be
-`unchanged`.
+Preview again, compare the non-action plan fields with the first preview
+through a dedicated stable-fields helper, and require both data actions to
+be `unchanged`. Do not compare `created_data` wholesale: before commit its
+actions are `create`, while after commit they must be `unchanged`.
 
 ### Step 2: Run the focused test and prove the existing failure
 
@@ -166,46 +169,111 @@ git commit -m "Resolve data-region builtins for target programs"
 **Files:**
 
 - Modify: `src/test/java/com/xebyte/core/DataRegionServiceGhidraTest.java`
-- Modify: `src/test/java/com/xebyte/core/DataRegionCoreTest.java`
+- Modify: `src/main/java/com/xebyte/core/DataRegionCore.java`
 
-### Step 1: Add program-local shadowing coverage
+### Step 1: Add canonical-path collision coverage
 
 In a disposable 6502 program, register a program-local datatype named `byte`
-with a two-byte length.
+with a concrete two-byte length.
 
 Assert:
 
 - a caller-supplied contiguous `type_name="byte"` plans and commits at length
-  two;
-- a split table in the same program still commits one-byte source elements;
-- the committed split datatype path is pinned to the path observed from
-  Ghidra's conflict resolution;
-- repeat preview has stable plan fields and unchanged actions.
+  two and the listing datatype path remains `/byte`;
+- split-table preview rejects with `well-known datatype path conflicts` before
+  mutation;
+- mixed-case contiguous `type_name="BYTE"` preview rejects for the same
+  canonical-path collision;
+- aliased contiguous `type_name="uint8"` preview rejects because its
+  target-bound canonical path is also `/byte`;
+- commit attempts for all rejected requests also leave destinations
+  undefined and preserve the original two-byte `/byte`;
+- datatype-manager count remains unchanged across every rejected preview and
+  commit;
+- contiguous errors identify `type_name`, `canonical_path`, and
+  `occupant_length`;
+- the split error identifies `requested=byte`,
+  `usage=split_pointer_source`, the canonical path and occupant length, and
+  tells the caller to rename or remove the conflicting program datatype.
 
-### Step 2: Add compatibility-negative coverage
+Add a separate program with a one-byte typedef at `/byte`. Pin the previous
+compatibility behavior: split preview and commit succeed, both source arrays
+use that exact program-owned typedef as their one-byte element, and repeat
+preview is unchanged. In that program, a contiguous `type_name="uint8"`
+request remains strict but its error points to
+`type_name=byte` as the safe existing-type alternative. Compare the typedef's
+universal ID across commit instead of relying on datatype DB object identity.
+
+Add a second one-byte typedef around `undefined1`. It is not placeable, so
+split preview must return the canonical collision error, must not suggest the
+existing-type alternative, and must leave both source halves undefined.
+
+Run the focused test before implementation. Expected: fail because split
+preview currently succeeds. Do not let the red test reach the destructive
+commit path.
+
+### Step 2: Add collision-safe well-known cloning
+
+Add a private helper in `DataRegionCore` that:
+
+1. resolves a name through `ServiceUtils.resolveWellKnownType`;
+2. clones a match into the target program datatype manager;
+3. looks up the target-bound candidate's canonical `getPathName()`;
+4. returns the existing occupant when either direction of
+   `isEquivalent` reports structural equivalence;
+5. for split-source usage only, returns a non-equivalent existing occupant
+   when its length is exactly one and `requireFixedPlaceable` accepts it;
+6. throws `well-known datatype path conflicts` for every other
+   non-equivalent occupant;
+7. otherwise returns the mutation-free clone.
+
+Implement the placeability probe with a small `try`/`catch` around
+`requireFixedPlaceable`. A one-byte non-placeable occupant follows step 6 and
+returns the collision error, not the internal validation exception. When a
+contiguous collision occupant is fixed, placeable, and the same width as the
+candidate, append
+`request the existing program datatype with type_name=<occupant name>` to the
+remediation; do not offer that alternative for a width mismatch or a
+non-placeable occupant. Verify the non-placeable branch with a contiguous
+`type_name="uint8"` request against the `undefined1` typedef, because split
+errors never offer `type_name` remediation regardless of placeability.
+
+Use the helper from both the fallback branch of `resolveFixedType` and
+`planSplit`. Give it enough context to render `type_name=<name>` for
+contiguous requests and `requested=byte, usage=split_pointer_source` for the
+internal split call. `planSplit` must call it directly with the literal
+`"byte"`, wrap the result in `Objects.requireNonNull`, and must not route
+through `resolveFixedType`. Do not call
+`DataTypeManager.resolve` or `DataTypeManager.addDataType` during preview.
+
+Format collision errors as:
+
+```text
+well-known datatype path conflicts: type_name=uint8, canonical_path=/byte, occupant_length=2
+```
+
+Append `rename or remove the program datatype at /byte`. The split form
+replaces `type_name=...` with
+`requested=byte, usage=split_pointer_source`.
+
+Ghidra 12.1.2 fixture evidence for the current commit path is
+`[/byte=1, /byte[2]=2]`: the original two-byte `/byte` disappears and no
+conflict-renamed copy survives. The local source at `~/code/ghidra` shows the
+path from `CodeManager.createCodeUnit` through
+`DataTypeManagerDB.getResolvedID` to `resolveBuiltIn`; the latter handles the
+canonical built-in name before its generic conflict handler, so an explicit
+`DEFAULT_HANDLER` is not a fix.
+
+### Step 3: Add compatibility-negative coverage
 
 Cover:
 
 - an unknown name still reports `datatype not found`;
 - `void` reports `fixed and placeable`;
-- a mixed-case well-known fallback such as `WoRd` succeeds;
+- a collision-free mixed-case well-known fallback such as `WoRd` succeeds
+  with `data_length == 2`;
 - program-defined `/a/word` and `/b/word`, with no root `/word`, still report
   `ambiguous datatype name`.
-
-### Step 3: Add always-on placeability coverage
-
-In `DataRegionCoreTest`, assert:
-
-```java
-assertSame(
-    ByteDataType.dataType,
-    DataRegionCore.requireFixedPlaceable(
-        ByteDataType.dataType, "byte"));
-assertThrows(
-    IllegalArgumentException.class,
-    () -> DataRegionCore.requireFixedPlaceable(
-        VoidDataType.dataType, "void"));
-```
 
 ### Step 4: Run the focused tests
 
@@ -215,18 +283,18 @@ Run:
 mvn test \
   -Dghidra.test.install.dir=/Users/saverio/local/ghidra_12.1.2_PUBLIC \
   -Dtest=DataRegionServiceGhidraTest
-mvn test -Dtest=DataRegionCoreTest
 ```
 
-Expected: all pass. If Ghidra conflict-renames the shadowed built-in, use the
-observed committed path as the exact regression expectation and keep the
-response/listing name difference documented.
+Expected: all pass. The collision tests must prove that both dry-run and
+commit requests preserve the original two-byte `/byte`.
 
 ### Step 5: Commit
 
 ```bash
-git add src/test/java/com/xebyte/core/DataRegionServiceGhidraTest.java \
-  src/test/java/com/xebyte/core/DataRegionCoreTest.java
+git add src/main/java/com/xebyte/core/DataRegionCore.java \
+  src/test/java/com/xebyte/core/DataRegionServiceGhidraTest.java \
+  docs/superpowers/specs/2026-07-27-data-region-well-known-types-design.md \
+  docs/superpowers/plans/2026-07-27-data-region-well-known-types.md
 git commit -m "Cover data-region builtin compatibility"
 ```
 
@@ -243,7 +311,10 @@ Document that `apply_data_regions` now:
 - works with well-known fixed datatypes absent from a pristine program's
   datatype manager;
 - binds architecture-sensitive types to the target data organization;
-- uses an internal one-byte built-in for split pointer source halves.
+- uses an internal one-byte built-in for split pointer source halves;
+- reuses compatible fixed one-byte program occupants for split sources;
+- rejects canonical built-in path collisions before Ghidra can replace a
+  non-equivalent program datatype.
 
 ### Step 2: Verify and commit
 
@@ -299,4 +370,3 @@ and re-run the original `apply_data_regions` split-pointer request.
 Expected: both 256-byte table halves are typed, 256 decoded targets are
 validated, references and labels are created, and repeat application is
 idempotent.
-

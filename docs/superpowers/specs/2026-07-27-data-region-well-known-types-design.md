@@ -68,6 +68,28 @@ different sizes under the built-in manager and the target compiler
 specification. Planning and `Listing.createData` must use the same effective
 width.
 
+Before returning the clone, inspect the canonical path of that target-bound
+candidate in the program datatype manager. If the path is occupied:
+
+- reuse the existing datatype when it is structurally equivalent to the
+  candidate in either direction (`existing.isEquivalent(candidate)` or
+  `candidate.isEquivalent(existing)`);
+- reject the request during planning when it is non-equivalent, with
+  an actionable contiguous-region error of the form
+  `well-known datatype path conflicts: type_name=uint8, canonical_path=/byte,
+  occupant_length=2; rename or remove the program datatype at /byte`.
+  When the occupant is fixed, placeable, and the same width as the candidate,
+  append `or request the existing program datatype with type_name=byte`;
+  otherwise do not suggest the semantically different existing type.
+
+This preflight is necessary even though fallback happens after program-name
+lookup. The well-known map is case-insensitive while program lookup remains
+case-sensitive, so `type_name="BYTE"` can reach the fallback in a program
+that owns a non-equivalent lowercase `/byte`. It is also an alias map:
+`uint8`, `uint8_t`, and other names can resolve to a different canonical path
+such as `/byte`. Any requested well-known name whose target-bound canonical
+path is occupied by a non-equivalent datatype is a collision route.
+
 Pass either the program-defined result or the bound fallback through the
 existing `requireFixedPlaceable` validation.
 
@@ -84,42 +106,66 @@ outside this focused repair.
 ### Split pointer source bytes
 
 Split pointer tables do not accept a caller-supplied source datatype. Their
-two halves are byte cells by contract. Resolve
-`ByteDataType.dataType.clone(program.getDataTypeManager())` directly in
-`planSplit`.
+two halves are byte cells by contract. Call the well-known collision helper
+directly with the literal `"byte"` to obtain a target-bound built-in
+`ByteDataType`. Do not call `resolveFixedType`, because that would restore
+program-defined name precedence to this internal representation.
+Wrap this fixed-name result in `Objects.requireNonNull` so the internal
+contract remains explicit if the shared well-known map ever changes.
+
+The split call supplies an internal-use discriminator so its error reads
+`requested=byte, usage=split_pointer_source` rather than `type_name=byte`.
+`type_name` is not part of the split request schema and must not be suggested
+as a remediation. The error identifies the canonical path and tells the user
+to rename or remove the conflicting program datatype.
 
 Do not route the hard-coded internal `byte` requirement through
 program-defined name lookup. A program-local wider or ambiguous datatype named
-`byte` must not change or break the split-pointer representation. The existing
-one-byte length assertion becomes unnecessary once the concrete built-in is
-used.
+`byte` must not silently change the split-pointer representation. If `/byte`
+is non-equivalent to the required built-in but is itself fixed, placeable, and
+exactly one byte wide, reuse that program-owned occupant for split source
+cells. This preserves the endpoint's pre-repair support for legitimate
+one-byte typedefs and other byte-cell representations without resolving the
+built-in or mutating the datatype manager. Wider, undefined, dynamic, factory,
+bit-field, or otherwise non-placeable occupants still reject before any
+listing or datatype-manager mutation.
 
-If the program already defines a non-equivalent datatype at `/byte`, Ghidra
-may conflict-rename the built-in element type when `Listing.createData`
-resolves the split array into the program datatype manager. The committed
-listing's actual datatype path is authoritative and may therefore be
-`/byte.conflict[...]` even though the plan describes the requested built-in as
-`/byte[...]`. The response renders the planned `/byte[...]` path while the
-listing may hold `/byte.conflict[...]`; accepting that response/listing name
-difference avoids mutating the program datatype manager during preview.
-Structural equivalence and repeat-preview idempotency are required.
+These reuse and rejection rules are deliberately conservative. The local
+Ghidra source at `~/code/ghidra` confirms that `CodeManager.createCodeUnit`
+clones the datatype, then `DataTypeManagerDB.getResolvedID` calls `resolve`;
+`resolveBuiltIn` gives canonical paths to built-ins independently of the
+caller's generic conflict handler by renaming the existing occupant before
+creating the built-in. A live fixture using that current implicit
+`Listing.createData` path left only `/byte=1` and `/byte[2]=2`; the original
+two-byte `/byte` disappeared and no conflict-renamed copy remained. Calling
+`DataTypeManager.resolve(..., DEFAULT_HANDLER)` explicitly therefore does not
+make this safe. Collision preflight introduces only two behaviors: reuse of a
+safe existing datatype and rejection before mutation. Conflict renaming,
+datatype restoration, and a new internal datatype family are outside scope.
 
 ## Compatibility details
 
 - Well-known fallback names are case-insensitive because
   `resolveWellKnownType` lowercases its input. Thus `BYTE` and `Word` become
-  accepted when no exact program-defined datatype of those names exists.
+  accepted when no exact program-defined datatype of those names or
+  non-equivalent datatype at the canonical built-in path exists.
 - A rejected well-known but non-placeable name such as `void` changes from
   `datatype not found` to the more precise `datatype must be fixed and
   placeable` error.
 - Unknown names still report `datatype not found`.
 - Exact and uniquely resolved program-defined names retain current precedence,
   ambiguity behavior, and case sensitivity.
-- Split-pointer source halves now always use Ghidra's one-byte built-in,
-  independent of a program-defined datatype named `byte`. The former
-  `program byte datatype is not one byte` failure is removed. When a
-  non-equivalent `/byte` already exists, Ghidra may conflict-rename the
-  committed built-in datatype as described above.
+- Split-pointer source halves use Ghidra's one-byte built-in unless `/byte`
+  is occupied by a fixed, placeable, one-byte program datatype, which is
+  reused instead. Wider or non-placeable occupants produce an explicit
+  canonical-path collision error, and a program definition is never
+  replaced.
+- Collision preflight applies only to target-bound well-known candidates.
+  Exact and uniquely found program-owned datatypes never enter that path.
+  In the normal fallback case the canonical path is absent. Collision routes
+  include case variants such as `BYTE` meeting `/byte` and textual aliases
+  such as `uint8` resolving to an occupied `/byte`. Preview remains
+  mutation-free.
 
 ## Tests
 
@@ -152,21 +198,49 @@ class teardown owns only the shared fixture builder.
      the preview after commit, compare stable plan fields, and require an
      unchanged data action.
 
-2. In another disposable 6502 program, register a program-local datatype named
-   `byte` whose length is two bytes.
+2. In another disposable 6502 program, register a realistic program-local
+   datatype named `byte` whose length is two bytes.
 
    - A contiguous region with `type_name="byte"` must plan and commit using
-     the program-local two-byte datatype, proving caller-supplied precedence.
-   - A split pointer table in the same program must still plan and commit with
-     one-byte built-in arrays, proving internal representation is independent
-     of program name shadowing. Assert the committed array element length and
-     pin its observed actual datatype path (`/byte` or the conflict-renamed
-     path) in the regression rather than assuming it remains `/byte`.
-   - Repeat-preview the split request, compare stable plan fields, and require
-     unchanged actions. This pins structural equivalence even if Ghidra
-     conflict-renamed the committed built-in.
+     the program-local two-byte datatype and preserve the `/byte` path,
+     proving caller-supplied precedence.
+   - Preview and commit a split pointer table. Both must reject with
+     `well-known datatype path conflicts`; neither may define source data or
+     alter the original `/byte`.
+   - Preview and commit a contiguous `type_name="BYTE"` request. Both must
+     reject for the same canonical-path collision, leave the destination
+     undefined, and preserve the original `/byte`. This covers the
+     case-insensitive fallback route.
+   - Repeat with `type_name="uint8"` to cover an alias whose requested text
+     differs from the canonical `/byte` path.
+   - Capture the program datatype count before rejected requests and require
+     it to remain unchanged after every preview and commit rejection.
+   - Require contiguous collision errors to identify `type_name`,
+     `canonical_path`, and `occupant_length`. Require the split error to
+     identify `requested=byte`, `usage=split_pointer_source`, the same path
+     and length, and the rename/remove remediation.
 
-3. Create a pristine `x86:LE:16:Real Mode` program whose compiler
+3. In a separate disposable 6502 program, install a one-byte typedef at
+   `/byte` whose base type has a different canonical name.
+
+   - Split preview and commit must succeed by reusing that exact
+     program-owned typedef as both array element types.
+   - The typedef at `/byte` must retain its identity and one-byte length.
+   - Repeat preview must report both data actions unchanged.
+   - A contiguous `type_name="uint8"` request remains strict and rejects the
+     non-equivalent typedef, but its error must identify
+     `type_name=byte` as the safe way to request the existing compatible
+     program datatype.
+
+4. In another disposable 6502 program, install a one-byte `/byte` typedef
+   around `undefined1`. Split preview must reject with the canonical collision
+   error, identify `occupant_length=1`, and define neither source half. A
+   contiguous `type_name="uint8"` preview must also reject with the canonical
+   collision error and omit the existing-type alternative because the
+   occupant is not placeable. Both paths must preserve the typedef identity
+   and datatype-manager count.
+
+5. Create a pristine `x86:LE:16:Real Mode` program whose compiler
    specification uses a two-byte integer. Assert `/int` is absent before the
    sub-case, then preview and commit a contiguous `int` region. The planned
    `data_length`, committed `Data.getLength()`, and default stride must all be
@@ -174,17 +248,19 @@ class teardown owns only the shared fixture builder.
    organization before planning. Avoid assertions on normalized address
    strings because this language uses segmented addresses.
 
-4. Confirm an unknown datatype still reports `datatype not found`, `void`
-   reports `fixed and placeable`, a mixed-case well-known name succeeds, and
-   program-defined `/a/word` and `/b/word` definitions with no root `/word`
-   still report `ambiguous datatype name` before well-known fallback.
+6. Confirm an unknown datatype still reports `datatype not found`, `void`
+   reports `fixed and placeable`, a collision-free mixed-case well-known name
+   succeeds with the expected width, and program-defined `/a/word` and
+   `/b/word` definitions with no root `/word` still report
+   `ambiguous datatype name` before well-known fallback.
 
-### Always-on unit coverage
-
-Add focused `DataRegionCoreTest` assertions that
-`requireFixedPlaceable` accepts the fixed `ByteDataType` and rejects
-`VoidDataType`. These do not replace the program-bound fixture regressions,
-but keep the placeability boundary exercised in the default Maven test run.
+The built-in placeability checks remain in the initialized Ghidra fixture
+suite. Do not load static built-in datatype singletons from
+`DataRegionCoreTest`: without Ghidra application initialization that triggers
+`UniversalIdGenerator` diagnostics and creates noisy pseudo-coverage.
+Every regression for this repair is therefore gated by
+`ghidra.test.install.dir`; the default `mvn test` and current CI workflow skip
+them. The required local Ghidra fixture gate below is authoritative.
 
 Before the implementation change, the focused Ghidra fixture test must fail
 with `datatype not found: byte`. After the fallback is added, run:
