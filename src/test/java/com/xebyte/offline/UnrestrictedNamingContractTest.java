@@ -47,4 +47,19 @@ public class UnrestrictedNamingContractTest extends TestCase {
         assertFalse(GeneratedSymbolNames.isGenerated("FileZilla_ParseRegistration"));
         assertFalse(GeneratedSymbolNames.isGenerated("wine_server_call"));
     }
+
+    public void testCommentGeneratedNameScannerUsesWholeTokensAndKnownPrefixes() {
+        String comment = "DAT_2942 PTR_DAT_00401000 EXT_401000 OFF_401020 "
+                + "BYTE_00402000 s_Message_00403000 dat_beef "
+                + "SUB_SND_PLAYER__1605 "
+                + "MY_DAT_2942 DAT_123 DAT_2942x DAT_2942.1";
+
+        assertEquals(
+            List.of("DAT_2942", "PTR_DAT_00401000", "EXT_401000", "OFF_401020",
+                "BYTE_00402000", "s_Message_00403000", "dat_beef",
+                "SUB_SND_PLAYER__1605"),
+            GeneratedSymbolNames.findCommentNameMentions(comment).stream()
+                .map(GeneratedSymbolNames.CommentNameMention::name)
+                .toList());
+    }
 }

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "description": "GhidraMCP-next REST API Endpoint Specification",
-  "total_endpoints": 262,
+  "total_endpoints": 263,
   "categories": {
     "listing": "List program data",
     "getter": "Get specific data",
@@ -292,6 +292,17 @@
         "program"
       ],
       "description": "Audit every global variable referenced from within a function in one call. Walks the function's instructions, collects unique data references, and returns the per-global audit (same shape as audit_global) plus a summary of how many are fully documented vs have issues. The killer per-function pre-flight tool — start every doc pass with this when the function has global xrefs."
+    },
+    {
+      "path": "/audit_stale_comment_names",
+      "method": "GET",
+      "category": "analysis",
+      "params": [
+        "limit",
+        "offset",
+        "program"
+      ],
+      "description": "Find Ghidra-generated address names left in listing comments after their targets were given meaningful symbols. Scans every comment kind in mapped memory and reports only resolvable names whose target has a non-generated current symbol. Mentions of deleted labels are out of scope; deliberate historical uses of old names require human review."
     },
     {
       "path": "/batch_add_function_tags",

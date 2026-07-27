@@ -898,6 +898,30 @@ class TestCoverage:
         assert response.status_code == 200
         assert "error" in json.loads(response.text)
 
+    def test_audit_stale_comment_names_shape_and_paging(self, http_client):
+        response = http_client.get(
+            "/audit_stale_comment_names", params={"limit": 1}
+        )
+        assert response.status_code == 200
+        body = json.loads(response.text)
+        assert body["returned"] == len(body["items"])
+        assert body["returned"] <= 1
+        assert body["has_more"] == (
+            body["offset"] + body["returned"] < body["all_count"]
+        )
+        assert "program_modification_number" in body
+        for item in body["items"]:
+            assert set(item) == {
+                "comment_address",
+                "comment_kind",
+                "stale_name",
+                "target_address",
+                "current_primary_name",
+                "current_names",
+                "comment_excerpt",
+            }
+            assert item["current_primary_name"] == item["current_names"][0]
+
 
 class TestResponseFormats:
     """Verify response format consistency."""
