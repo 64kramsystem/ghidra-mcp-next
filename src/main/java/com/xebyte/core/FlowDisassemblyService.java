@@ -1332,10 +1332,18 @@ public final class FlowDisassemblyService {
     }
 
     private static AddressSet commitFrontier(FlowPlan plan) {
-        AddressSet expected = plan.plannedNewInstructions();
+        // Every commit root must be a planned instruction start, never an
+        // interior byte that merely belongs to the expected byte set.
+        Set<Address> plannedStarts = new TreeSet<>(Address::compareTo);
+        for (InstructionRecord instruction : plan.instructions()) {
+            if (!instruction.existing()) {
+                plannedStarts.add(instruction.address());
+            }
+        }
+
         AddressSet frontier = new AddressSet();
         for (Address seed : plan.normalizedSeeds()) {
-            if (expected.contains(seed)) {
+            if (plannedStarts.contains(seed)) {
                 frontier.add(seed);
             }
         }
@@ -1344,13 +1352,20 @@ public final class FlowDisassemblyService {
                 continue;
             }
             if (instruction.fallThrough() != null &&
-                expected.contains(instruction.fallThrough())) {
+                plannedStarts.contains(instruction.fallThrough())) {
                 frontier.add(instruction.fallThrough());
             }
             for (Address target : instruction.flows()) {
-                if (expected.contains(target)) {
+                if (plannedStarts.contains(target)) {
                     frontier.add(target);
                 }
+            }
+        }
+        // CALL is the only EdgeKind whose traversal parity with Ghidra's stock
+        // disassembler is not guaranteed, so planned callees get explicit roots.
+        for (Address target : plan.directCallTargets()) {
+            if (plannedStarts.contains(target)) {
+                frontier.add(target);
             }
         }
         return frontier;

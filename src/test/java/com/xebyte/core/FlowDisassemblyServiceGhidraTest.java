@@ -356,6 +356,118 @@ public class FlowDisassemblyServiceGhidraTest {
     }
 
     @Test
+    public void commitFrontierSeedsNestedPlannedDirectCallTargets() {
+        Address entry = address(0x1000);
+        Address entryReturn = address(0x1003);
+        Address callee = address(0x1010);
+        Address calleeReturn = address(0x1013);
+        Address nestedCallee = address(0x1020);
+        FlowDisassemblyService.FlowPlan callPlan =
+            new FlowDisassemblyService.FlowPlan(
+                List.of(entry),
+                new AddressSet(entry, address(0x10ff)),
+                List.of(
+                    new FlowDisassemblyService.InstructionRecord(
+                        entry, 3, "JSR 0x1010", false, entryReturn,
+                        List.of(callee), RefType.UNCONDITIONAL_CALL),
+                    new FlowDisassemblyService.InstructionRecord(
+                        entryReturn, 1, "RTS", false, null,
+                        List.of(), RefType.TERMINATOR),
+                    new FlowDisassemblyService.InstructionRecord(
+                        callee, 3, "JSR 0x1020", false, calleeReturn,
+                        List.of(nestedCallee), RefType.UNCONDITIONAL_CALL),
+                    new FlowDisassemblyService.InstructionRecord(
+                        calleeReturn, 1, "RTS", false, null,
+                        List.of(), RefType.TERMINATOR),
+                    new FlowDisassemblyService.InstructionRecord(
+                        nestedCallee, 1, "RTS", false, null,
+                        List.of(), RefType.TERMINATOR)),
+                new AddressSet(entry, entryReturn)
+                    .union(new AddressSet(callee, calleeReturn))
+                    .union(new AddressSet(nestedCallee, nestedCallee)),
+                new AddressSet(),
+                List.of(callee, nestedCallee),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                false);
+        RecordingStockDisassembler stock = new RecordingStockDisassembler();
+        FlowDisassemblyService service = new FlowDisassemblyService(
+            provider,
+            threading,
+            (ignoredProgram, request) -> callPlan,
+            stock,
+            (ignoredProgram, ignoredSet) ->
+                new FlowDisassemblyService.AnalysisSubmission(true, null));
+
+        Response response = call(service, false, false);
+
+        assertTrue(response.toJson(), response instanceof Response.Ok);
+        assertEquals(1, stock.calls);
+        assertTrue(stock.starts.hasSameAddresses(
+            new AddressSet(entry, entry)
+                .union(new AddressSet(callee, callee))
+                .union(new AddressSet(nestedCallee, nestedCallee))));
+        assertTrue(stock.restriction.hasSameAddresses(
+            callPlan.plannedNewInstructions()));
+    }
+
+    @Test
+    public void commitFrontierDoesNotSeedCallTargetInsidePlannedInstruction() {
+        Address entry = address(0x1000);
+        Address fallThrough = address(0x1003);
+        Address offcutCallTarget = address(0x1004);
+        FlowDisassemblyService.FlowPlan callPlan =
+            new FlowDisassemblyService.FlowPlan(
+                List.of(entry),
+                new AddressSet(entry, address(0x10ff)),
+                List.of(
+                    new FlowDisassemblyService.InstructionRecord(
+                        entry, 3, "JSR 0x1004", false, fallThrough,
+                        List.of(offcutCallTarget), RefType.UNCONDITIONAL_CALL),
+                    new FlowDisassemblyService.InstructionRecord(
+                        fallThrough, 2, "LDA #0x01", false, null,
+                        List.of(), RefType.TERMINATOR)),
+                new AddressSet(entry, offcutCallTarget),
+                new AddressSet(),
+                List.of(offcutCallTarget),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                false);
+        RecordingStockDisassembler stock = new RecordingStockDisassembler();
+        FlowDisassemblyService service = new FlowDisassemblyService(
+            provider,
+            threading,
+            (ignoredProgram, request) -> callPlan,
+            stock,
+            (ignoredProgram, ignoredSet) ->
+                new FlowDisassemblyService.AnalysisSubmission(true, null));
+
+        Response response = service.disassembleFlow(
+            "[\"ram:1000\"]",
+            "ram:1000",
+            "ram:10ff",
+            false,
+            false,
+            true,
+            false,
+            false,
+            100,
+            "");
+
+        assertTrue(response.toJson(), response instanceof Response.Ok);
+        assertTrue(stock.starts.hasSameAddresses(
+            new AddressSet(entry, entry)));
+    }
+
+    @Test
     public void live6502DryRunAndCommitHaveEqualNewInstructionSet() throws Exception {
         initializeGhidraOrSkip();
         ProgramBuilder builder =
@@ -450,6 +562,70 @@ public class FlowDisassemblyServiceGhidraTest {
                 liveProgram.getListing().getInstructionAt(builder.addr("0x100b")) == null);
             assertTrue(commit.toJson(), commit.toJson().contains("\"COMPUTED_JUMP\""));
             assertTrue(commit.toJson(), commit.toJson().contains("\"restricted_boundary\""));
+        }
+        finally {
+            builder.dispose();
+        }
+    }
+
+    @Test
+    public void liveOverlayNestedCallsCommitInOverlaySpace()
+            throws Exception {
+        initializeGhidraOrSkip();
+        ProgramBuilder builder =
+            new ProgramBuilder("flow-overlay-calls-6502",
+                "6502:LE:16:default", "default", this);
+        try {
+            ProgramDB liveProgram = builder.getProgram();
+            builder.createMemory(".ram", "0x1000", 0x100);
+            builder.createOverlayMemory("bank", "0x1000", 0x100);
+            builder.setBytes("bank::1000", "20 10 10 60");
+            builder.setBytes("bank::1010", "20 20 10 60");
+            builder.setBytes("bank::1020", "a9 01 60");
+
+            FlowDisassemblyService service = liveService(liveProgram);
+            // Service addresses use <space>:<hex>; ProgramBuilder uses Ghidra's
+            // internal <space>::<hex> spelling for the same overlay addresses.
+            Response preview = service.disassembleFlow(
+                "[\"bank:1000\"]",
+                "bank:1000",
+                "bank:1022",
+                true,
+                true,
+                true,
+                false,
+                false,
+                100,
+                "");
+            Response commit = service.disassembleFlow(
+                "[\"bank:1000\"]",
+                "bank:1000",
+                "bank:1022",
+                false,
+                true,
+                true,
+                false,
+                false,
+                100,
+                "");
+
+            assertTrue(preview.toJson(), preview instanceof Response.Ok);
+            assertTrue(commit.toJson(), commit instanceof Response.Ok);
+            JsonObject previewJson =
+                JsonParser.parseString(preview.toJson()).getAsJsonObject();
+            JsonObject commitJson =
+                JsonParser.parseString(commit.toJson()).getAsJsonObject();
+            assertEquals(
+                previewJson.get("candidate_instruction_ranges"),
+                commitJson.get("created_instruction_ranges"));
+            assertTrue(liveProgram.getListing()
+                .getInstructionAt(builder.addr("bank::1000")) != null);
+            assertTrue(liveProgram.getListing()
+                .getInstructionAt(builder.addr("bank::1010")) != null);
+            assertTrue(liveProgram.getListing()
+                .getInstructionAt(builder.addr("bank::1020")) != null);
+            assertTrue(liveProgram.getListing()
+                .getInstructionAt(builder.addr("0x1000")) == null);
         }
         finally {
             builder.dispose();
