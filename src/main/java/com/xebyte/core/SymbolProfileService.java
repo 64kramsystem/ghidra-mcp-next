@@ -763,6 +763,12 @@ public final class SymbolProfileService {
         return List.copyOf(result);
     }
 
+    /**
+     * No overlay-ambiguity guard on a profile block's start: it places a block that
+     * does not exist yet, so there is no existing occupant a bare offset could pick
+     * the wrong one of. The profile's symbol, comment and equate addresses do go
+     * through the guard, via {@code AddressCommentCore.resolveAddress}.
+     */
     private static void validateBlockRange(
             Program program,
             SymbolProfileParser.ProfileMemoryBlock requested) {

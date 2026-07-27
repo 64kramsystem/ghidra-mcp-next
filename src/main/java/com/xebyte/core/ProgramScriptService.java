@@ -1901,7 +1901,7 @@ public class ProgramScriptService {
         }
 
         try {
-            Address addr = ServiceUtils.parseAddress(program, addressStr);
+            Address addr = ServiceUtils.parseMutationAddress(program, addressStr);
             if (addr == null) {
                 return Response.err(ServiceUtils.getLastParseError());
             }
@@ -2041,7 +2041,7 @@ public class ProgramScriptService {
         }
 
         try {
-            Address addr = ServiceUtils.parseAddress(program, addressStr);
+            Address addr = ServiceUtils.parseMutationAddress(program, addressStr);
             if (addr == null) {
                 return Response.err(ServiceUtils.getLastParseError());
             }
@@ -2420,6 +2420,14 @@ public class ProgramScriptService {
             return Response.err("address parameter required");
         }
 
+        // Resolve before entering the Swing lambda: parseMutationAddress reports its
+        // reason (bad hex, or an unqualified offset mapped in several spaces) through a
+        // ThreadLocal, which is invisible once execution transfers to the EDT.
+        final Address newBase = ServiceUtils.parseMutationAddress(program, addressStr);
+        if (newBase == null) {
+            return Response.err(ServiceUtils.getLastParseError());
+        }
+
         final AtomicReference<Map<String, Object>> resultData = new AtomicReference<>();
         final AtomicReference<String> errorMsg = new AtomicReference<>();
 
@@ -2429,11 +2437,6 @@ public class ProgramScriptService {
                 boolean txSuccess = false;
                 try {
                     Address oldBase = program.getImageBase();
-                    Address newBase = ServiceUtils.parseAddress(program, addressStr);
-                    if (newBase == null) {
-                        errorMsg.set("Invalid address: " + addressStr);
-                        return;
-                    }
                     program.setImageBase(newBase, true);
                     txSuccess = true;
 

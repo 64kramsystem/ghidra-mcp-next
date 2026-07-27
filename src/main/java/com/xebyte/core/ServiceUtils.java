@@ -9,6 +9,7 @@ import ghidra.program.model.listing.Data;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.FunctionManager;
 import ghidra.program.model.listing.Program;
+import ghidra.program.model.mem.MemoryBlock;
 import ghidra.program.model.symbol.Symbol;
 import ghidra.program.model.symbol.SymbolIterator;
 import ghidra.program.model.symbol.SymbolTable;
@@ -635,6 +636,156 @@ public final class ServiceUtils {
                 + "' could not be resolved in the default address space. "
                 + "Available spaces: " + available
                 + ". Try <space>:<hex> (e.g., " + buildSpaceSuggestion(program, addressStr) + ").");
+        }
+        return null;
+    }
+
+    // ========================================================================
+    // Overlay ambiguity guard for mutating endpoints
+    // ========================================================================
+
+    /**
+     * Every mapped address that shares {@code offset}, one per memory block whose
+     * address space can express it.
+     *
+     * <p>On a program carrying an overlay block, one offset denotes two different
+     * occupants — for example RAM holding a resident loader and an overlay holding
+     * the code that displaced it at runtime. Each is a distinct {@link Address} with
+     * a distinct {@link AddressSpace}.
+     */
+    public static List<Address> mappedCandidatesAtOffset(Program program, long offset) {
+        Set<Address> candidates = new LinkedHashSet<>();
+        for (MemoryBlock block : program.getMemory().getBlocks()) {
+            Address start = block.getStart();
+            Address end = block.getEnd();
+            if (Long.compareUnsigned(offset, start.getOffset()) < 0
+                    || Long.compareUnsigned(offset, end.getOffset()) > 0) {
+                continue;
+            }
+            try {
+                Address candidate = start.getAddressSpace().getAddress(offset);
+                if (block.contains(candidate)) {
+                    candidates.add(candidate);
+                }
+            }
+            catch (RuntimeException ignored) {
+                // The offset is outside this address space.
+            }
+        }
+        return new ArrayList<>(candidates);
+    }
+
+    /**
+     * The single ambiguity guard for MUTATING address-taking endpoints.
+     *
+     * <p>Returns the standard refusal message when {@code addressText} carries no
+     * {@code <space>:} qualifier and its offset is mapped in more than one of the
+     * program's address spaces; returns {@code null} otherwise.
+     *
+     * <p>A mutation is applied to exactly one occupant of an overlapped offset. Left
+     * unguarded, {@link #parseAddress} silently picks the default physical space, so a
+     * caller who meant the overlay corrupts the physical occupant's analysis with no
+     * signal at all. Refusing forces the caller to say which one they meant.
+     *
+     * <p><b>Read-only endpoints must not call this.</b> For reads, a bare hex address
+     * deliberately resolves to the physical space (see the references-into-range
+     * design note); that convention stays.
+     *
+     * @param resolved the already-parsed address, or {@code null} when the text did
+     *     not parse at all — a non-address is never ambiguous, so the caller's own
+     *     parse-failure handling stays in charge.
+     */
+    public static String ambiguousUnqualifiedAddressError(
+            Program program, String addressText, Address resolved) {
+        if (program == null || addressText == null || resolved == null) {
+            return null;
+        }
+        if (addressText.contains(":")) {
+            return null;
+        }
+        List<Address> candidates =
+            mappedCandidatesAtOffset(program, resolved.getOffset());
+        if (candidates.size() <= 1) {
+            return null;
+        }
+        return "Ambiguous unqualified address '" + addressText
+            + "' maps to multiple program address spaces: "
+            + candidates.stream().map(Address::toString).toList().toString()
+            + ". Use a qualified <space>:<hex> address.";
+    }
+
+    /**
+     * {@link #parseAddress} plus the mutating-endpoint ambiguity guard.
+     *
+     * <p>Drop-in replacement for {@code parseAddress} at any call site that goes on to
+     * mutate the program: returns {@code null} on either a parse failure or an
+     * ambiguous unqualified address, with the reason available from
+     * {@link #getLastParseError()}.
+     *
+     * <p>THREADING: same contract as {@link #parseAddress} — call it on the thread that
+     * reads {@link #getLastParseError()}, before any threading-strategy hop.
+     */
+    public static Address parseMutationAddress(Program program, String addressStr) {
+        Address resolved = parseAddress(program, addressStr);
+        if (resolved == null) {
+            return null;
+        }
+        String ambiguity =
+            ambiguousUnqualifiedAddressError(program, addressStr, resolved);
+        if (ambiguity != null) {
+            lastParseError.set(ambiguity);
+            return null;
+        }
+        return resolved;
+    }
+
+    /**
+     * Ambiguity guard for a mutating endpoint whose parameter may be a name rather
+     * than an address (a function reference, say). Parses {@code text} only to test
+     * it; a value that is not an address returns {@code null} so name resolution can
+     * proceed. Restores {@link #getLastParseError()} so the probe is invisible.
+     */
+    public static String probeMutationAddressAmbiguity(Program program, String text) {
+        if (program == null || text == null || text.isBlank()) {
+            return null;
+        }
+        String previousError = lastParseError.get();
+        try {
+            Address probe = parseAddress(program, text.trim());
+            return ambiguousUnqualifiedAddressError(program, text.trim(), probe);
+        }
+        finally {
+            if (previousError == null) {
+                lastParseError.remove();
+            }
+            else {
+                lastParseError.set(previousError);
+            }
+        }
+    }
+
+    /**
+     * Batch guard: the ambiguity refusal for the first offending address in
+     * {@code addressTexts}, or {@code null} when every entry is unambiguous. Batch
+     * endpoints call this before opening their transaction so an ambiguous entry
+     * fails the whole request instead of partially applying.
+     */
+    public static String firstAmbiguousUnqualifiedAddress(
+            Program program, Iterable<String> addressTexts) {
+        if (program == null || addressTexts == null) {
+            return null;
+        }
+        for (String text : addressTexts) {
+            if (text == null || text.isBlank()) {
+                continue;
+            }
+            String trimmed = text.trim();
+            Address resolved = parseAddress(program, trimmed);
+            String ambiguity =
+                ambiguousUnqualifiedAddressError(program, trimmed, resolved);
+            if (ambiguity != null) {
+                return ambiguity;
+            }
         }
         return null;
     }
