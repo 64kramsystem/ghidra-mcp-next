@@ -547,6 +547,11 @@ public class DebuggerService {
                     description = "Program path/name to use for static mapping") String programName,
             @Param(value = "offer", source = ParamSource.BODY, defaultValue = "",
                     description = "Optional launcher title or config name, e.g. dbgeng") String preferredOffer,
+            @Param(value = "launcher_args", source = ParamSource.BODY, optional = true,
+                    schemaFragment = "{\"type\":\"object\"}",
+                    description = "Optional JSON object keyed by exact parameter names returned "
+                            + "by debugger_launch_offers. Values must be strings, numbers, or "
+                            + "booleans and override the launcher's saved/default values.") Object launcherArgs,
             @Param(value = "python_executable", source = ParamSource.BODY, defaultValue = "",
                     description = "Optional Python executable for Python-backed debugger launchers") String pythonExecutable) {
         PluginTool tool;
@@ -606,6 +611,9 @@ public class DebuggerService {
                 return Response.err("Selected launcher '" + offer.getTitle() +
                         "' launches an executable, so executable_path is required.");
             }
+            Map<String, String> launcherOverrides =
+                    DebuggerLaunchSemantics.decodeLauncherArguments(
+                            launcherArgs, offer.getParameters().keySet());
 
             int waitSeconds = Math.max(1, timeoutSeconds);
             ConsoleTaskMonitor monitor = new ConsoleTaskMonitor();
@@ -634,6 +642,11 @@ public class DebuggerService {
                             if (pythonExecutable != null && !pythonExecutable.isBlank()) {
                                 setLaunchArgument(configured, launchOffer.getParameters(),
                                         "env:OPT_PYTHON_EXE", pythonExecutable);
+                            }
+                            for (Map.Entry<String, String> entry :
+                                    launcherOverrides.entrySet()) {
+                                setLaunchArgument(configured, launchOffer.getParameters(),
+                                        entry.getKey(), entry.getValue());
                             }
                             return configured;
                         }
