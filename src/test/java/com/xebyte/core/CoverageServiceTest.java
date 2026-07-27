@@ -21,10 +21,12 @@ import java.util.Map;
 import org.junit.Test;
 
 import ghidra.program.model.address.Address;
+import ghidra.program.model.address.AddressFactory;
 import ghidra.program.model.address.AddressIterator;
 import ghidra.program.model.address.AddressSet;
 import ghidra.program.model.address.AddressSetView;
 import ghidra.program.model.address.AddressSpace;
+import ghidra.program.model.address.DefaultAddressFactory;
 import ghidra.program.model.address.GenericAddressSpace;
 import ghidra.program.model.data.ArrayDataType;
 import ghidra.program.model.data.ByteDataType;
@@ -71,6 +73,8 @@ public class CoverageServiceTest {
         final SymbolTable symbols = mock(SymbolTable.class);
         final ReferenceManager references = mock(ReferenceManager.class);
         final ProgramProvider provider = mock(ProgramProvider.class);
+        final AddressFactory addressFactory =
+            new DefaultAddressFactory(new AddressSpace[] {RAM, PLAYER}, RAM);
         final List<MemoryBlock> blocks = new ArrayList<>();
         final AddressSet initialized = new AddressSet();
         final List<Instruction> instructions = new ArrayList<>();
@@ -82,6 +86,7 @@ public class CoverageServiceTest {
             new com.xebyte.offline.RecordingThreadingStrategy();
         long modificationNumber = 4213;
         boolean bumpModificationOnSymbolPass;
+        boolean bumpModificationOnSymbolLookup;
 
         Fixture block(String name, AddressSpace space, long start, long end) {
             return block(name, space, start, end, start, end);
@@ -135,17 +140,27 @@ public class CoverageServiceTest {
         }
 
         Fixture symbol(AddressSpace space, long at, String name) {
-            return symbol(space, at, name, "Global");
+            return symbol(space, at, name, "Global", true);
         }
 
         Fixture symbol(AddressSpace space, long at, String name, String namespace) {
+            return symbol(space, at, name, namespace, true);
+        }
+
+        Fixture symbol(
+                AddressSpace space, long at, String name, boolean primary) {
+            return symbol(space, at, name, "Global", primary);
+        }
+
+        Fixture symbol(AddressSpace space, long at, String name, String namespace,
+                boolean primary) {
             Symbol symbol = mock(Symbol.class);
             Namespace parent = mock(Namespace.class);
             when(parent.getName(true)).thenReturn(namespace);
             when(symbol.getAddress()).thenReturn(space.getAddress(at));
             when(symbol.getName()).thenReturn(name);
             when(symbol.getParentNamespace()).thenReturn(parent);
-            when(symbol.isPrimary()).thenReturn(true);
+            when(symbol.isPrimary()).thenReturn(primary);
             allSymbols.add(symbol);
             return this;
         }
@@ -171,6 +186,7 @@ public class CoverageServiceTest {
             when(program.getListing()).thenReturn(listing);
             when(program.getSymbolTable()).thenReturn(symbols);
             when(program.getReferenceManager()).thenReturn(references);
+            when(program.getAddressFactory()).thenReturn(addressFactory);
             when(program.getModificationNumber()).thenAnswer(i -> modificationNumber);
             when(memory.getBlocks()).thenReturn(blocks.toArray(new MemoryBlock[0]));
             when(memory.getAllInitializedAddressSet()).thenReturn(initialized);
@@ -220,6 +236,16 @@ public class CoverageServiceTest {
                 if (bumpModificationOnSymbolPass) modificationNumber++;
                 return symbolIterator(allSymbols);
             });
+            when(symbols.getSymbols(any(Address.class))).thenAnswer(invocation -> {
+                if (bumpModificationOnSymbolLookup) modificationNumber++;
+                Address at = invocation.getArgument(0);
+                return allSymbols.stream()
+                    .filter(symbol -> at.equals(symbol.getAddress()))
+                    .sorted(Comparator
+                        .comparing((Symbol symbol) -> !symbol.isPrimary())
+                        .thenComparing(symbol -> symbol.getName()))
+                    .toArray(Symbol[]::new);
+            });
             when(symbols.getPrimarySymbolIterator(
                     any(AddressSetView.class), anyBoolean()))
                 .thenAnswer(invocation -> {
@@ -255,7 +281,26 @@ public class CoverageServiceTest {
             when(provider.getCurrentProgram()).thenReturn(program);
             when(provider.getProgram(anyString())).thenReturn(program);
             when(provider.getAllOpenPrograms()).thenReturn(new Program[] {program});
-            return new CoverageService(provider, threading);
+            return new CoverageService(provider, threading, Fixture::resolveDynamicName);
+        }
+
+        private static Address resolveDynamicName(
+                AddressFactory addressFactory, String name) {
+            int separator = name.lastIndexOf('_');
+            if (separator < 0 || separator == name.length() - 1) return null;
+            String address = name.substring(separator + 1);
+            try {
+                long offset = Long.parseLong(address, 16);
+                String encodedSpace = name.substring(0, separator);
+                for (AddressSpace space : addressFactory.getAddressSpaces()) {
+                    if (encodedSpace.endsWith("_" + space.getName())) {
+                        return space.getAddress(offset);
+                    }
+                }
+                return addressFactory.getDefaultAddressSpace().getAddress(offset);
+            } catch (IllegalArgumentException exception) {
+                return null;
+            }
         }
 
         private static Address parseKey(String key) {
@@ -711,6 +756,206 @@ public class CoverageServiceTest {
     }
 
     // --------------------------------------------------------------- backlog
+
+    @Test
+    public void staleCommentNameReportsTheCurrentTargetName() {
+        CoverageService service = new Fixture()
+            .block("ram", RAM, 0x0000, 0xffff)
+            .symbol(RAM, 0x2942, "CURRENT_ROOM_GRAPHIC_ID")
+            .comment(RAM, 0x05a1, CommentType.EOL, "compute DAT_2942 * 6")
+            .build();
+
+        Map<String, Object> response =
+            body(service.auditStaleCommentNames(100, 0, ""));
+        List<Map<String, Object>> items = list(response, "items");
+        assertEquals(1, items.size());
+        assertEquals("RAM:05a1", items.get(0).get("comment_address"));
+        assertEquals("eol", items.get(0).get("comment_kind"));
+        assertEquals("DAT_2942", items.get(0).get("stale_name"));
+        assertEquals("RAM:2942", items.get(0).get("target_address"));
+        assertEquals("CURRENT_ROOM_GRAPHIC_ID",
+            items.get(0).get("current_primary_name"));
+        assertEquals(List.of("CURRENT_ROOM_GRAPHIC_ID"),
+            items.get(0).get("current_names"));
+        assertTrue(((String) items.get(0).get("comment_excerpt")).contains("DAT_2942"));
+    }
+
+    @Test
+    public void staleCommentNameCanResolveAnOverlaySpace() {
+        CoverageService service = new Fixture()
+            .block("ram", RAM, 0x0000, 0xffff)
+            .block("player", PLAYER, 0x0000, 0xffff)
+            .symbol(PLAYER, 0x1605, "RUN_SCRIPT")
+            .comment(RAM, 0x05a1, CommentType.PLATE,
+                "Call SUB_SND_PLAYER_1605 in the loaded player overlay.")
+            .build();
+
+        Map<String, Object> response =
+            body(service.auditStaleCommentNames(100, 0, ""));
+        List<Map<String, Object>> items = list(response, "items");
+        assertEquals(1, items.size());
+        assertEquals("SND_PLAYER:1605", items.get(0).get("target_address"));
+        assertEquals("RUN_SCRIPT", items.get(0).get("current_primary_name"));
+    }
+
+    @Test
+    public void currentGeneratedNameIsNotReportedAsStale() {
+        CoverageService service = new Fixture()
+            .block("ram", RAM, 0x0000, 0xffff)
+            .symbol(RAM, 0x2942, "DAT_2942")
+            .symbol(RAM, 0x2942, "CURRENT_ROOM_GRAPHIC_ID")
+            .comment(RAM, 0x05a1, CommentType.EOL, "read DAT_2942")
+            .build();
+
+        assertTrue(list(body(service.auditStaleCommentNames(100, 0, "")), "items")
+            .isEmpty());
+    }
+
+    @Test
+    public void generatedOnlyReplacementIsNotReportedAsMeaningful() {
+        CoverageService service = new Fixture()
+            .block("ram", RAM, 0x0000, 0xffff)
+            .symbol(RAM, 0x2942, "LAB_2942")
+            .comment(RAM, 0x05a1, CommentType.EOL, "read DAT_2942")
+            .build();
+
+        assertTrue(list(body(service.auditStaleCommentNames(100, 0, "")), "items")
+            .isEmpty());
+    }
+
+    @Test
+    public void extendedGeneratedReplacementIsNotReportedAsMeaningful() {
+        CoverageService service = new Fixture()
+            .block("ram", RAM, 0x0000, 0xffff)
+            .symbol(RAM, 0x2942, "OFF_2942")
+            .comment(RAM, 0x05a1, CommentType.EOL, "read DAT_2942")
+            .build();
+
+        assertTrue(list(body(service.auditStaleCommentNames(100, 0, "")), "items")
+            .isEmpty());
+    }
+
+    @Test
+    public void currentNamesPutThePrimaryFirstAndSortTheRest() {
+        CoverageService service = new Fixture()
+            .block("ram", RAM, 0x0000, 0xffff)
+            .symbol(RAM, 0x2942, "ZETA_PRIMARY", true)
+            .symbol(RAM, 0x2942, "BETA_ALIAS", false)
+            .symbol(RAM, 0x2942, "ALPHA_ALIAS", false)
+            .comment(RAM, 0x05a1, CommentType.EOL, "read DAT_2942")
+            .build();
+
+        Map<String, Object> item =
+            list(body(service.auditStaleCommentNames(100, 0, "")), "items").get(0);
+        assertEquals("ZETA_PRIMARY", item.get("current_primary_name"));
+        assertEquals(List.of("ZETA_PRIMARY", "ALPHA_ALIAS", "BETA_ALIAS"),
+            item.get("current_names"));
+    }
+
+    @Test
+    public void generatedPrimaryIsReportedBeforeItsMeaningfulSecondary() {
+        CoverageService service = new Fixture()
+            .block("ram", RAM, 0x0000, 0xffff)
+            .symbol(RAM, 0x1605, "FUN_1605", true)
+            .symbol(RAM, 0x1605, "RUN_SCRIPT", false)
+            .comment(RAM, 0x05a1, CommentType.EOL, "call SUB_1605")
+            .build();
+
+        Map<String, Object> item =
+            list(body(service.auditStaleCommentNames(100, 0, "")), "items").get(0);
+        assertEquals("FUN_1605", item.get("current_primary_name"));
+        assertEquals(List.of("FUN_1605", "RUN_SCRIPT"), item.get("current_names"));
+    }
+
+    @Test
+    public void commentExcerptCentersTheFirstMentionWithoutSplittingUnicode() {
+        String comment = "😀".repeat(120) + " DAT_2942 " + "z".repeat(120);
+        CoverageService service = new Fixture()
+            .block("ram", RAM, 0x0000, 0xffff)
+            .symbol(RAM, 0x2942, "CURRENT_ROOM_GRAPHIC_ID")
+            .comment(RAM, 0x05a1, CommentType.EOL, comment)
+            .build();
+
+        String excerpt = (String) list(
+            body(service.auditStaleCommentNames(100, 0, "")), "items")
+            .get(0).get("comment_excerpt");
+        assertTrue(excerpt.startsWith("…"));
+        assertTrue(excerpt.endsWith("…"));
+        assertTrue(excerpt.contains("DAT_2942"));
+        assertEquals(162, excerpt.codePointCount(0, excerpt.length()));
+        assertFalse(Character.isHighSurrogate(
+            excerpt.charAt(excerpt.length() - 2)));
+    }
+
+    @Test
+    public void staleMentionsAreDeduplicatedAndDeterministicallyOrdered() {
+        CoverageService service = new Fixture()
+            .block("ram", RAM, 0x0000, 0xffff)
+            .block("player", PLAYER, 0x0000, 0xffff)
+            .symbol(RAM, 0x2942, "ROOM_ID")
+            .symbol(RAM, 0x3000, "OTHER_VALUE")
+            .symbol(PLAYER, 0x1605, "RUN_SCRIPT")
+            .comment(PLAYER, 0x0001, CommentType.EOL, "SUB_SND_PLAYER_1605")
+            .comment(RAM, 0x0010, CommentType.POST,
+                "DAT_3000 DAT_2942 DAT_2942")
+            .comment(RAM, 0x0010, CommentType.EOL, "DAT_2942")
+            .build();
+
+        List<String> keys = list(
+            body(service.auditStaleCommentNames(100, 0, "")), "items").stream()
+            .map(item -> item.get("comment_address") + "/"
+                + item.get("comment_kind") + "/" + item.get("stale_name"))
+            .toList();
+        assertEquals(List.of(
+            "RAM:0010/eol/DAT_2942",
+            "RAM:0010/post/DAT_2942",
+            "RAM:0010/post/DAT_3000",
+            "SND_PLAYER:0001/eol/SUB_SND_PLAYER_1605"), keys);
+    }
+
+    @Test
+    public void staleMentionPagingUsesTheWholeOrderedResult() {
+        CoverageService service = new Fixture()
+            .block("ram", RAM, 0x0000, 0xffff)
+            .symbol(RAM, 0x2942, "ROOM_ID")
+            .comment(RAM, 0x0010, CommentType.EOL, "DAT_2942")
+            .comment(RAM, 0x0020, CommentType.EOL, "DAT_2942")
+            .comment(RAM, 0x0030, CommentType.EOL, "DAT_2942")
+            .build();
+
+        Map<String, Object> page =
+            body(service.auditStaleCommentNames(1, 1, ""));
+        assertEquals(3L, page.get("all_count"));
+        assertEquals(1L, page.get("offset"));
+        assertEquals(1L, page.get("limit"));
+        assertEquals(1L, page.get("returned"));
+        assertEquals(Boolean.TRUE, page.get("has_more"));
+        assertEquals(4213L, page.get("program_modification_number"));
+        assertEquals("RAM:0020", list(page, "items").get(0).get("comment_address"));
+    }
+
+    @Test
+    public void staleMentionPagingRejectsInvalidBounds() {
+        CoverageService service = new Fixture()
+            .block("ram", RAM, 0x0000, 0xffff)
+            .build();
+
+        assertTrue(isError(service.auditStaleCommentNames(0, 0, "")));
+        assertTrue(isError(service.auditStaleCommentNames(10_001, 0, "")));
+        assertTrue(isError(service.auditStaleCommentNames(100, -1, "")));
+    }
+
+    @Test
+    public void staleMentionAuditRejectsAProgramChangedDuringTheScan() {
+        Fixture fixture = new Fixture()
+            .block("ram", RAM, 0x0000, 0xffff)
+            .symbol(RAM, 0x2942, "ROOM_ID")
+            .comment(RAM, 0x0010, CommentType.EOL, "DAT_2942");
+        fixture.bumpModificationOnSymbolLookup = true;
+
+        assertTrue(isError(
+            fixture.build().auditStaleCommentNames(100, 0, "")));
+    }
 
     @Test
     public void genericPrefixTotalsAndSamplesAreReported() {

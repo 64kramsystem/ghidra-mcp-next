@@ -1163,6 +1163,20 @@ public class EndpointRegistry {
                 str(q, "generic_prefixes", "DAT_,SUB_,LAB_,FUN_,UNK_"),
                 str(q, "program")));
 
+        get("/audit_stale_comment_names",
+            "Find Ghidra-generated address names left in listing comments after their "
+                + "targets were given meaningful symbols. Scans every comment kind in "
+                + "mapped memory and reports only resolvable names whose target has a "
+                + "non-generated current symbol. Mentions of deleted labels are out of "
+                + "scope; deliberate historical uses of old names require human review.",
+            List.of(
+                qInt("limit", 100, "Maximum stale mentions returned, 1..10000"),
+                qInt("offset", 0, "Page start within the ordered stale mentions"),
+                pProg()),
+            (q, b) -> coverageService.auditStaleCommentNames(
+                num(q, "limit", 100), num(q, "offset", 0),
+                str(q, "program")));
+
         get("/find_similar_functions", "Find structurally similar functions",
             params(qStr("target_function", "Function name"), qDbl("threshold", 0.8, "Similarity threshold"), pProg()),
             (q, b) -> analysisService.findSimilarFunctions(str(q, "target_function"),

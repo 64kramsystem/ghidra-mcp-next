@@ -2,13 +2,16 @@ package com.xebyte.core;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 
 import ghidra.program.model.address.Address;
+import ghidra.program.model.address.AddressFactory;
 import ghidra.program.model.address.AddressIterator;
 import ghidra.program.model.address.AddressRange;
 import ghidra.program.model.address.AddressSet;
@@ -26,6 +29,7 @@ import ghidra.program.model.symbol.ReferenceManager;
 import ghidra.program.model.symbol.Symbol;
 import ghidra.program.model.symbol.SymbolIterator;
 import ghidra.program.model.symbol.SymbolTable;
+import ghidra.program.model.symbol.SymbolUtilities;
 
 /**
  * How much of a program is still unexplained, and where.
@@ -42,13 +46,15 @@ import ghidra.program.model.symbol.SymbolTable;
  * {@code DAT_}/{@code LAB_} names, {@code TODO} markers). They are different kinds of
  * claim and must not read as one metric.</p>
  */
-@McpToolGroup(value = "analysis", description = "Whole-program coverage accounting")
+@McpToolGroup(value = "analysis",
+    description = "Whole-program coverage and annotation audits")
 public final class CoverageService {
 
     private static final int MAX_LIMIT = 10_000;
     private static final int MAX_SAMPLES = 20;
     private static final int MARKER_TEXT_CAP = 200;
     private static final String MARKER_TEXT_SUFFIX = "…";
+    private static final int STALE_COMMENT_EXCERPT_CODE_POINTS = 160;
 
     /**
      * Marker kinds in their fixed sort order. A label and a comment at one address must
@@ -59,11 +65,25 @@ public final class CoverageService {
 
     private final ProgramProvider programProvider;
     private final ThreadingStrategy threadingStrategy;
+    private final DynamicNameResolver dynamicNameResolver;
 
     public CoverageService(
             ProgramProvider programProvider, ThreadingStrategy threadingStrategy) {
+        this(programProvider, threadingStrategy, SymbolUtilities::parseDynamicName);
+    }
+
+    CoverageService(
+            ProgramProvider programProvider,
+            ThreadingStrategy threadingStrategy,
+            DynamicNameResolver dynamicNameResolver) {
         this.programProvider = programProvider;
         this.threadingStrategy = threadingStrategy;
+        this.dynamicNameResolver = dynamicNameResolver;
+    }
+
+    @FunctionalInterface
+    interface DynamicNameResolver {
+        Address resolve(AddressFactory addressFactory, String name);
     }
 
     @McpTool(path = "/analyze_coverage",
@@ -155,6 +175,154 @@ public final class CoverageService {
         int markerOffset,
         String markerPrefix,
         List<String> genericPrefixes) {
+    }
+
+    @McpTool(path = "/audit_stale_comment_names",
+        description = "Find Ghidra-generated address names left in listing comments after "
+            + "their targets were given meaningful symbols. Scans every comment kind in "
+            + "mapped memory and reports only resolvable names whose target has a "
+            + "non-generated current symbol. Mentions of deleted labels are out of scope; "
+            + "deliberate historical uses of old names require human review.",
+        category = "analysis")
+    public Response auditStaleCommentNames(
+            @Param(value = "limit", defaultValue = "100",
+                description = "Maximum stale mentions returned, 1..10000.") int limit,
+            @Param(value = "offset", defaultValue = "0",
+                description = "Page start within the ordered stale mentions.") int offset,
+            @Param(value = "program",
+                description = "Target program name (omit to use the active program — always specify when multiple programs are open)",
+                defaultValue = "") String programName) {
+        ServiceUtils.ProgramOrError pe =
+            ServiceUtils.getProgramOrError(programProvider, programName);
+        if (pe.hasError()) return pe.error();
+        if (limit < 1 || limit > MAX_LIMIT) {
+            return Response.err("limit must be in 1.." + MAX_LIMIT + " (got " + limit + ")");
+        }
+        if (offset < 0) {
+            return Response.err("offset must not be negative (got " + offset + ")");
+        }
+        try {
+            return threadingStrategy.executeRead(
+                () -> collectStaleCommentNames(pe.program(), limit, offset));
+        } catch (Exception exception) {
+            return Response.err(
+                "Error auditing stale comment names: " + exception.getMessage());
+        }
+    }
+
+    private record StaleCommentName(
+        Address commentAddress,
+        String commentKind,
+        String staleName,
+        Address targetAddress,
+        String currentPrimaryName,
+        List<String> currentNames,
+        String commentExcerpt) {
+    }
+
+    private Response collectStaleCommentNames(
+            Program program, int limit, int offset) {
+        long modificationBefore = program.getModificationNumber();
+        AddressSet mapped = new AddressSet();
+        for (MemoryBlock block : orderedBlocks(program.getMemory())) {
+            mapped.add(block.getStart(), block.getEnd());
+        }
+
+        Listing listing = program.getListing();
+        SymbolTable symbolTable = program.getSymbolTable();
+        List<StaleCommentName> findings = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (CommentType type : CommentType.values()) {
+            String kind = type.name().toLowerCase(Locale.ROOT);
+            AddressIterator addresses =
+                listing.getCommentAddressIterator(type, mapped, true);
+            while (addresses != null && addresses.hasNext()) {
+                Address commentAddress = addresses.next();
+                if (commentAddress == null) continue;
+                String text = listing.getComment(type, commentAddress);
+                for (GeneratedSymbolNames.CommentNameMention mention
+                        : GeneratedSymbolNames.findCommentNameMentions(text)) {
+                    Address target = dynamicNameResolver.resolve(
+                        program.getAddressFactory(), mention.name());
+                    if (target == null) continue;
+                    Symbol[] current = symbolTable.getSymbols(target);
+                    boolean exactNameExists = false;
+                    boolean meaningfulNameExists = false;
+                    List<Symbol> currentNamed = new ArrayList<>();
+                    for (Symbol symbol : current) {
+                        if (symbol == null || symbol.getName() == null) continue;
+                        currentNamed.add(symbol);
+                        if (mention.name().equals(symbol.getName())) {
+                            exactNameExists = true;
+                        }
+                        if (!GeneratedSymbolNames.isGenerated(symbol.getName())
+                                && !GeneratedSymbolNames.isCommentAddressName(
+                                    symbol.getName())) {
+                            meaningfulNameExists = true;
+                        }
+                    }
+                    if (exactNameExists || !meaningfulNameExists) continue;
+
+                    Symbol primary = currentNamed.stream()
+                        .filter(Symbol::isPrimary)
+                        .findFirst()
+                        .orElse(currentNamed.get(0));
+                    List<String> names = new ArrayList<>();
+                    names.add(primary.getName());
+                    names.addAll(currentNamed.stream()
+                        .map(Symbol::getName)
+                        .filter(name -> !primary.getName().equals(name))
+                        .distinct()
+                        .sorted()
+                        .toList());
+                    String key = commentAddress.toString(true) + "\n"
+                        + kind + "\n" + mention.name();
+                    if (!seen.add(key)) continue;
+                    findings.add(new StaleCommentName(
+                        commentAddress, kind, mention.name(), target,
+                        primary.getName(), names,
+                        excerptAround(text, mention.start(), mention.end())));
+                }
+            }
+        }
+
+        findings.sort(Comparator
+            .comparing((StaleCommentName finding) ->
+                finding.commentAddress().getAddressSpace().getName())
+            .thenComparing(finding ->
+                finding.commentAddress().getOffsetAsBigInteger())
+            .thenComparingInt(finding ->
+                MARKER_KIND_ORDER.indexOf(finding.commentKind()))
+            .thenComparing(StaleCommentName::staleName));
+
+        int from = Math.min(offset, findings.size());
+        int to = (int) Math.min((long) from + limit, findings.size());
+        List<Map<String, Object>> items = new ArrayList<>();
+        for (StaleCommentName finding : findings.subList(from, to)) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("comment_address", finding.commentAddress().toString(true));
+            row.put("comment_kind", finding.commentKind());
+            row.put("stale_name", finding.staleName());
+            row.put("target_address", finding.targetAddress().toString(true));
+            row.put("current_primary_name", finding.currentPrimaryName());
+            row.put("current_names", finding.currentNames());
+            row.put("comment_excerpt", finding.commentExcerpt());
+            items.add(row);
+        }
+
+        if (program.getModificationNumber() != modificationBefore) {
+            return Response.err("Program changed while auditing stale comment names; retry.");
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("program", program.getName());
+        result.put("program_modification_number", modificationBefore);
+        result.put("items", items);
+        result.put("all_count", (long) findings.size());
+        result.put("offset", (long) offset);
+        result.put("limit", (long) limit);
+        result.put("returned", (long) items.size());
+        result.put("has_more", (long) offset + items.size() < findings.size());
+        return Response.text(JsonHelper.toJson(result));
     }
 
     /**
@@ -649,6 +817,29 @@ public final class CoverageService {
             prefixEnd--;
         }
         return text.substring(0, prefixEnd) + MARKER_TEXT_SUFFIX;
+    }
+
+    private static String excerptAround(String text, int mentionStart, int mentionEnd) {
+        int totalCodePoints = text.codePointCount(0, text.length());
+        if (totalCodePoints <= STALE_COMMENT_EXCERPT_CODE_POINTS) return text;
+
+        int mentionStartCodePoint = text.codePointCount(0, mentionStart);
+        int mentionEndCodePoint = text.codePointCount(0, mentionEnd);
+        int mentionLength = mentionEndCodePoint - mentionStartCodePoint;
+        int leftContext = Math.max(
+            0, (STALE_COMMENT_EXCERPT_CODE_POINTS - mentionLength) / 2);
+        int excerptStartCodePoint = Math.max(
+            0, mentionStartCodePoint - leftContext);
+        excerptStartCodePoint = Math.min(
+            excerptStartCodePoint,
+            totalCodePoints - STALE_COMMENT_EXCERPT_CODE_POINTS);
+        int excerptEndCodePoint =
+            excerptStartCodePoint + STALE_COMMENT_EXCERPT_CODE_POINTS;
+        int excerptStart = text.offsetByCodePoints(0, excerptStartCodePoint);
+        int excerptEnd = text.offsetByCodePoints(0, excerptEndCodePoint);
+        return (excerptStartCodePoint > 0 ? MARKER_TEXT_SUFFIX : "")
+            + text.substring(excerptStart, excerptEnd)
+            + (excerptEndCodePoint < totalCodePoints ? MARKER_TEXT_SUFFIX : "");
     }
 
     /** The space name of a rendered {@code SPACE:offset} address. */
