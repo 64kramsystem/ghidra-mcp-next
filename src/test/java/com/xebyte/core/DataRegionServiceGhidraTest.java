@@ -231,6 +231,112 @@ public class DataRegionServiceGhidraTest {
     }
 
     @Test
+    public void pristineContiguousWordUsesWellKnownFallback()
+            throws Exception {
+        ProgramBuilder pristineBuilder = new ProgramBuilder(
+            "pristine-word-6502",
+            "6502:LE:16:default", "default", this);
+        try {
+            ProgramDB pristineProgram = pristineBuilder.getProgram();
+            pristineBuilder.createMemory("ram", "0x0800", 0x7800);
+            assertNull(pristineProgram.getDataTypeManager()
+                .getDataType("word"));
+            assertNull(pristineProgram.getDataTypeManager()
+                .getDataType("/word"));
+            List<DataType> namedWord = new ArrayList<>();
+            pristineProgram.getDataTypeManager()
+                .findDataTypes("word", namedWord);
+            assertTrue(namedWord.isEmpty());
+
+            HeadlessProgramProvider provider =
+                new HeadlessProgramProvider();
+            provider.setCurrentProgram(pristineProgram);
+            DataRegionService pristineService = new DataRegionService(
+                provider, new DirectThreadingStrategy());
+            Map<String, Object> words = contiguous(
+                "0x2200", "0x2203", "word");
+
+            JsonObject preview = response(
+                pristineService.applyDataRegions(
+                    List.of(words), true, ""));
+            assertNull(pristineProgram.getDataTypeManager()
+                .getDataType("/word"));
+            JsonObject region = preview.getAsJsonArray("regions")
+                .get(0).getAsJsonObject();
+            assertEquals(2, region.get("data_length").getAsInt());
+            assertEquals(2, region.get("stride").getAsInt());
+
+            JsonObject committed = response(
+                pristineService.applyDataRegions(
+                    List.of(words), false, ""));
+            assertPlanFieldsEqual(preview, committed);
+            assertEquals(2, pristineProgram.getListing()
+                .getDefinedDataAt(pristineBuilder.addr("0x2200"))
+                .getLength());
+            assertEquals(2, pristineProgram.getListing()
+                .getDefinedDataAt(pristineBuilder.addr("0x2202"))
+                .getLength());
+
+            JsonObject repeated = response(
+                pristineService.applyDataRegions(
+                    List.of(words), true, ""));
+            repeated.getAsJsonArray("created_data").forEach(
+                item -> assertEquals(
+                    "unchanged",
+                    item.getAsJsonObject()
+                        .get("action").getAsString()));
+        }
+        finally {
+            pristineBuilder.dispose();
+        }
+    }
+
+    @Test
+    public void wellKnownIntUsesTargetDataOrganization()
+            throws Exception {
+        ProgramBuilder x86Builder = new ProgramBuilder(
+            "pristine-int-x86-16",
+            "x86:LE:16:Real Mode", "default", this);
+        try {
+            ProgramDB x86Program = x86Builder.getProgram();
+            x86Builder.createMemory("ram", "0000:0800", 0x100);
+            assertNull(x86Program.getDataTypeManager()
+                .getDataType("int"));
+            assertNull(x86Program.getDataTypeManager()
+                .getDataType("/int"));
+            List<DataType> namedInt = new ArrayList<>();
+            x86Program.getDataTypeManager()
+                .findDataTypes("int", namedInt);
+            assertTrue(namedInt.isEmpty());
+
+            HeadlessProgramProvider provider =
+                new HeadlessProgramProvider();
+            provider.setCurrentProgram(x86Program);
+            DataRegionService x86Service = new DataRegionService(
+                provider, new DirectThreadingStrategy());
+            Map<String, Object> ints = contiguous(
+                "0000:0800", "0000:0803", "int");
+
+            JsonObject preview = response(
+                x86Service.applyDataRegions(
+                    List.of(ints), true, ""));
+            JsonObject region = preview.getAsJsonArray("regions")
+                .get(0).getAsJsonObject();
+            assertEquals(2, region.get("data_length").getAsInt());
+            assertEquals(2, region.get("stride").getAsInt());
+
+            response(x86Service.applyDataRegions(
+                List.of(ints), false, ""));
+            assertEquals(2, x86Program.getListing()
+                .getDefinedDataAt(x86Builder.addr("0000:0800"))
+                .getLength());
+        }
+        finally {
+            x86Builder.dispose();
+        }
+    }
+
+    @Test
     public void splitSourcesMayUseDifferentAddressSpaces()
             throws Exception {
         builder.createOverlayMemory("bank", "0x2e00", 0x10);
