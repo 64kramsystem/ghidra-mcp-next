@@ -7,6 +7,8 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressOverflowException;
+import ghidra.program.model.address.AddressSet;
+import ghidra.program.model.address.AddressSetView;
 import ghidra.program.model.listing.CommentType;
 import ghidra.program.model.listing.Instruction;
 import ghidra.program.model.listing.Program;
@@ -284,10 +286,21 @@ public final class SymbolProfileService {
             String policy,
             boolean replaceUserDefinitions,
             boolean createMemoryBlocks) throws Exception {
-        validateResolvedRequestIdentities(program, profile);
         List<String> conflicts = new ArrayList<>();
         List<String> warnings = new ArrayList<>(schemaWarnings(profile));
         List<String> replacements = new ArrayList<>();
+        // Blocks are planned first because the rest of the profile may live
+        // inside them. A profile that declares $D000-$FFFF and names the
+        // registers in it must be plannable against a program whose memory
+        // stops at $CFFF -- otherwise a dry run cannot preview its own effect.
+        List<BlockPlan> blocks = planBlocks(
+            program,
+            profile,
+            policy,
+            createMemoryBlocks,
+            conflicts);
+        AddressSetView plannedMemory = plannedBlockRanges(blocks);
+        validateResolvedRequestIdentities(program, profile, plannedMemory);
         List<NamespacePlan> namespaces =
             planNamespaces(program, profile, conflicts);
         List<SymbolPlan> symbols = planSymbols(
@@ -296,27 +309,24 @@ public final class SymbolProfileService {
             policy,
             replaceUserDefinitions,
             conflicts,
-            replacements);
+            replacements,
+            plannedMemory);
         List<EquatePlan> equates = planEquates(
             program,
             profile,
             policy,
             replaceUserDefinitions,
             conflicts,
-            replacements);
+            replacements,
+            plannedMemory);
         List<CommentPlan> comments = planComments(
             program,
             profile,
             policy,
             replaceUserDefinitions,
             conflicts,
-            replacements);
-        List<BlockPlan> blocks = planBlocks(
-            program,
-            profile,
-            policy,
-            createMemoryBlocks,
-            conflicts);
+            replacements,
+            plannedMemory);
         if (!createMemoryBlocks && !profile.memoryBlocks().isEmpty()) {
             warnings.add(
                 "memory_blocks were validated but creation is disabled");
@@ -334,6 +344,32 @@ public final class SymbolProfileService {
             List.copyOf(new LinkedHashSet<>(conflicts)),
             List.copyOf(new LinkedHashSet<>(warnings)),
             List.copyOf(new LinkedHashSet<>(replacements)));
+    }
+
+    /**
+     * The address ranges this plan will bring into existence.
+     *
+     * <p>Only blocks whose action is {@code create} count: a block that is
+     * disabled, kept, or in conflict is not going to be created, so an address
+     * inside it must still be rejected as unmapped. Overlay blocks are excluded
+     * as well -- an overlay creates a new address space, so nothing in the base
+     * space becomes mapped, and an address in the not-yet-existing overlay space
+     * cannot be named until after creation.
+     */
+    private static AddressSetView plannedBlockRanges(
+            List<BlockPlan> blocks) {
+        AddressSet result = new AddressSet();
+        for (BlockPlan block : blocks) {
+            if (!"create".equals(block.action())
+                    || block.createPlan() == null
+                    || block.requested().overlay()) {
+                continue;
+            }
+            Address start = block.createPlan().start();
+            result.addRange(
+                start, checkedEnd(start, block.createPlan().length()));
+        }
+        return result;
     }
 
     private List<NamespacePlan> planNamespaces(
@@ -394,12 +430,16 @@ public final class SymbolProfileService {
             String policy,
             boolean replaceUserDefinitions,
             List<String> conflicts,
-            List<String> replacements) {
+            List<String> replacements,
+            AddressSetView plannedMemory) {
         List<SymbolPlan> result = new ArrayList<>();
         SymbolTable table = program.getSymbolTable();
         for (SymbolProfileParser.ProfileSymbol requested : profile.symbols()) {
             Address address = resolveMappedAddress(
-                program, requested.address(), "symbol address");
+                program,
+                requested.address(),
+                "symbol address",
+                plannedMemory);
             List<Symbol> named = existingSymbols(
                 program, requested.name(), requested.namespace());
             Symbol exact = named.stream()
@@ -494,7 +534,8 @@ public final class SymbolProfileService {
             String policy,
             boolean replaceUserDefinitions,
             List<String> conflicts,
-            List<String> replacements) {
+            List<String> replacements,
+            AddressSetView plannedMemory) {
         List<EquatePlan> result = new ArrayList<>();
         EquateTable table = program.getEquateTable();
         for (SymbolProfileParser.ProfileEquate requested : profile.equates()) {
@@ -533,8 +574,8 @@ public final class SymbolProfileService {
             List<ApplicationPlan> applications = new ArrayList<>();
             for (SymbolProfileParser.EquateApplication application
                     : requested.applications()) {
-                ApplicationSite site =
-                    resolveApplication(program, requested, application);
+                ApplicationSite site = resolveApplication(
+                    program, requested, application, plannedMemory);
                 if ("keep".equals(definitionAction)
                         || "conflict".equals(definitionAction)) {
                     String conflict =
@@ -622,19 +663,22 @@ public final class SymbolProfileService {
             String policy,
             boolean replaceUserDefinitions,
             List<String> conflicts,
-            List<String> replacements) {
+            List<String> replacements,
+            AddressSetView plannedMemory) {
         List<CommentPlan> result = new ArrayList<>();
         for (SymbolProfileParser.ProfileComment requested
                 : profile.comments()) {
             AddressCommentCore.ResolvedAddress target =
-                commentCore.resolveAddress(program, requested.address());
+                commentCore.resolveAddress(
+                    program, requested.address(), true, plannedMemory);
             CommentType type = commentType(requested.type());
             AddressCommentCore.Plan corePlan = commentCore.plan(
                 program,
                 target,
                 type,
                 requested.text(),
-                AddressCommentCore.WriteMode.REPLACE);
+                AddressCommentCore.WriteMode.REPLACE,
+                plannedMemory);
             String conflict =
                 corePlan.previous() != null
                     && !corePlan.previous().equals(requested.text())
@@ -786,6 +830,16 @@ public final class SymbolProfileService {
     }
 
     private void apply(Program program, Plan plan) throws Exception {
+        // Blocks first, mirroring the planning order: a symbol or comment the
+        // plan placed inside a requested block needs that block to exist before
+        // Ghidra will accept the write.
+        for (BlockPlan block : plan.blocks()) {
+            monitor.checkCancelled();
+            if ("create".equals(block.action())) {
+                blockCore.applyCreate(program, block.createPlan(), monitor);
+            }
+        }
+
         createNamespaces(program, plan.namespaces());
         SymbolTable symbols = program.getSymbolTable();
         for (SymbolPlan symbolPlan : plan.symbols()) {
@@ -875,13 +929,6 @@ public final class SymbolProfileService {
                 commentCore.apply(program, comment.corePlan());
             }
         }
-
-        for (BlockPlan block : plan.blocks()) {
-            monitor.checkCancelled();
-            if ("create".equals(block.action())) {
-                blockCore.applyCreate(program, block.createPlan(), monitor);
-            }
-        }
     }
 
     private static void createNamespaces(
@@ -926,9 +973,13 @@ public final class SymbolProfileService {
     private ApplicationSite resolveApplication(
             Program program,
             SymbolProfileParser.ProfileEquate equate,
-            SymbolProfileParser.EquateApplication application) {
+            SymbolProfileParser.EquateApplication application,
+            AddressSetView plannedMemory) {
         Address address = resolveMappedAddress(
-            program, application.address(), "equate application address");
+            program,
+            application.address(),
+            "equate application address",
+            plannedMemory);
         Instruction instruction =
             program.getListing().getInstructionAt(address);
         if (instruction == null) {
@@ -1102,9 +1153,14 @@ public final class SymbolProfileService {
     }
 
     private Address resolveMappedAddress(
-            Program program, String text, String description) {
+            Program program,
+            String text,
+            String description,
+            AddressSetView plannedMemory) {
         try {
-            return commentCore.resolveAddress(program, text).address();
+            return commentCore
+                .resolveAddress(program, text, true, plannedMemory)
+                .address();
         }
         catch (Exception error) {
             throw new IllegalArgumentException(
@@ -1115,11 +1171,15 @@ public final class SymbolProfileService {
 
     private void validateResolvedRequestIdentities(
             Program program,
-            SymbolProfileParser.SymbolProfile profile) {
+            SymbolProfileParser.SymbolProfile profile,
+            AddressSetView plannedMemory) {
         Map<Address, String> primaries = new LinkedHashMap<>();
         for (SymbolProfileParser.ProfileSymbol symbol : profile.symbols()) {
             Address address = resolveMappedAddress(
-                program, symbol.address(), "symbol address");
+                program,
+                symbol.address(),
+                "symbol address",
+                plannedMemory);
             if (symbol.primary()) {
                 String prior = primaries.putIfAbsent(
                     address, symbol.qualifiedName());
@@ -1137,7 +1197,10 @@ public final class SymbolProfileService {
         for (SymbolProfileParser.ProfileComment comment
                 : profile.comments()) {
             Address address = resolveMappedAddress(
-                program, comment.address(), "comment address");
+                program,
+                comment.address(),
+                "comment address",
+                plannedMemory);
             String identity =
                 qualified(address) + ":" + comment.type().wireName();
             if (!comments.add(identity)) {
@@ -1153,8 +1216,8 @@ public final class SymbolProfileService {
                 : profile.equates()) {
             for (SymbolProfileParser.EquateApplication application
                     : equate.applications()) {
-                ApplicationSite site =
-                    resolveApplication(program, equate, application);
+                ApplicationSite site = resolveApplication(
+                    program, equate, application, plannedMemory);
                 ApplicationIdentity identity =
                     new ApplicationIdentity(
                         site.address(),

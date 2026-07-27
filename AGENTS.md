@@ -90,6 +90,18 @@ git diff --check
 
 These are the same gates `tools/release` runs, in the same order.
 
+**`mvn test` on its own skips every Ghidra fixture test.** Those tests carry an
+`assumeTrue` on `ghidra.test.install.dir`, so a change whose only coverage lives in a
+`*GhidraTest` passes the gate above without being executed once. When touching anything a
+fixture test covers, also run:
+
+```bash
+mvn test -Dghidra.test.install.dir=/path/to/ghidra
+```
+
+`ControlFlowServiceGhidraTest`'s jump-table test is a known pre-existing flake; confirm any
+failure against a clean baseline before attributing it to your change.
+
 Live tests require a prepared local Ghidra instance and disposable project. Report them
 as unexecuted when that environment is absent.
 

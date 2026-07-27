@@ -396,6 +396,164 @@ public class SymbolProfileServiceGhidraTest {
     }
 
     @Test
+    public void createdBlocksMakeTheirOwnContentsPlannableInADryRun() {
+        JsonObject preview = ok(service.applySymbolProfile(
+            hardwareProfile(), true, "error", false, true,
+            program.getName()));
+
+        assertFalse(preview.get("committed").getAsBoolean());
+        assertTrue(preview.get("dry_run").getAsBoolean());
+        assertEquals(
+            "create",
+            preview.getAsJsonArray("memory_blocks")
+                .get(0).getAsJsonObject().get("action").getAsString());
+        JsonObject symbol =
+            preview.getAsJsonArray("symbols").get(0).getAsJsonObject();
+        assertEquals("VIC_CONTROL_1", symbol.get("name").getAsString());
+        assertEquals("create", symbol.get("action").getAsString());
+        assertEquals(
+            "create",
+            preview.getAsJsonArray("comments")
+                .get(0).getAsJsonObject().get("action").getAsString());
+        assertNull(program.getMemory().getBlock("vic-registers"));
+        assertNull(program.getSymbolTable().getGlobalSymbol(
+            "VIC_CONTROL_1", builder.addr("0xd011")));
+    }
+
+    @Test
+    public void createdBlocksReceiveTheirOwnSymbolsAndCommentsOnCommit() {
+        JsonObject committed = ok(service.applySymbolProfile(
+            hardwareProfile(), false, "error", false, true,
+            program.getName()));
+
+        assertTrue(committed.get("committed").getAsBoolean());
+        MemoryBlock block = program.getMemory().getBlock("vic-registers");
+        assertNotNull(block);
+        assertTrue(program.getMemory().contains(builder.addr("0xd011")));
+        assertNotNull(program.getSymbolTable().getGlobalSymbol(
+            "VIC_CONTROL_1", builder.addr("0xd011")));
+        assertTrue(block.contains(builder.addr("0xd011")));
+        assertEquals(
+            "raster / control",
+            program.getListing().getComment(
+                CommentType.PLATE, builder.addr("0xd011")));
+    }
+
+    @Test
+    public void declaredButUncreatedBlocksDoNotMakeContentsPlannable() {
+        Response response = service.applySymbolProfile(
+            hardwareProfile(), true, "error", false, false,
+            program.getName());
+
+        assertTrue(response.toJson(), response instanceof Response.Err);
+        assertTrue(
+            response.toJson(),
+            response.toJson().contains(
+                "Address is not mapped in program memory: d011"));
+        assertNull(program.getMemory().getBlock("vic-registers"));
+    }
+
+    @Test
+    public void disabledCreationStillWarnsThatBlocksWereOnlyValidated() {
+        Object profile = JsonParser.parseString("""
+            {"schema_version":1,"id":"validate-only","version":"1",
+             "symbols":[{"address":"0x1000","name":"START"}],
+             "memory_blocks":[{
+               "name":"vic-registers","start":"0xd000",
+               "length":1024,"fill":0}]}
+            """);
+
+        JsonObject result = ok(service.applySymbolProfile(
+            profile, true, "error", false, false, program.getName()));
+
+        assertEquals(
+            "disabled",
+            result.getAsJsonArray("memory_blocks")
+                .get(0).getAsJsonObject().get("action").getAsString());
+        String warnings = result.getAsJsonArray("warnings").toString();
+        assertTrue(
+            warnings,
+            warnings.contains(
+                "memory_blocks were validated but creation is disabled"));
+    }
+
+    @Test
+    public void addressesOutsideEveryCreatedBlockRemainUnmapped() {
+        Object profile = JsonParser.parseString("""
+            {"schema_version":1,"id":"outside","version":"1",
+             "symbols":[{"address":"0xe000","name":"NOWHERE"}],
+             "memory_blocks":[{
+               "name":"vic-registers","start":"0xd000",
+               "length":1024,"fill":0}]}
+            """);
+
+        Response response = service.applySymbolProfile(
+            profile, true, "error", false, true, program.getName());
+
+        assertTrue(response.toJson(), response instanceof Response.Err);
+        assertTrue(
+            response.toJson(),
+            response.toJson().contains(
+                "Address is not mapped in program memory: e000"));
+    }
+
+    @Test
+    public void profileMemberOrderDoesNotChangeThePlan() {
+        Object symbolsFirst = JsonParser.parseString("""
+            {"schema_version":1,"id":"order","version":"1",
+             "symbols":[
+               {"address":"0xd011","name":"VIC_CONTROL_1"},
+               {"address":"0xd400","name":"SID_FREQ_LO"}],
+             "memory_blocks":[
+               {"name":"vic-registers","start":"0xd000",
+                "length":1024,"fill":0},
+               {"name":"sid-registers","start":"0xd400",
+                "length":1024,"fill":0}]}
+            """);
+        Object blocksFirst = JsonParser.parseString("""
+            {"schema_version":1,"id":"order","version":"1",
+             "memory_blocks":[
+               {"name":"vic-registers","start":"0xd000",
+                "length":1024,"fill":0},
+               {"name":"sid-registers","start":"0xd400",
+                "length":1024,"fill":0}],
+             "symbols":[
+               {"address":"0xd011","name":"VIC_CONTROL_1"},
+               {"address":"0xd400","name":"SID_FREQ_LO"}]}
+            """);
+
+        Response first = service.applySymbolProfile(
+            symbolsFirst, true, "error", false, true, program.getName());
+        Response second = service.applySymbolProfile(
+            blocksFirst, true, "error", false, true, program.getName());
+
+        assertTrue(first.toJson(), first instanceof Response.Ok);
+        assertEquals(first.toJson(), second.toJson());
+    }
+
+    @Test
+    public void equateApplicationsInCreatedBlocksNeedRealInstructions() {
+        Object profile = JsonParser.parseString("""
+            {"schema_version":1,"id":"equate-in-new-block","version":"1",
+             "equates":[{
+               "name":"BLANK","value":0,
+               "applications":[{
+                 "address":"0xd011","operand_index":0}]}],
+             "memory_blocks":[{
+               "name":"vic-registers","start":"0xd000",
+               "length":1024,"fill":0}]}
+            """);
+
+        Response response = service.applySymbolProfile(
+            profile, true, "error", false, true, program.getName());
+
+        assertTrue(response.toJson(), response instanceof Response.Err);
+        assertTrue(
+            response.toJson(),
+            response.toJson().contains("is not an instruction"));
+    }
+
+    @Test
     public void ordinaryBlockIdentityIncludesItsAddressSpace()
             throws Exception {
         MemoryBlock other =
@@ -722,6 +880,23 @@ public class SymbolProfileServiceGhidraTest {
             {"schema_version":1,"id":"test","version":"1",
              "symbols":[{"address":"0x1000","name":"START",
                "namespace":"Machine::ROM","primary":true}]}
+            """);
+    }
+
+    /**
+     * The reported defect in miniature: a profile that declares the block its
+     * own symbol and comment live in, applied to a program whose memory stops
+     * well below it.
+     */
+    private static Object hardwareProfile() {
+        return JsonParser.parseString("""
+            {"schema_version":1,"id":"hardware","version":"1",
+             "symbols":[{"address":"0xd011","name":"VIC_CONTROL_1"}],
+             "comments":[{"address":"0xd011","type":"plate",
+               "text":"raster / control"}],
+             "memory_blocks":[{
+               "name":"vic-registers","start":"0xd000",
+               "length":1024,"fill":0,"write":true}]}
             """);
     }
 
