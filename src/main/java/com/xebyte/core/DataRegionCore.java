@@ -639,6 +639,14 @@ final class DataRegionCore {
             }
         }
         if (type == null) {
+            DataType wellKnown =
+                ServiceUtils.resolveWellKnownType(name);
+            if (wellKnown != null) {
+                type = wellKnown.clone(
+                    program.getDataTypeManager());
+            }
+        }
+        if (type == null) {
             throw new IllegalArgumentException(
                 "datatype not found: " + name);
         }
