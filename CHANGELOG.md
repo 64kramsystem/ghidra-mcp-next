@@ -14,6 +14,7 @@ Complete version history for the GhidraMCP-next project.
 ### Added
 
 - Added `export_project_archive`, which saves and exports the active GUI or headless project through Ghidra's native GAR writer. It takes one absolute `output_path`, verifies the completed GAR, and safely replaces an existing destination only after export succeeds.
+- `tools/release` now accepts an exact `X.Y.Z` release version as well as `major`, `minor`, or `patch`, and no longer runs test suites before building and publishing a release.
 
 ### Fixed
 
