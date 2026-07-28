@@ -16,11 +16,13 @@ import ghidra.framework.Application;
 import ghidra.framework.ApplicationConfiguration;
 import ghidra.program.database.ProgramBuilder;
 import ghidra.program.database.ProgramDB;
+import ghidra.program.model.data.ByteDataType;
 import ghidra.program.model.listing.CommentType;
 import ghidra.program.model.listing.Program;
 import ghidra.program.model.mem.MemoryBlock;
 import ghidra.program.model.symbol.Equate;
 import ghidra.program.model.symbol.Namespace;
+import ghidra.program.model.symbol.RefType;
 import ghidra.program.model.symbol.SourceType;
 import ghidra.util.exception.CancelledException;
 import ghidra.util.task.TaskMonitorAdapter;
@@ -140,6 +142,133 @@ public class SymbolProfileServiceGhidraTest {
             profile, false, "error", false, true, program.getName()));
         assertTrue(repeated.get("committed").getAsBoolean());
         assertFalse(repeated.getAsJsonArray("idempotent").isEmpty());
+    }
+
+    @Test
+    public void dynamicPrimaryLabelDoesNotRequireExplicitReplacement()
+            throws Exception {
+        var dynamic = seedDynamicPrimary();
+        assertTrue(dynamic.getName().startsWith("BYTE_"));
+        Object profile = dynamicPrimaryProfile();
+
+        JsonObject preview = ok(service.applySymbolProfile(
+            profile, true, "error", false, false, program.getName()));
+        assertEquals(
+            "create",
+            preview.getAsJsonArray("symbols")
+                .get(0).getAsJsonObject().get("action").getAsString());
+
+        JsonObject committed = ok(service.applySymbolProfile(
+            profile, false, "error", false, false, program.getName()));
+        assertTrue(committed.get("committed").getAsBoolean());
+        Namespace machine = program.getSymbolTable().getNamespace(
+            "Machine", program.getGlobalNamespace());
+        var created = program.getSymbolTable().getSymbol(
+            "HARDWARE_REGISTER", builder.addr("0x1010"), machine);
+        assertNotNull(created);
+        assertTrue(created.isPrimary());
+        assertFalse(created.isDynamic());
+    }
+
+    @Test
+    public void dynamicPrimaryLabelIsCreatedRatherThanReplaced()
+            throws Exception {
+        seedDynamicPrimary();
+        Object profile = dynamicPrimaryProfile();
+
+        JsonObject preview = ok(service.applySymbolProfile(
+            profile, true, "replace", false, false, program.getName()));
+        assertEquals(
+            "create",
+            preview.getAsJsonArray("symbols")
+                .get(0).getAsJsonObject().get("action").getAsString());
+        assertTrue(preview.getAsJsonArray(
+            "replaced_definitions").isEmpty());
+
+        JsonObject committed = ok(service.applySymbolProfile(
+            profile, false, "replace", false, false, program.getName()));
+        assertTrue(committed.get("committed").getAsBoolean());
+        assertTrue(committed.getAsJsonArray(
+            "replaced_definitions").isEmpty());
+    }
+
+    @Test
+    public void keepPolicyDoesNotKeepAnImplicitDynamicPrimary()
+            throws Exception {
+        seedDynamicPrimary();
+
+        JsonObject result = ok(service.applySymbolProfile(
+            dynamicPrimaryProfile(),
+            false,
+            "keep",
+            false,
+            false,
+            program.getName()));
+
+        assertTrue(result.get("committed").getAsBoolean());
+        assertTrue(result.getAsJsonArray("kept_conflicts").isEmpty());
+        Namespace machine = program.getSymbolTable().getNamespace(
+            "Machine", program.getGlobalNamespace());
+        var created = program.getSymbolTable().getSymbol(
+            "HARDWARE_REGISTER", builder.addr("0x1010"), machine);
+        assertNotNull(created);
+        assertTrue(created.isPrimary());
+    }
+
+    @Test
+    public void realPrimaryLabelRetainsConflictAndReplacementAuthority()
+            throws Exception {
+        var existing =
+            builder.createLabel("0x1010", "EXISTING_PRIMARY");
+        assertEquals(SourceType.USER_DEFINED, existing.getSource());
+        Object profile = dynamicPrimaryProfile();
+
+        Response conflict = service.applySymbolProfile(
+            profile, false, "error", false, false, program.getName());
+        assertTrue(conflict.toJson(), conflict instanceof Response.Err);
+        assertTrue(conflict.toJson().contains(
+            "different primary symbol already exists"));
+
+        Response refused = service.applySymbolProfile(
+            profile, false, "replace", false, false, program.getName());
+        assertTrue(refused.toJson(), refused instanceof Response.Err);
+        assertTrue(refused.toJson().contains(
+            "replace_user_definitions=true is required"));
+
+        JsonObject replaced = ok(service.applySymbolProfile(
+            profile, false, "replace", true, false, program.getName()));
+        assertTrue(replaced.get("committed").getAsBoolean());
+        assertNull(program.getSymbolTable().getGlobalSymbol(
+            "EXISTING_PRIMARY", builder.addr("0x1010")));
+        Namespace machine = program.getSymbolTable().getNamespace(
+            "Machine", program.getGlobalNamespace());
+        var created = program.getSymbolTable().getSymbol(
+            "HARDWARE_REGISTER", builder.addr("0x1010"), machine);
+        assertNotNull(created);
+        assertTrue(created.isPrimary());
+    }
+
+    private ghidra.program.model.symbol.Symbol seedDynamicPrimary()
+            throws Exception {
+        builder.applyDataType("0x1010", ByteDataType.dataType);
+        builder.createMemoryReference(
+            "0x1000", "0x1010", RefType.READ, SourceType.DEFAULT, 0);
+        var dynamic = program.getSymbolTable()
+            .getPrimarySymbol(builder.addr("0x1010"));
+        assertNotNull(dynamic);
+        assertTrue(dynamic.isDynamic());
+        return dynamic;
+    }
+
+    private static Object dynamicPrimaryProfile() {
+        return JsonParser.parseString("""
+            {"schema_version":1,"id":"dynamic-primary","version":"1",
+             "symbols":[{
+               "address":"0x1010",
+               "name":"HARDWARE_REGISTER",
+               "namespace":"Machine",
+               "primary":true}]}
+            """);
     }
 
     @Test
