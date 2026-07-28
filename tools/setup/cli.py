@@ -129,26 +129,6 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print copy actions without executing them.",
     )
-    deploy_parser.add_argument(
-        "--test",
-        action="append",
-        choices=[
-            "benchmark-read",
-            "benchmark-write",
-            "debugger-live",
-            "endpoint-catalog",
-            "multi-program",
-            "negative-contract",
-            "release",
-            "selected-contract",
-        ],
-        default=[],
-        help=(
-            "Run an optional post-deploy test tier. May be passed multiple times. "
-            "A plain deploy only runs MCP health/schema checks and does not import Benchmark.dll. "
-            "Use --test release before cutting releases, or set GHIDRA_MCP_DEPLOY_TESTS in local .env."
-        ),
-    )
     deploy_parser.set_defaults(func=cmd_deploy)
 
     start_parser = subparsers.add_parser(
@@ -351,7 +331,7 @@ def cmd_install_ghidra_deps(args: argparse.Namespace) -> int:
 def cmd_deploy(args: argparse.Namespace) -> int:
     repo_root = detect_repo_root()
     ghidra_path = _require_ghidra_path(repo_root, args.ghidra_path)
-    return deploy_to_ghidra(repo_root, ghidra_path, dry_run=args.dry_run, test_modes=args.test)
+    return deploy_to_ghidra(repo_root, ghidra_path, dry_run=args.dry_run)
 
 
 def cmd_start_ghidra(args: argparse.Namespace) -> int:

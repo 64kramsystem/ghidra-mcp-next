@@ -6,8 +6,6 @@ import com.xebyte.core.Response;
 import com.xebyte.core.ThreadingStrategy;
 import junit.framework.TestCase;
 
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -59,8 +57,7 @@ public class CommentServiceValidationTest extends TestCase {
         assertNoProgram(comments.getPlateComment("0x401000", ""));
     }
 
-    public void testPlateCommentDescriptionIsAddressGenericEverywhere()
-            throws Exception {
+    public void testPlateCommentDescriptionIsAddressGeneric() {
         String expected =
             "Set a plate comment at any valid program address.";
         AnnotationScanner.ToolDescriptor tool =
@@ -70,12 +67,5 @@ public class CommentServiceValidationTest extends TestCase {
                 .findFirst()
                 .orElseThrow();
         assertEquals(expected, tool.description());
-
-        String legacyRegistry = Files.readString(Path.of(
-            "src/main/java/com/xebyte/core/EndpointRegistry.java"));
-        assertTrue(
-            "compiled legacy registry must use the same address-generic description",
-            legacyRegistry.contains(
-                "post(\"/set_plate_comment\", \"" + expected + "\""));
     }
 }

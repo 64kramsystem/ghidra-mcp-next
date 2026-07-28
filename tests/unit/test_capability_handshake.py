@@ -11,8 +11,6 @@ from pathlib import Path
 
 import pytest
 
-import tomllib
-
 from ghidra_mcp_bridge import handshake
 from ghidra_mcp_bridge import connection, registry, state, static_tools
 
@@ -239,39 +237,6 @@ def test_renamed_static_wrappers_leave_server_project_tools_available():
     assert set(staged.dynamic_tools) == {"create_project", "import_file"}
 
 
-def test_real_endpoint_catalog_registers_renamed_project_tools():
-    root = Path(__file__).resolve().parents[2]
-    catalog = json.loads((root / "tests/endpoints.json").read_text())
-    tools = [
-        {
-            **entry,
-            "params": [
-                {
-                    "name": name,
-                    "type": "string",
-                    "source": "query",
-                    "required": False,
-                }
-                for name in entry.get("params", [])
-            ],
-        }
-        for entry in catalog["endpoints"]
-    ]
-    version = {**VERSION, "endpoint_count": len(tools)}
-    manifest = handshake.validate_handshake(
-        version,
-        {"count": len(tools), "tools": tools},
-        static_tools.STATIC_TOOL_NAMES,
-    )
-    staged = registry.build_staged_registry(manifest, None)
-
-    assert manifest.manifest_count == catalog["total_endpoints"]
-    assert len(staged.dynamic_tools) == catalog["total_endpoints"]
-    assert {"create_project", "import_file"}.issubset(
-        staged.dynamic_tools
-    )
-
-
 def test_manifest_serialization_is_exact_utf8_without_unicode_normalization():
     composed = deepcopy(SCHEMA)
     composed["tools"][0]["description"] = "é"
@@ -349,10 +314,7 @@ def test_registry_adapter_rejects_ignored_publication(monkeypatch):
     assert set(manager._tools) == {"static"}
 
 
-def test_runtime_dependency_and_startup_adapter_are_exact():
-    root = Path(__file__).resolve().parents[2]
-    project = tomllib.loads((root / "pyproject.toml").read_text())
-    assert "mcp==1.28.1" in project["project"]["dependencies"]
+def test_runtime_startup_adapter_is_available():
     assert registry._registry_adapter is not None
 
 

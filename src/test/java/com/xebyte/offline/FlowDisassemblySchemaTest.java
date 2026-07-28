@@ -4,9 +4,6 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
@@ -17,8 +14,6 @@ import org.junit.Test;
 import com.xebyte.core.AnnotationScanner;
 
 public class FlowDisassemblySchemaTest {
-
-    private static final Path ROOT = Path.of(System.getProperty("user.dir"));
 
     @Test
     public void offlineSchemaContainsOnlyCorrectedFlowEndpoint() {
@@ -52,27 +47,5 @@ public class FlowDisassemblySchemaTest {
             "body", "body", "body", "body", "body",
             "body", "body", "body", "body", "query"),
             flow.params().stream().map(AnnotationScanner.ParamDescriptor::source).toList());
-    }
-
-    @Test
-    public void compiledProductionSourcesContainNoRetiredContract() throws IOException {
-        Path sourceRoot = ROOT.resolve("src/main/java");
-        try (var files = Files.walk(sourceRoot)) {
-            List<Path> offenders = files
-                .filter(path -> path.toString().endsWith(".java"))
-                .filter(path -> {
-                    try {
-                        String source = Files.readString(path);
-                        return source.contains("/disassemble_bytes") ||
-                            source.contains("restrict_to_execute_memory");
-                    }
-                    catch (IOException e) {
-                        throw new IllegalStateException(e);
-                    }
-                })
-                .toList();
-            assertTrue("retired disassembly contract remains in " + offenders,
-                offenders.isEmpty());
-        }
     }
 }

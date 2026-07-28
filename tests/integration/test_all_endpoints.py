@@ -5,20 +5,6 @@ Tests endpoint registration, response formats, and basic functionality.
 
 import pytest
 import json
-from pathlib import Path
-
-
-# Load endpoints for parametrization
-def load_endpoints():
-    endpoints_file = Path(__file__).parent.parent / "endpoints.json"
-    if endpoints_file.exists():
-        with open(endpoints_file) as f:
-            data = json.load(f)
-            return data.get("endpoints", [])
-    return []
-
-
-ENDPOINTS = load_endpoints()
 
 
 # =============================================================================
@@ -41,35 +27,6 @@ class TestServerConnection:
         assert response.status_code == 200
         # Should contain version string
         assert "1." in response.text or "version" in response.text.lower()
-
-
-# =============================================================================
-# Endpoint Registration Tests
-# =============================================================================
-
-
-class TestEndpointRegistration:
-    """Verify all endpoints are registered and respond (not 404)."""
-
-    @pytest.mark.parametrize("endpoint", ENDPOINTS, ids=[e["path"] for e in ENDPOINTS])
-    def test_endpoint_not_404(self, http_client, endpoint):
-        """Each endpoint should respond (not 404)."""
-        path = endpoint["path"]
-        method = endpoint.get("method", "GET")
-
-        try:
-            if method == "GET":
-                response = http_client.get(path, timeout=10)
-            else:
-                response = http_client.post(path, data={}, timeout=10)
-
-            # Endpoint should not return 404
-            assert response.status_code != 404, f"{path} returned 404 - not registered"
-
-        except Exception as e:
-            # Connection errors are acceptable for this test
-            # (server might not be running or endpoint might timeout)
-            pytest.skip(f"Connection error: {e}")
 
 
 # =============================================================================

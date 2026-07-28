@@ -1,13 +1,12 @@
 # Roadmap
 
 The roadmap focuses on deepening the maintained local-analysis and TraceRMI
-stack. Items are not promises until they have implementation, catalog, and test
+stack. Items are not promises until they have implementation and runtime
 coverage.
 
 ## Near-term priorities
 
 - Maintain GUI/headless parity for local project and program operations.
-- Keep `tests/endpoints.json` synchronized with Java registrations.
 - Improve multi-program routing and failure reporting without relying on a
   mutable active tab.
 - Expand offline tests for Ghidra transaction, address-space, and TraceRMI

@@ -9,7 +9,6 @@ architecture.
   BSim, security, and common tests.
 - [`PROJECT_STRUCTURE.md`](PROJECT_STRUCTURE.md) — current code and ownership
   boundaries.
-- [`TESTING.md`](TESTING.md) — offline, build, package, and live-test gates.
 - [`QUICK_REFERENCE_SCRIPTS.md`](QUICK_REFERENCE_SCRIPTS.md) — command and
   workflow cheat sheet.
 - [`MULTI_PROGRAM_SUPPORT_ANALYSIS.md`](MULTI_PROGRAM_SUPPORT_ANALYSIS.md) —

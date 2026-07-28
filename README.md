@@ -277,7 +277,7 @@ mvn clean compile -q
 ```
 
 Live integration tests require a running Ghidra instance and are intentionally
-separate from offline unit and contract tests. See [`docs/TESTING.md`](docs/TESTING.md).
+separate from offline runtime tests.
 
 ## Documentation
 

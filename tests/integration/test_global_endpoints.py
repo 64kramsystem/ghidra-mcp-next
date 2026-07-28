@@ -51,9 +51,7 @@ def require_v5_7_endpoints(server_url, http_session):
     if response.status_code == 404:
         pytest.skip(
             "audit_global endpoint not registered on running server "
-            "(v5.7.0 not deployed yet — run "
-            "`python -m tools.setup deploy --ghidra-path F:\\ghidra_12.1_PUBLIC --test release` "
-            "to deploy then re-run these tests)"
+            "(v5.7.0 not deployed yet — deploy the current build, then re-run these tests)"
         )
 
 
@@ -261,40 +259,6 @@ def test_set_global_empty_args_is_no_op_success(http_client, sample_global_addre
     body = json.loads(response.text)
     assert body.get("status") == "success"
     assert body.get("applied") == []
-
-
-# ---------- endpoint catalog ----------
-
-
-def test_audit_global_in_endpoint_catalog(endpoints):
-    """The new endpoint must be in tests/endpoints.json so the
-    EndpointsJsonParityTest passes and the bridge picks it up."""
-    paths = {e["path"] for e in endpoints}
-    assert "/audit_global" in paths, "audit_global missing from endpoints.json"
-
-
-def test_set_global_in_endpoint_catalog(endpoints):
-    paths = {e["path"] for e in endpoints}
-    assert "/set_global" in paths, "set_global missing from endpoints.json"
-
-
-def test_audit_global_categorized_as_datatype(endpoints):
-    by_path = {e["path"]: e for e in endpoints}
-    audit = by_path.get("/audit_global")
-    assert audit is not None
-    assert audit.get("category") == "datatype"
-
-
-def test_set_global_categorized_as_datatype(endpoints):
-    by_path = {e["path"]: e for e in endpoints}
-    set_g = by_path.get("/set_global")
-    assert set_g is not None
-    assert set_g.get("category") == "datatype"
-
-
-def test_audit_globals_in_function_in_endpoint_catalog(endpoints):
-    paths = {e["path"] for e in endpoints}
-    assert "/audit_globals_in_function" in paths
 
 
 # ---------- audit_globals_in_function ----------

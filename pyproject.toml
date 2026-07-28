@@ -77,7 +77,6 @@ test = [
     "requests-mock>=1.12.1",
     "coverage>=7.15.0",
     "pytest-json-report>=1.5.0",
-    "pyyaml>=6.0.0",
     # clang (bindings) and libclang (bundled DLL) must track the same LLVM
     # major: the libclang wheel tops out at 18.1.1 on PyPI, and 19+ bindings
     # call symbols (e.g. clang_getOffsetOfBase) the 18.x DLL doesn't export.
@@ -102,7 +101,6 @@ addopts = """
 --strict-config
 --tb=short
 --cov=ghidra_mcp_bridge
---cov=tools
 --cov-report=term-missing:skip-covered
 --cov-report=html:tests/coverage
 --cov-report=xml:tests/coverage.xml

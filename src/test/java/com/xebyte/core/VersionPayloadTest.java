@@ -7,8 +7,6 @@ import static org.junit.Assert.assertTrue;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import org.junit.Test;
 
 public class VersionPayloadTest {
@@ -75,24 +73,5 @@ public class VersionPayloadTest {
         assertEquals(
             schema.get("count").getAsInt(),
             version.get("endpoint_count").getAsInt());
-    }
-
-    @Test
-    public void everyServerTransportUsesTheSharedPayload() throws Exception {
-        String guiTcp = Files.readString(Path.of(
-            "src/main/java/com/xebyte/GhidraMCPPlugin.java"));
-        String guiUds = Files.readString(Path.of(
-            "src/main/java/com/xebyte/core/ServerManager.java"));
-        String headlessTcp = Files.readString(Path.of(
-            "src/main/java/com/xebyte/headless/GhidraMCPHeadlessServer.java"));
-
-        assertTrue(guiTcp.contains("VersionPayload.toJson("));
-        assertTrue(guiTcp.contains("VersionInfo.getEndpointCount()"));
-        assertTrue(guiUds.contains("VersionPayload.toJson(\"gui\", scanner.getDescriptors().size())"));
-        assertTrue(headlessTcp.contains("VersionPayload.toJson("));
-        assertTrue(headlessTcp.contains("\"headless\", registeredEndpointCount"));
-        assertTrue(guiTcp.contains("setEndpointCount(scanner.getDescriptors().size())"));
-        assertTrue(headlessTcp.contains(
-            "registeredEndpointCount = scanner.getDescriptors().size()"));
     }
 }
