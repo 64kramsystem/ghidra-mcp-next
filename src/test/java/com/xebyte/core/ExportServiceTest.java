@@ -443,17 +443,9 @@ public class ExportServiceTest {
     }
 
     @Test
-    public void defaultRunnerIsNativeAsciiExporterAndSourceHasNoScriptPath()
-            throws Exception {
+    public void defaultRunnerIsNativeAsciiExporter() {
         ExportService.AsciiExportRunner runner = new ExportService.AsciiExportRunner();
         assertEquals("ghidra.app.util.exporter.AsciiExporter", runner.name());
-
-        String source = Files.readString(Path.of(
-            "src/main/java/com/xebyte/core/ExportService.java"));
-        assertTrue(source.contains("new AsciiExporter()"));
-        assertFalse(source.contains("ProgramScriptService"));
-        assertFalse(source.contains("GhidraScript"));
-        assertFalse(source.contains("run_script_inline"));
     }
 
     @Test

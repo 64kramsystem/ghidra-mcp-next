@@ -90,29 +90,6 @@ def server_url():
 
 
 @pytest.fixture(scope="session")
-def endpoints():
-    """Load endpoint specifications from JSON."""
-    endpoints_file = Path(__file__).parent / "endpoints.json"
-    if endpoints_file.exists():
-        with open(endpoints_file) as f:
-            data = json.load(f)
-            return data.get("endpoints", [])
-    return []
-
-
-@pytest.fixture(scope="session")
-def endpoints_by_category(endpoints):
-    """Group endpoints by category."""
-    by_category = {}
-    for endpoint in endpoints:
-        cat = endpoint.get("category", "unknown")
-        if cat not in by_category:
-            by_category[cat] = []
-        by_category[cat].append(endpoint)
-    return by_category
-
-
-@pytest.fixture(scope="session")
 def http_session():
     """Create a requests session with default configuration."""
     session = requests.Session()
@@ -221,24 +198,3 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "write: mark test as performing write operations"
     )
-
-
-# =============================================================================
-# Utility Functions
-# =============================================================================
-
-
-def load_endpoints():
-    """Load endpoints for parametrization."""
-    endpoints_file = Path(__file__).parent / "endpoints.json"
-    if endpoints_file.exists():
-        with open(endpoints_file) as f:
-            data = json.load(f)
-            return data.get("endpoints", [])
-    return []
-
-
-def get_endpoint_ids():
-    """Get endpoint IDs for test naming."""
-    endpoints = load_endpoints()
-    return [f"{e['method']}_{e['path']}" for e in endpoints]

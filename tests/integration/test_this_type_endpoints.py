@@ -1,9 +1,7 @@
 """
 Behavioral integration tests for /set_function_this_type (#262).
 
-The offline FunctionServiceThisTypeTest only scrapes the Java source for token
-substrings, so it passes even if the runtime behavior regresses. These tests
-exercise the real endpoint against a live Ghidra server and assert on actual
+These tests exercise the real endpoint against a live Ghidra server and assert on actual
 behavior — in particular the H2 safety property: a function that has no implicit
 'this' (non-member, default calling convention) must NOT be silently re-parented
 into a class namespace.

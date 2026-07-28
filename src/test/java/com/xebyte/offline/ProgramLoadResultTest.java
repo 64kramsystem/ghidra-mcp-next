@@ -3,8 +3,6 @@ package com.xebyte.offline;
 import com.xebyte.headless.HeadlessProgramProvider.ProgramLoadResult;
 import junit.framework.TestCase;
 
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.Collections;
 
@@ -106,17 +104,5 @@ public class ProgramLoadResultTest extends TestCase {
         // should appear (it's the "no available list at all" branch).
         assertFalse(r.message.contains("no program files"));
         assertFalse(r.message.contains("program file(s)"));
-    }
-
-    public void testHeadlessDiagnosticsAreLocalOnly() throws Exception {
-        String source = Files.readString(Path.of(System.getProperty("user.dir"),
-                "src/main/java/com/xebyte/headless/HeadlessManagementService.java"));
-        assertTrue(source.contains("project_location"));
-        assertTrue(source.contains("loaded_programs"));
-        assertTrue(source.contains("requested_path"));
-        assertTrue(source.contains("available_program_paths"));
-        assertFalse(source.contains("project_server_bound"));
-        assertFalse(source.contains("serverHint"));
-        assertFalse(source.contains("server_repo"));
     }
 }

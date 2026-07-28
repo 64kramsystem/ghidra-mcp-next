@@ -4,10 +4,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
-import java.io.IOException;
 import java.io.ByteArrayInputStream;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
@@ -314,85 +311,6 @@ public class MemoryBlockServiceSchemaTest {
         assertTrue(fractional.toJson(), fractional.toJson().contains("length"));
         assertTrue(overflow.toJson(), overflow instanceof Response.Err);
         assertTrue(overflow.toJson(), overflow.toJson().contains("length"));
-    }
-
-    @Test
-    public void productionSourcesContainOnlyOneCanonicalCreateRoute()
-            throws IOException {
-        Path root = Path.of(System.getProperty("user.dir"))
-            .resolve("src/main/java");
-        long occurrences;
-        try (var files = Files.walk(root)) {
-            occurrences = files
-                .filter(path -> path.toString().endsWith(".java"))
-                .mapToLong(path -> {
-                    try {
-                        return count(Files.readString(path),
-                            "path = \"/create_memory_block\"");
-                    }
-                    catch (IOException error) {
-                        throw new IllegalStateException(error);
-                    }
-                })
-                .sum();
-        }
-        assertEquals(1, occurrences);
-
-        var catalog = JsonParser.parseString(
-            Files.readString(Path.of("tests/endpoints.json")))
-            .getAsJsonObject();
-        assertEquals(
-            "Create, transform, inspect, and write program memory blocks",
-            catalog.getAsJsonObject("categories")
-                .get("memory").getAsString());
-        var createEntry = catalog.getAsJsonArray("endpoints").asList()
-            .stream()
-            .map(element -> element.getAsJsonObject())
-            .filter(element -> element.get("path").getAsString()
-                .equals("/create_memory_block"))
-            .findFirst().orElseThrow();
-        assertEquals("memory",
-            createEntry.get("category").getAsString());
-        assertEquals(
-            "Create an initialized or uninitialized ordinary or overlay memory block",
-            createEntry.get("description").getAsString());
-        var writeEntry = catalog.getAsJsonArray("endpoints").asList()
-            .stream()
-            .map(element -> element.getAsJsonObject())
-            .filter(element -> element.get("path").getAsString()
-                .equals("/write_memory_bytes"))
-            .findFirst().orElseThrow();
-        assertTrue(writeEntry.get("description").getAsString()
-            .contains("4096"));
-        assertTrue(writeEntry.get("description").getAsString()
-            .contains("split"));
-        for (String path : List.of(
-                "/create_memory_block",
-                "/update_memory_block",
-                "/split_memory_block",
-                "/move_memory_block",
-                "/write_memory_bytes",
-                "/delete_memory_block",
-                "/resize_memory_block",
-                "/patch_bytes")) {
-            var entry = catalog.getAsJsonArray("endpoints").asList()
-                .stream()
-                .map(element -> element.getAsJsonObject())
-                .filter(element -> element.get("path").getAsString()
-                    .equals(path))
-                .findFirst().orElseThrow();
-            assertFalse(path, entry.has("supports_dry_run"));
-        }
-    }
-
-    private static long count(String text, String token) {
-        long count = 0;
-        int cursor = 0;
-        while ((cursor = text.indexOf(token, cursor)) >= 0) {
-            count++;
-            cursor += token.length();
-        }
-        return count;
     }
 
     private static Map<String, Object> parse(String json) {

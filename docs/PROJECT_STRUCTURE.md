@@ -10,15 +10,13 @@ ghidra-mcp/
 │   ├── GhidraMCPPlugin.java       # GUI plugin and endpoint registration
 │   ├── core/                      # analysis, program, project, and utility services
 │   └── headless/                  # local headless launcher and endpoint handler
-├── src/test/java/com/xebyte/      # offline contracts and Ghidra-aware tests
+├── src/test/java/com/xebyte/      # Java runtime-behavior tests
 ├── python/ghidra_mcp_bridge/      # MCP bridge, schema normalization, transports
 ├── tools/setup/                   # setup/build/deploy/version CLI
 ├── ghidra_scripts/                # exact reviewed generic-script allowlist
 ├── tests/
-│   ├── endpoints.json             # generated/curated endpoint catalog
-│   ├── unit/                      # Python offline and architecture tests
-│   ├── integration/               # optional live HTTP tests
-│   └── fixtures/                  # deterministic test inputs
+│   ├── unit/                      # Python runtime-behavior tests
+│   └── integration/               # optional live HTTP tests
 ├── docs/                          # maintained guides and release notes
 ├── .github/workflows/             # CI and release automation
 ├── pom.xml                        # Java build
@@ -59,13 +57,6 @@ The `ghidra_mcp_bridge` package:
 - optionally serves stdio, Streamable HTTP, or legacy SSE MCP transports.
 
 It does not implement a second debugger or analysis engine.
-
-## Catalog and parity
-
-`tests/endpoints.json` is part of the public contract. Endpoint-changing commits
-must regenerate it and pass Java parity plus Python catalog tests. The 18
-`/debugger/*` routes remain schema-discovered and normalize to clean
-`debugger_*` names.
 
 ## Build and package outputs
 

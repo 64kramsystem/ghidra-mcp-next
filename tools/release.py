@@ -10,8 +10,8 @@ Only `v<semver>` counts — this repository's `build-*` tags are not releases.
 
 Otherwise it refuses unless the checkout is on the default branch, clean, and
 exactly in sync with origin. Then it writes the version, rolls the changelog,
-runs the gates against that release candidate, builds and inspects the artifacts,
-commits, tags, pushes the branch and the tag, and publishes the GitHub release.
+runs the runtime test suites, builds and inspects the release candidate artifacts,
+commits, tags, pushes, and publishes the GitHub release.
 
 Everything fallible happens *before* the push, because the push is a one-way
 door: after it, the tag is public and no rollback here can retract it. Until then
@@ -353,11 +353,7 @@ def write_checksums(repo_root: Path, artifacts: Sequence[Path]) -> Path:
     return path
 
 
-# ------------------------------------------------------------------------- gates
-
-
 GATES: tuple[tuple[str, ...], ...] = (
-    ("mvn", "-q", "clean", "compile"),
     ("mvn", "test"),
     ("uv", "run", "pytest", "tests/unit/"),
 )
@@ -607,7 +603,7 @@ def publish(repo_root: Path, plan: PublishPlan, runner: Runner = run) -> str:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=f"Cut and publish a {PRODUCT} release",
-        epilog="Runs the gates, builds, commits, tags, pushes, and publishes.",
+        epilog="Runs runtime tests, builds, commits, tags, pushes, and publishes.",
     )
     parser.add_argument(
         "bump", choices=("major", "minor", "patch"), help="which component to raise"

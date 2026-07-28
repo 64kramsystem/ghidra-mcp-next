@@ -8,8 +8,6 @@ import com.xebyte.core.Response;
 import com.xebyte.core.ThreadingStrategy;
 import junit.framework.TestCase;
 
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
@@ -100,14 +98,6 @@ public class AnalysisServiceValidationTest extends TestCase {
         assertEquals(
             "json",
             batch.params().get(0).type());
-    }
-
-    public void testAnnotatedConfigurationReplacesRawHeadlessRoute() throws Exception {
-        String source = Files.readString(Path.of(
-            "src/main/java/com/xebyte/headless/GhidraMCPHeadlessServer.java"));
-        assertFalse(
-            "raw /configure_analyzer registration duplicates the annotated route",
-            source.contains("safeContext(\"/configure_analyzer\""));
     }
 
     public void testAnalyzerConfigurationRejectsUnsafeBooleanCoercionAtTransport()

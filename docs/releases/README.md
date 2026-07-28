@@ -14,9 +14,9 @@ version bump, a tag, or a `gh release`.
 ## What the command does
 
 In order: refuse unless the checkout is on `main`, clean, and exactly in sync
-with `origin`; write the version; roll the changelog; run the full gate set
-against that release candidate; build and inspect the artifacts; commit; tag;
-push the branch and the tag; publish the GitHub release.
+with `origin`; write the version; roll the changelog; run the runtime test
+suites; build and inspect the artifacts; commit; tag; push the branch and the
+tag; publish the GitHub release.
 
 The order is deliberate. Everything fallible happens *before* the push, because
 the push is a one-way door: after it the tag is public and nothing here can

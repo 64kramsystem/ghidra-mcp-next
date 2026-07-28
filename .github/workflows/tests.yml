@@ -118,22 +118,14 @@ jobs:
 
     - name: Run offline Java tests
       run: |
-        # Annotation-scanner, endpoints.json parity, and mock-based unit tests
-        # (e.g. ServiceUtilsAddressTest) — pure reflection / static checks, no Ghidra
-        # server. The true integration tests (GhidraMCPPluginTest,
-        # EndpointRegistrationTest, AppTest) require a running Ghidra instance and are
-        # excluded from this run.
+        # Runtime service and schema behavior exercised without a Ghidra server.
+        # Live integration tests require a running Ghidra instance and are excluded
+        # from this run.
         #
         # com.xebyte.core is included too: those are Mockito/ProgramBuilder tests that
         # need no Ghidra server either, but matching only com.xebyte.offline meant the
         # test files under com.xebyte.core never ran in CI at all.
         mvn -q test -Dtest='com.xebyte.offline.*Test,com.xebyte.core.*Test'
-
-    - name: Verify build artifacts
-      run: |
-        echo "✅ Java compilation + offline tests passed"
-        find target -maxdepth 1 -type f -name 'GhidraMCP-next-*.zip' -exec ls -la {} +
-        find target -maxdepth 1 -type f -name '*.jar' -exec ls -la {} +
 
     - name: Upload test results
       if: always()
@@ -194,10 +186,6 @@ jobs:
       run: |
         uv sync --locked --group test
         uv run --no-sync pytest tests/unit/ -v --tb=short
-
-    - name: Build Python distributions
-      if: matrix.python-version == '3.14' && success()
-      run: uv build
 
   python-tests-windows:
     # The bridge has real platform forks (no AF_UNIX in Windows CPython, the

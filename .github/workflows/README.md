@@ -2,7 +2,7 @@
 
 | File | Purpose |
 | --- | --- |
-| `tests.yml` | Pull-request and push gates for Python, Java/Maven, catalog, packaging, and documentation contracts. Gates only: it publishes nothing. |
+| `tests.yml` | Pull-request and push gates for Python and Java runtime behavior. It publishes nothing. |
 
 ## Pull requests
 
@@ -34,6 +34,4 @@ rebuilding).
 Live regression needs Java 21, Maven, Python/uv, a compatible Ghidra
 installation, and a disposable local project/fixture.
 
-See [`../../docs/TESTING.md`](../../docs/TESTING.md) for local equivalents and
-for the distinction between offline gates, expected skips, and executed live
-coverage.
+The repository README lists the local runtime-test commands.

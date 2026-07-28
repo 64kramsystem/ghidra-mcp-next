@@ -75,7 +75,3 @@ GET /force_decompile?function_address=0x401000
 After this the function appears as `Widget::Widget_OnClick` and the decompiler shows `this->member`, not `void *`.
 
 **Pass:** decompilation shows `this->member`; the function is listed under class `Widget` in the Symbol Tree.
-
-## Related
-
-- Manual checks: [TESTING.md](TESTING.md)

@@ -207,7 +207,7 @@ def _iter_tcp_instances(start_port: int = DEFAULT_TCP_PORT,
     non-JSON responders are skipped silently.
 
     Uses http.client (stdlib) rather than `requests` to keep the bridge's
-    dependency footprint minimal -- see test_project_consistency.
+    dependency footprint minimal.
     """
     for port in range(start_port, start_port + range_size):
         url = f"http://127.0.0.1:{port}"

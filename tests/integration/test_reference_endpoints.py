@@ -1,11 +1,9 @@
 """
 Integration tests for /add_memory_reference and /remove_reference.
 
-Covers the user-defined cross-reference tools: catalog/parity, input validation,
-a real create -> get_xrefs_to -> remove round-trip, and the empty-match no-op.
-
-The catalog tests run without a server. The live tests auto-skip when the
-server/program is unavailable or when the endpoint isn't registered (older JAR).
+Covers input validation, a real create -> get_xrefs_to -> remove round-trip,
+and the empty-match no-op. The live tests auto-skip when the server/program is
+unavailable or when the endpoint isn't registered (older JAR).
 
 Run with: pytest tests/integration/test_reference_endpoints.py -v
 """
@@ -20,53 +18,6 @@ pytestmark = [
     pytest.mark.integration,
     pytest.mark.safe_write,
 ]
-
-
-# ---------- catalog / parity (no server needed) ----------
-
-
-def test_add_memory_reference_in_endpoint_catalog(endpoints):
-    """Must be in tests/endpoints.json so EndpointsJsonParityTest passes and
-    the bridge registers it dynamically."""
-    paths = {e["path"] for e in endpoints}
-    assert "/add_memory_reference" in paths, "add_memory_reference missing from endpoints.json"
-
-
-def test_add_memory_reference_categorized_as_xref(endpoints):
-    by_path = {e["path"]: e for e in endpoints}
-    entry = by_path.get("/add_memory_reference")
-    assert entry is not None
-    assert entry.get("category") == "xref"
-
-
-def test_add_memory_reference_is_post(endpoints):
-    by_path = {e["path"]: e for e in endpoints}
-    entry = by_path.get("/add_memory_reference")
-    assert entry is not None
-    assert entry.get("method") == "POST"
-
-
-def test_add_memory_reference_declares_core_params(endpoints):
-    by_path = {e["path"]: e for e in endpoints}
-    entry = by_path.get("/add_memory_reference")
-    assert entry is not None
-    params = set(entry.get("params", []))
-    for required in ("from_address", "to_address", "ref_type", "source_type",
-                     "operand_index", "program"):
-        assert required in params, f"{required} missing from catalog params {params}"
-
-
-def test_remove_reference_in_endpoint_catalog(endpoints):
-    paths = {e["path"] for e in endpoints}
-    assert "/remove_reference" in paths, "remove_reference missing from endpoints.json"
-
-
-def test_remove_reference_categorized_as_xref_post(endpoints):
-    by_path = {e["path"]: e for e in endpoints}
-    entry = by_path.get("/remove_reference")
-    assert entry is not None
-    assert entry.get("category") == "xref"
-    assert entry.get("method") == "POST"
 
 
 # ---------- live fixtures ----------

@@ -115,7 +115,6 @@ without one can target a different binary.
 uv run pytest \
   tests/unit/test_bridge_utils.py \
   tests/unit/test_create_project.py \
-  tests/unit/test_protected_workflows.py \
   -v --no-cov
 
 mvn test -Dtest='com.xebyte.core.GuiProjectServiceTest,com.xebyte.offline.FrontEndProgramProviderEvictionTest'
