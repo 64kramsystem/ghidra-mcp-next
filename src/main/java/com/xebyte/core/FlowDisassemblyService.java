@@ -90,7 +90,18 @@ public final class FlowDisassemblyService {
         }
     }
 
-    record AnalysisSubmission(boolean queued, String requestIdentity) {
+    /**
+     * @param worker headless scoped-analysis thread, or {@code null} when
+     *     Ghidra owns GUI background-analysis scheduling
+     */
+    record AnalysisSubmission(
+            boolean queued,
+            String requestIdentity,
+            Thread worker) {
+
+        AnalysisSubmission(boolean queued, String requestIdentity) {
+            this(queued, requestIdentity, null);
+        }
     }
 
     record PreparedPlan(
@@ -1382,7 +1393,7 @@ public final class FlowDisassemblyService {
         return disassembler.disassemble(starts, restriction, followFlow);
     }
 
-    private static AnalysisQueue defaultAnalysisQueue(
+    static AnalysisQueue defaultAnalysisQueue(
             ThreadingStrategy threadingStrategy) {
         return (program, created) ->
             submitAnalysis(program, created, threadingStrategy);
@@ -1421,7 +1432,7 @@ public final class FlowDisassemblyService {
         }, "ghidra-mcp-" + requestIdentity);
         worker.setDaemon(true);
         worker.start();
-        return new AnalysisSubmission(true, requestIdentity);
+        return new AnalysisSubmission(true, requestIdentity, worker);
     }
 
     private static Map<String, Object> resultMap(

@@ -1066,7 +1066,12 @@ public class ProgramScriptService {
         }
     }
 
-    @McpTool(path = "/analysis_status", description = "Get auto-analysis status for open programs", category = "program")
+    @McpTool(
+        path = "/analysis_status",
+        description = "Get a point-in-time auto-analysis status snapshot for open programs. "
+            + "analyzing=false does not guarantee that an asynchronously queued analysis "
+            + "transaction has closed or that its events have finished flushing.",
+        category = "program")
     public Response analysisStatus(
             @Param(value = "program", description = "Program name (omit for all open programs)") String programName) {
 
