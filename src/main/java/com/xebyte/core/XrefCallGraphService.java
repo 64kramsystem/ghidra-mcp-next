@@ -187,7 +187,7 @@ public class XrefCallGraphService {
         Address toAddr = ServiceUtils.parseMutationAddress(program, toAddressStr);
         if (toAddr == null) return Response.err("to_address: " + ServiceUtils.getLastParseError());
 
-        RefType refType = resolveMemoryRefType(refTypeStr);
+        RefType refType = ServiceUtils.resolveRefType(refTypeStr);
         if (refType == null) {
             return Response.err("Unknown ref_type '" + refTypeStr + "'. Valid names include: "
                     + "DATA, READ, WRITE, READ_WRITE, COMPUTED_CALL, UNCONDITIONAL_CALL, CONDITIONAL_CALL, "
@@ -296,28 +296,6 @@ public class XrefCallGraphService {
         } catch (Exception e) {
             return Response.err("Error removing reference: " + e.getMessage());
         }
-    }
-
-    /**
-     * Resolve a case-insensitive {@link RefType} name to its static constant.
-     * Reflects over RefType's public static fields so every valid name (data + flow types)
-     * is accepted, matching the names callers see in the listing.
-     */
-    private static RefType resolveMemoryRefType(String name) {
-        if (name == null || name.trim().isEmpty()) return null;
-        String want = name.trim().toUpperCase(Locale.ROOT);
-        for (java.lang.reflect.Field f : RefType.class.getFields()) {
-            if (java.lang.reflect.Modifier.isStatic(f.getModifiers())
-                    && RefType.class.isAssignableFrom(f.getType())
-                    && f.getName().equals(want)) {
-                try {
-                    return (RefType) f.get(null);
-                } catch (IllegalAccessException e) {
-                    return null;
-                }
-            }
-        }
-        return null;
     }
 
     /**

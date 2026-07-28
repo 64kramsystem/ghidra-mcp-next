@@ -1,19 +1,31 @@
 package com.xebyte.core;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
+import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
 import java.math.BigDecimal;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import org.junit.Test;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+
+import ghidra.program.model.symbol.RefType;
+import ghidra.program.model.symbol.RefTypeFactory;
 
 public class ControlFlowServiceSchemaTest {
     @Test
@@ -58,6 +70,106 @@ public class ControlFlowServiceSchemaTest {
     }
 
     @Test
+    public void batchReferenceSchemasPublishSafeAddAndExactRemoveTypes() {
+        AnnotationScanner scanner = new AnnotationScanner(
+            new ControlFlowService(
+                new EmptyProvider(), new DirectThreading()));
+        JsonArray tools = JsonParser.parseString(scanner.generateSchema())
+            .getAsJsonObject().getAsJsonArray("tools");
+        JsonObject references = endpoint(
+            tools, "/batch_update_references");
+
+        JsonObject addType = itemProperty(references, "add", "type");
+        Set<String> actualAddTypes = new LinkedHashSet<>();
+        addType.getAsJsonArray("enum").forEach(
+            value -> actualAddTypes.add(value.getAsString()));
+        assertTrue(
+            addType.get("description").getAsString()
+                .contains("Creatable"));
+        RefType[] factoryTypes = RefTypeFactory.getMemoryRefTypes();
+        Set<String> expectedAddTypes = Arrays.stream(
+                Arrays.copyOf(factoryTypes, factoryTypes.length))
+            .map(type -> type.getName().toLowerCase(Locale.ROOT))
+            .collect(Collectors.toCollection(LinkedHashSet::new));
+        expectedAddTypes.add("call");
+        expectedAddTypes.add("jump");
+        assertEquals(expectedAddTypes, actualAddTypes);
+
+        JsonObject removeType =
+            itemProperty(references, "remove", "type");
+        assertEquals("string", removeType.get("type").getAsString());
+        assertEquals(1, removeType.get("minLength").getAsInt());
+        assertFalse(removeType.has("enum"));
+        assertTrue(
+            removeType.get("description").getAsString()
+                .contains("public Ghidra RefType"));
+    }
+
+    @Test
+    public void batchReferenceParsersRoundTripEverySupportedRefType()
+            throws Exception {
+        RefType[] factoryTypes = RefTypeFactory.getMemoryRefTypes();
+        RefType[] memoryTypes = Arrays.copyOf(
+            factoryTypes, factoryTypes.length);
+        for (RefType type : memoryTypes) {
+            Map<String, Object> add = reference();
+            add.put("type", ControlFlowService.wireType(type));
+            assertSame(
+                type,
+                ControlFlowService.parseReferenceRequests(
+                    List.of(add), true, "add").get(0).type());
+        }
+
+        Map<String, RefType> publicNames = new LinkedHashMap<>();
+        for (Field field : RefType.class.getFields()) {
+            if (!Modifier.isStatic(field.getModifiers())
+                    || !RefType.class.isAssignableFrom(field.getType())) {
+                continue;
+            }
+            RefType type = (RefType) field.get(null);
+            assertNoResolverCollision(
+                publicNames, field.getName(), type);
+            assertNoResolverCollision(
+                publicNames, type.getName(), type);
+
+            for (String token :
+                    List.of(field.getName(), type.getName(),
+                        ControlFlowService.wireType(type))) {
+                Map<String, Object> remove = reference();
+                remove.put("type", token);
+                assertSame(
+                    type,
+                    ControlFlowService.parseReferenceRequests(
+                        List.of(remove), false, "remove").get(0).type());
+            }
+        }
+        assertSame(
+            RefType.EXTERNAL_REF,
+            parseType("EXTERNAL_REF", false));
+        assertSame(
+            RefType.EXTERNAL_REF,
+            parseType("external", false));
+    }
+
+    @Test
+    public void batchReferenceParserRejectsUnknownAndUnsafeAddTypes() {
+        Map<String, Object> unknown = reference();
+        unknown.put("type", "not_a_ref_type");
+        assertThrows(IllegalArgumentException.class, () ->
+            ControlFlowService.parseReferenceRequests(
+                List.of(unknown), true, "add"));
+        assertThrows(IllegalArgumentException.class, () ->
+            ControlFlowService.parseReferenceRequests(
+                List.of(unknown), false, "remove"));
+
+        Map<String, Object> externalAdd = reference();
+        externalAdd.put("type", "external");
+        assertThrows(IllegalArgumentException.class, () ->
+            ControlFlowService.parseReferenceRequests(
+                List.of(externalAdd), true, "add"));
+    }
+
+    @Test
     public void parsersRejectEncodedAndInexactNativeValues() {
         assertThrows(IllegalArgumentException.class, () ->
             ControlFlowService.parseStringArray(
@@ -88,6 +200,34 @@ public class ControlFlowServiceSchemaTest {
         result.put("to", "2000");
         result.put("type", "data");
         return result;
+    }
+
+    private static RefType parseType(
+            String token, boolean additions) {
+        Map<String, Object> request = reference();
+        request.put("type", token);
+        return ControlFlowService.parseReferenceRequests(
+            List.of(request), additions,
+            additions ? "add" : "remove").get(0).type();
+    }
+
+    private static void assertNoResolverCollision(
+            Map<String, RefType> names, String name, RefType type) {
+        RefType previous = names.putIfAbsent(
+            name.toUpperCase(Locale.ROOT), type);
+        assertTrue(
+            "resolver collision for " + name,
+            previous == null || previous == type);
+    }
+
+    private static JsonObject itemProperty(
+            JsonObject tool, String parameterName,
+            String propertyName) {
+        return parameter(tool, parameterName)
+            .getAsJsonObject("schema")
+            .getAsJsonObject("items")
+            .getAsJsonObject("properties")
+            .getAsJsonObject(propertyName);
     }
 
     private static JsonObject endpoint(

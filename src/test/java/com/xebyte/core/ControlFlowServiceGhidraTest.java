@@ -34,6 +34,7 @@ import ghidra.program.model.listing.CommentType;
 import ghidra.program.model.listing.FlowOverride;
 import ghidra.program.model.symbol.RefType;
 import ghidra.program.model.symbol.Reference;
+import ghidra.program.model.symbol.ReferenceManager;
 import ghidra.program.model.symbol.SourceType;
 
 public class ControlFlowServiceGhidraTest {
@@ -218,6 +219,133 @@ public class ControlFlowServiceGhidraTest {
             List.of(), List.of(remove), true, false, ""));
         assertNull(program.getReferenceManager().getReference(
             builder.addr("0x1300"), builder.addr("0x3010"),
+            Reference.MNEMONIC));
+    }
+
+    @Test
+    public void analyzerReadRetargetsAtomicallyToQualifiedOverlay()
+            throws Exception {
+        builder.createOverlayMemory("io", "0x3000", 0x10);
+        int tx = program.startTransaction("seed analyzer read");
+        try {
+            ReferenceManager manager =
+                program.getReferenceManager();
+            for (Reference reference :
+                    manager.getReferencesFrom(builder.addr("0x1010"))) {
+                if (reference.getOperandIndex() == 0) {
+                    manager.delete(reference);
+                }
+            }
+            Reference read = manager.addMemoryReference(
+                builder.addr("0x1010"), builder.addr("0x3000"),
+                RefType.READ, SourceType.ANALYSIS, 0);
+            manager.setPrimary(read, true);
+        }
+        finally {
+            program.endTransaction(tx, true);
+        }
+
+        Map<String, Object> remove = reference(
+            "0x1010", targetSpaceName + ":3000", "READ", 0);
+        Map<String, Object> add = reference(
+            "0x1010", "io:3000", "read", 0);
+        add.put("primary", true);
+
+        Response denied = service.batchUpdateReferences(
+            List.of(add), List.of(remove), false, false, "");
+        assertTrue(denied.toJson(), denied instanceof Response.Err);
+        assertNotNull(program.getReferenceManager().getReference(
+            builder.addr("0x1010"), builder.addr("0x3000"), 0));
+        assertNull(program.getReferenceManager().getReference(
+            builder.addr("0x1010"), builder.addr("io::3000"), 0));
+
+        JsonObject preview = ok(service.batchUpdateReferences(
+            List.of(add), List.of(remove), true, true, ""));
+        assertFalse(preview.get("committed").getAsBoolean());
+        JsonObject previewRemove =
+            preview.getAsJsonArray("remove").get(0).getAsJsonObject();
+        assertEquals("read", previewRemove.get("type").getAsString());
+        assertEquals(
+            "analysis", previewRemove.get("source").getAsString());
+        assertTrue(
+            previewRemove.get("non_user_removal").getAsBoolean());
+        assertNotNull(program.getReferenceManager().getReference(
+            builder.addr("0x1010"), builder.addr("0x3000"), 0));
+
+        JsonObject committed = ok(service.batchUpdateReferences(
+            List.of(add), List.of(remove), true, false, ""));
+        assertTrue(committed.get("committed").getAsBoolean());
+        assertNull(program.getReferenceManager().getReference(
+            builder.addr("0x1010"), builder.addr("0x3000"), 0));
+        Reference overlayRead =
+            program.getReferenceManager().getReference(
+                builder.addr("0x1010"),
+                builder.addr("io::3000"), 0);
+        assertNotNull(overlayRead);
+        assertEquals(RefType.READ, overlayRead.getReferenceType());
+        assertEquals(SourceType.USER_DEFINED, overlayRead.getSource());
+        assertTrue(overlayRead.isPrimary());
+
+        JsonObject repeated = ok(service.batchUpdateReferences(
+            List.of(add), List.of(), false, false, ""));
+        assertEquals(
+            "unchanged",
+            repeated.getAsJsonArray("add").get(0)
+                .getAsJsonObject().get("action").getAsString());
+        Response absent = service.batchUpdateReferences(
+            List.of(), List.of(remove), true, false, "");
+        assertTrue(absent.toJson(), absent instanceof Response.Err);
+    }
+
+    @Test
+    public void readWriteTypesPreserveExactSlotsAndOverlayBounds()
+            throws Exception {
+        builder.createOverlayMemory("io", "0x3000", 0x10);
+        Map<String, Object> readWrite = reference(
+            "0x1300", "io:3001", "read_write", -1);
+        ok(service.batchUpdateReferences(
+            List.of(readWrite), List.of(), false, false, ""));
+        Reference exact =
+            program.getReferenceManager().getReference(
+                builder.addr("0x1300"),
+                builder.addr("io::3001"), Reference.MNEMONIC);
+        assertNotNull(exact);
+        assertEquals(
+            RefType.READ_WRITE, exact.getReferenceType());
+
+        Map<String, Object> incompatible = reference(
+            "0x1300", "io:3001", "read", -1);
+        Response mismatch = service.batchUpdateReferences(
+            List.of(incompatible), List.of(), false, false, "");
+        assertTrue(mismatch.toJson(), mismatch instanceof Response.Err);
+
+        Map<String, Object> duplicateSlot = reference(
+            "0x1300", "io:3002", "read", -1);
+        Map<String, Object> duplicateSlotOtherType =
+            new LinkedHashMap<>(duplicateSlot);
+        duplicateSlotOtherType.put("type", "write");
+        Response duplicate = service.batchUpdateReferences(
+            List.of(duplicateSlot, duplicateSlotOtherType),
+            List.of(), false, false, "");
+        assertTrue(duplicate.toJson(), duplicate instanceof Response.Err);
+
+        ok(service.batchUpdateReferences(
+            List.of(), List.of(readWrite), false, false, ""));
+        assertNull(program.getReferenceManager().getReference(
+            builder.addr("0x1300"),
+            builder.addr("io::3001"), Reference.MNEMONIC));
+
+        Map<String, Object> outsideOverlay = reference(
+            "0x1300", "io:3010", "read", -1);
+        Response outside = service.batchUpdateReferences(
+            List.of(outsideOverlay), List.of(), false, false, "");
+        assertTrue(
+            outside.toJson(), outside instanceof Response.Err);
+        assertNull(program.getReferenceManager().getReference(
+            builder.addr("0x1300"), builder.addr("0x3010"),
+            Reference.MNEMONIC));
+        assertNull(program.getReferenceManager().getReference(
+            builder.addr("0x1300"), builder.addr("io::3010"),
             Reference.MNEMONIC));
     }
 
