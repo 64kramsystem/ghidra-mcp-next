@@ -79,6 +79,11 @@ public class ServerManager {
                 new SymbolProfileService(programProvider, ts);
             EmulationService emulationService = new EmulationService(programProvider, ts);
             ExportService exportService = new ExportService(programProvider);
+            ProjectArchiveService projectArchiveService = new ProjectArchiveService(
+                () -> {
+                    PluginTool active = getActiveTool();
+                    return active != null ? active.getProject() : null;
+                }, ts);
             FlowDisassemblyService flowDisassemblyService =
                 new FlowDisassemblyService(programProvider, ts);
             ListingRangeService listingRangeService =
@@ -99,7 +104,8 @@ public class ServerManager {
                 binaryComparisonService, malwareSecurityService, programScriptService,
                 memoryBlockService, dataRegionService, controlFlowService,
                 symbolProfileService,
-                emulationService, exportService, flowDisassemblyService,
+                emulationService, exportService, projectArchiveService,
+                flowDisassemblyService,
                 listingRangeService, listingMutationService,
                 addressEncodingSearchService, coverageService,
                 debuggerService, guiProjectService, guiContextService);

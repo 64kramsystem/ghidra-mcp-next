@@ -70,6 +70,7 @@ public class GhidraMCPHeadlessServer implements GhidraLaunchable {
     // Endpoint handler registry
     private HeadlessEndpointHandler endpointHandler;
     private HeadlessManagementService managementService;
+    private com.xebyte.core.ProjectArchiveService projectArchiveService;
     private int registeredEndpointCount;
 
     public static void main(String[] args) {
@@ -99,6 +100,8 @@ public class GhidraMCPHeadlessServer implements GhidraLaunchable {
         endpointHandler = new HeadlessEndpointHandler(programProvider, threadingStrategy);
 
         managementService = new HeadlessManagementService(programProvider);
+        projectArchiveService = new com.xebyte.core.ProjectArchiveService(
+            programProvider::getProject, threadingStrategy);
 
         // Load initial programs if specified
         loadInitialPrograms(args);
@@ -403,6 +406,7 @@ public class GhidraMCPHeadlessServer implements GhidraLaunchable {
             endpointHandler.getControlFlowService(),
             endpointHandler.getSymbolProfileService(),
             endpointHandler.getEmulationService(), endpointHandler.getExportService(),
+            projectArchiveService,
             endpointHandler.getFlowDisassemblyService(),
             endpointHandler.getListingRangeService(),
             endpointHandler.getListingMutationService(),

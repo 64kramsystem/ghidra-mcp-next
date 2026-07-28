@@ -246,6 +246,7 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
     private final com.xebyte.core.SymbolProfileService symbolProfileService;
     private final com.xebyte.core.EmulationService emulationService;
     private final com.xebyte.core.ExportService exportService;
+    private final com.xebyte.core.ProjectArchiveService projectArchiveService;
     private final com.xebyte.core.FlowDisassemblyService flowDisassemblyService;
     private final com.xebyte.core.ListingRangeService listingRangeService;
     private final com.xebyte.core.ListingMutationService listingMutationService;
@@ -283,6 +284,8 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
             new com.xebyte.core.SymbolProfileService(programProvider, threadingStrategy);
         this.emulationService = new com.xebyte.core.EmulationService(programProvider, threadingStrategy);
         this.exportService = new com.xebyte.core.ExportService(programProvider);
+        this.projectArchiveService = new com.xebyte.core.ProjectArchiveService(
+            () -> tool.getProject(), new com.xebyte.core.SwingThreadingStrategy());
         this.flowDisassemblyService =
             new com.xebyte.core.FlowDisassemblyService(programProvider, threadingStrategy);
         this.listingRangeService =
@@ -558,7 +561,7 @@ public class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
             binaryComparisonService, malwareSecurityService, programScriptService,
             memoryBlockService, dataRegionService, controlFlowService,
             symbolProfileService,
-            emulationService, exportService, flowDisassemblyService,
+            emulationService, exportService, projectArchiveService, flowDisassemblyService,
             listingRangeService, listingMutationService,
             addressEncodingSearchService, coverageService,
             debuggerService, guiProjectService, guiContextService);

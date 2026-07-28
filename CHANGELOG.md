@@ -8,7 +8,12 @@ Complete version history for the GhidraMCP-next project.
 
 ### Removed
 
+- **Breaking:** Removed the headless-only `archive_project`; use the shared `export_project_archive`.
 - **Breaking:** Removed `deploy --test` and its benchmark, contract, catalog, debugger, multi-program, negative, and release modes; removed `GHIDRA_MCP_DEPLOY_TESTS`, static endpoint catalogs, benchmark fixtures, and repository/build/setup/configuration/deployment/release contract tests. Retained tests exercise shipped runtime behavior only.
+
+### Added
+
+- Added `export_project_archive`, which saves and exports the active GUI or headless project through Ghidra's native GAR writer. It takes one absolute `output_path`, verifies the completed GAR, and safely replaces an existing destination only after export succeeds.
 
 ### Fixed
 

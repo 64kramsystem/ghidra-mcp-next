@@ -31,7 +31,7 @@ import ghidra.util.task.TaskMonitor;
  * <p>The service delegates listing formatting to Ghidra's {@link AsciiExporter}.
  * It only owns request validation and safe filesystem publication.
  */
-@McpToolGroup(value = "export", description = "Native program export")
+@McpToolGroup(value = "export", description = "Native program and project export")
 public final class ExportService {
 
     private static final Gson OUTPUT_GSON = new Gson();
@@ -397,7 +397,7 @@ public final class ExportService {
         return detail != null && !detail.isBlank() ? detail : requested;
     }
 
-    private static Path siblingTemporaryPath(Path destination) {
+    static Path siblingTemporaryPath(Path destination) {
         String name = destination.getFileName().toString();
         return destination.resolveSibling("." + name + ".tmp-" + UUID.randomUUID());
     }

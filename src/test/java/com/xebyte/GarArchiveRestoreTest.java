@@ -1,7 +1,6 @@
 package com.xebyte;
 
 import com.xebyte.headless.HeadlessProgramProvider;
-import com.xebyte.headless.HeadlessProgramProvider.ArchiveResult;
 import com.xebyte.headless.HeadlessProgramProvider.RestoreResult;
 import org.junit.Test;
 
@@ -9,12 +8,10 @@ import java.io.File;
 import java.nio.file.Files;
 
 import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
 /**
- * Offline contract tests for the GAR archive/restore endpoints added in
- * PR #264 ({@code /archive_project}, {@code /restore_project}).
+ * Offline contract tests for the GAR restore endpoint.
  *
  * <p>Every validation branch in {@code restoreProject} runs <em>before</em> any
  * project or {@link HeadlessArchiveBridge} call, so a fresh
@@ -105,17 +102,5 @@ public class GarArchiveRestoreTest {
         RestoreResult res = provider().restoreProject(tempGar(), notADir.getAbsolutePath(), "proj");
         assertFalse(res.success);
         assertTrue(res.error, res.error.contains("not a directory"));
-    }
-
-    // -------------------------------------------------------------------
-    // archiveCurrentProject — no project open
-    // -------------------------------------------------------------------
-
-    @Test
-    public void archiveRejectsWhenNoProjectOpen() {
-        ArchiveResult res = provider().archiveCurrentProject(new File("/tmp/out.gar"));
-        assertFalse(res.success);
-        assertNotNull(res.error);
-        assertTrue(res.error, res.error.contains("No project open"));
     }
 }
