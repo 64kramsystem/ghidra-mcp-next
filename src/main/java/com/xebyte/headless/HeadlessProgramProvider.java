@@ -1036,42 +1036,6 @@ public class HeadlessProgramProvider implements ProgramProvider {
     }
 
     /**
-     * Archive the currently open project to a Ghidra-native {@code .gar} file.
-     *
-     * <p>Unlike {@link #exportProgramToGzf}, this captures the entire project
-     * (all programs, folders, tool settings, version-control metadata) in a
-     * format that Ghidra's GUI can re-import via <em>File &rarr; Restore Project</em>.
-     */
-    public ArchiveResult archiveCurrentProject(File garFile) {
-        if (project == null) {
-            return ArchiveResult.failure("No project open. Call /open_project first.");
-        }
-        if (garFile == null) {
-            return ArchiveResult.failure("output path required");
-        }
-        File parent = garFile.getParentFile();
-        if (parent == null || !parent.isDirectory()) {
-            return ArchiveResult.failure("output parent directory does not exist: "
-                + (parent == null ? "<none>" : parent.getAbsolutePath()));
-        }
-        if (garFile.exists()) {
-            return ArchiveResult.failure("output file already exists: " + garFile.getAbsolutePath());
-        }
-        if (!garFile.getName().toLowerCase().endsWith(HeadlessArchiveBridge.ARCHIVE_EXTENSION)) {
-            return ArchiveResult.failure("output must end in " + HeadlessArchiveBridge.ARCHIVE_EXTENSION
-                + ": " + garFile.getName());
-        }
-        try {
-            HeadlessArchiveBridge.archive(project, garFile, monitor);
-            return ArchiveResult.success(project.getName(), garFile.getAbsolutePath(), garFile.length());
-        } catch (Exception e) {
-            Msg.error(this, "archive failed for project '" + project.getName() + "'", e);
-            return ArchiveResult.failure("archive failed (" + e.getClass().getSimpleName()
-                + "): " + e.getMessage());
-        }
-    }
-
-    /**
      * Restore a Ghidra {@code .gar} archive into a fresh on-disk project.
      *
      * <p>Any currently-open project is closed first. The new project is created
@@ -1122,31 +1086,6 @@ public class HeadlessProgramProvider implements ProgramProvider {
             Msg.error(this, "restore failed for '" + garFile.getAbsolutePath() + "'", e);
             return RestoreResult.failure("restore failed (" + e.getClass().getSimpleName()
                 + "): " + e.getMessage());
-        }
-    }
-
-    /** Structured result for {@link #archiveCurrentProject}. */
-    public static class ArchiveResult {
-        public final boolean success;
-        public final String error;          // null on success
-        public final String projectName;    // null on failure
-        public final String outputPath;     // null on failure
-        public final long sizeBytes;        // 0 on failure
-
-        private ArchiveResult(boolean success, String error, String projectName, String outputPath, long sizeBytes) {
-            this.success = success;
-            this.error = error;
-            this.projectName = projectName;
-            this.outputPath = outputPath;
-            this.sizeBytes = sizeBytes;
-        }
-
-        public static ArchiveResult success(String projectName, String outputPath, long sizeBytes) {
-            return new ArchiveResult(true, null, projectName, outputPath, sizeBytes);
-        }
-
-        public static ArchiveResult failure(String error) {
-            return new ArchiveResult(false, error, null, null, 0L);
         }
     }
 

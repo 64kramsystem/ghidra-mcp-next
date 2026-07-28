@@ -16,7 +16,7 @@ import static org.junit.Assert.assertTrue;
 /**
  * Offline unit tests for {@link HeadlessPaths} — the path-traversal guard
  * shared by the headless GZF/GAR endpoints ({@code /export_program},
- * {@code /archive_project}, {@code /import_program}, {@code /restore_project}).
+ * {@code /import_program}, {@code /restore_project}).
  *
  * <p>These pin the security contract flagged on PR #264: caller-supplied
  * names must be plain filenames and the resolved output must stay inside its

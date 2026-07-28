@@ -298,59 +298,8 @@ public class HeadlessManagementService {
     }
 
     // ========================================================================
-    // GAR project archive / restore
+    // GAR project restore
     // ========================================================================
-
-    @McpTool(path = "/archive_project", method = "POST",
-            description = "Archive the currently open project to a Ghidra-native .gar file. The result can be "
-                + "restored into any Ghidra GUI via File \u2192 Restore Project, or back into a headless instance "
-                + "via /restore_project. Captures the entire project (all programs, folders, settings, "
-                + "version-control metadata) \u2014 unlike /export_program which ships a single program as .gzf. "
-                + "Output is written to `output_dir/output_name` (defaults: /data/exports and `<project>.gar`). "
-                + "Refuses to overwrite an existing file. Callers should /save_all_programs first to flush "
-                + "pending in-memory edits.",
-            category = "headless")
-    public Response archiveProject(
-            @Param(value = "output_dir", source = ParamSource.BODY, defaultValue = "/data/exports",
-                description = "Directory the .gar will be written to. Must already exist.") String outputDir,
-            @Param(value = "output_name", source = ParamSource.BODY, defaultValue = "",
-                description = "Output file name. Defaults to `<project>.gar`. `.gar` is appended if missing.") String outputName) {
-        String dirPath = (outputDir == null || outputDir.isEmpty()) ? "/data/exports" : outputDir;
-        File dir = new File(dirPath);
-        if (!dir.isDirectory()) {
-            return Response.err("output_dir not a directory: " + dir.getAbsolutePath());
-        }
-        String projectName = programProvider.getProjectName();
-        String name;
-        if (outputName == null || outputName.isEmpty()) {
-            name = HeadlessPaths.safeBasename(projectName == null ? "project" : projectName) + ".gar";
-        } else {
-            String invalid = HeadlessPaths.validateFilename(outputName);
-            if (invalid != null) {
-                return Response.err("invalid output_name: " + invalid);
-            }
-            name = outputName;
-        }
-        if (!name.toLowerCase().endsWith(".gar")) {
-            name = name + ".gar";
-        }
-        File out = new File(dir, name);
-        if (!HeadlessPaths.isWithin(dir, out)) {
-            return Response.err("output_name escapes output_dir: " + name);
-        }
-
-        HeadlessProgramProvider.ArchiveResult res = programProvider.archiveCurrentProject(out);
-        if (!res.success) {
-            return Response.err(res.error);
-        }
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("success", true);
-        body.put("project", res.projectName);
-        body.put("path", res.outputPath);
-        body.put("size_bytes", res.sizeBytes);
-        body.put("content_type", "GAR");
-        return Response.ok(body);
-    }
 
     @McpTool(path = "/restore_project", method = "POST",
             description = "Restore a Ghidra .gar archive into a fresh on-disk project at `parent_dir/project_name`. "

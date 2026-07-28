@@ -13,8 +13,7 @@
  * single justified exception — package-private access cannot be granted to
  * an outside package. It carries no {@code @McpTool} annotation, so
  * {@code AnnotationScanner} ignores it; the HTTP surface stays in
- * {@code com.xebyte.headless.HeadlessManagementService} which calls into
- * here via {@code HeadlessProgramProvider}.
+ * {@code com.xebyte.core.ProjectArchiveService}.
  */
 package ghidra.app.plugin.core.archive;
 
@@ -27,7 +26,7 @@ import java.io.IOException;
 
 /**
  * Static facade exposing Ghidra's native {@code .gar} create / restore
- * capability to headless callers (no {@code PluginTool} required).
+ * capability without requiring a {@code PluginTool}.
  */
 public final class HeadlessArchiveBridge {
 
@@ -43,9 +42,8 @@ public final class HeadlessArchiveBridge {
      *
      * <p>Project must be open (Ghidra's {@link ArchiveTask} reads the live
      * {@link Project} for its name and on-disk location). The caller is
-     * responsible for flushing pending {@code DomainObject} edits via
-     * {@code /save_all_programs} beforehand \u2014 the task snapshots disk
-     * state only.
+     * responsible for flushing pending {@code DomainObject} edits first because
+     * the task snapshots disk state only.
      *
      * @throws Exception forwarded from {@link ArchiveTask#run(TaskMonitor)}
      */
@@ -103,4 +101,3 @@ public final class HeadlessArchiveBridge {
         }
     }
 }
-
