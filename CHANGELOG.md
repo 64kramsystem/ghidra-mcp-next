@@ -6,6 +6,7 @@ Complete version history for the GhidraMCP-next project.
 
 ## Unreleased
 
+## 0.100.0
 ### Removed
 
 - **Breaking:** Removed the headless-only `archive_project`; use the shared `export_project_archive`.
