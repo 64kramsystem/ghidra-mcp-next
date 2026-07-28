@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -173,8 +174,20 @@ public class AnalysisServiceConfigurationGhidraTest {
 
             AutoAnalysisManager manager =
                 AutoAnalysisManager.getAnalysisManager(fixture.program);
+            FlowDisassemblyService.AnalysisQueue defaultAnalysis =
+                FlowDisassemblyService.defaultAnalysisQueue(fixture.threading);
+            AtomicReference<FlowDisassemblyService.AnalysisSubmission>
+                submitted = new AtomicReference<>();
             FlowDisassemblyService flow =
-                new FlowDisassemblyService(fixture.provider, fixture.threading);
+                new FlowDisassemblyService(
+                    fixture.provider,
+                    fixture.threading,
+                    (program, created) -> {
+                        FlowDisassemblyService.AnalysisSubmission submission =
+                            defaultAnalysis.submit(program, created);
+                        submitted.set(submission);
+                        return submission;
+                    });
 
             Response response = flow.disassembleFlow(
                 "[\"0x1000\"]",
@@ -188,35 +201,40 @@ public class AnalysisServiceConfigurationGhidraTest {
                 100,
                 "");
 
-            assertTrue(response.toJson(), response instanceof Response.Ok);
-            assertTrue(response.toJson(),
-                response.toJson().contains("\"analysis_request\""));
-            assertTrue(response.toJson(),
-                response.toJson().contains("\"analysis_status\":\"queued\""));
-            assertTrue(response.toJson(),
-                response.toJson().contains("\"request_identity\":\"analysis-"));
-            assertTrue(
-                "direct disassembly must report no direct function mutation",
-                response.toJson().contains("\"function_changes\":[]"));
-
-            ProgramScriptService programService =
-                new ProgramScriptService(fixture.provider, fixture.threading);
-            long deadline = System.nanoTime() +
-                java.util.concurrent.TimeUnit.SECONDS.toNanos(30);
             JsonObject status = null;
-            do {
-                Response polled =
-                    programService.analysisStatus(fixture.program.getName());
-                assertTrue(polled.toJson(), polled instanceof Response.Ok);
-                status = JsonParser.parseString(
-                    polled.toJson()).getAsJsonObject();
-                if (!status.get("analyzing").getAsBoolean() &&
-                    status.get("function_count").getAsInt() > 0) {
-                    break;
+            try {
+                assertTrue(response.toJson(), response instanceof Response.Ok);
+                assertTrue(response.toJson(),
+                    response.toJson().contains("\"analysis_request\""));
+                assertTrue(response.toJson(),
+                    response.toJson().contains("\"analysis_status\":\"queued\""));
+                assertTrue(response.toJson(),
+                    response.toJson().contains("\"request_identity\":\"analysis-"));
+                assertTrue(
+                    "direct disassembly must report no direct function mutation",
+                    response.toJson().contains("\"function_changes\":[]"));
+
+                ProgramScriptService programService =
+                    new ProgramScriptService(fixture.provider, fixture.threading);
+                long deadline = System.nanoTime() +
+                    java.util.concurrent.TimeUnit.SECONDS.toNanos(30);
+                do {
+                    Response polled =
+                        programService.analysisStatus(fixture.program.getName());
+                    assertTrue(polled.toJson(), polled instanceof Response.Ok);
+                    status = JsonParser.parseString(
+                        polled.toJson()).getAsJsonObject();
+                    if (!status.get("analyzing").getAsBoolean() &&
+                        status.get("function_count").getAsInt() > 0) {
+                        break;
+                    }
+                    Thread.sleep(5);
                 }
-                Thread.sleep(5);
+                while (System.nanoTime() < deadline);
             }
-            while (System.nanoTime() < deadline);
+            finally {
+                awaitAnalysisWorker(submitted.get());
+            }
 
             assertNotNull(status);
             assertFalse(status.get("analyzing").getAsBoolean());
@@ -224,8 +242,25 @@ public class AnalysisServiceConfigurationGhidraTest {
                 "explicit Subroutine References analysis should create the JSR target function: " +
                     status,
                 status.get("function_count").getAsInt() > 0);
-            assertFalse(manager.isAnalyzing());
+            // createFunctions=false above means the analyzer worker is the
+            // only path that can create the expected JSR target function.
+            assertFalse(
+                "analysis manager must be quiescent after its worker exits",
+                manager.isAnalyzing());
         }
+    }
+
+    private static void awaitAnalysisWorker(
+            FlowDisassemblyService.AnalysisSubmission submission)
+            throws InterruptedException {
+        if (submission == null || submission.worker() == null) {
+            return;
+        }
+        submission.worker().join(
+            java.util.concurrent.TimeUnit.SECONDS.toMillis(30));
+        assertFalse(
+            "headless analysis worker did not finish within 30 seconds",
+            submission.worker().isAlive());
     }
 
     private static List<Map<String, Object>> currentEnabledChanges(

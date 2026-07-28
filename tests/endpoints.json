@@ -69,7 +69,7 @@
       "params": [
         "program"
       ],
-      "description": "Get auto-analysis status for open programs"
+      "description": "Get a point-in-time auto-analysis status snapshot for open programs. analyzing=false does not guarantee that an asynchronously queued analysis transaction has closed or that its events have finished flushing."
     },
     {
       "path": "/analyze_api_call_chains",
