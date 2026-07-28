@@ -483,7 +483,8 @@ public final class SymbolProfileService {
             Symbol primary = table.getPrimarySymbol(address);
             if (requested.primary()
                     && primary != null
-                    && primary != exact) {
+                    && primary != exact
+                    && !primary.isDynamic()) {
                 conflict =
                     "different primary symbol already exists at "
                         + qualified(address);
