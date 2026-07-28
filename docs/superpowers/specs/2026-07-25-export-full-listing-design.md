@@ -146,11 +146,12 @@ comment column right; nothing is shortened. No clip step exists in the writer.
   reference, wrapped at `xref_wrap_column`, with offcut references in their own labelled
   group → the address / bytes / mnemonic / operand line carrying the first EOL comment line,
   further authored EOL lines on aligned continuations → post-comments.
-- **Function entries** — signature, parameters and locals with name, datatype, storage.
+- **Function entries** — signature, parameters and locals with name, datatype, storage, and comments; multiline comments continue on aligned assembly-comment lines.
 - **Undefined bytes** — emitted as data lines, so every address in range is accounted for.
 - **Trailing symbol index** — sorted label to address.
 
 Authored newlines are never re-flowed, so aligned bit tables and ASCII diagrams survive.
+Empty and whitespace-only listing-comment lines remain present as a bare `;`; an offcut blank line retains its location marker. Variable comments containing no content are omitted. Trailing spaces and tabs are removed from all comment output, while other control bytes remain verbatim.
 Only the machine-generated xref list wraps.
 
 ## Parameters

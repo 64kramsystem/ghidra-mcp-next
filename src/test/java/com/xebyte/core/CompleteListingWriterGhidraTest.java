@@ -30,7 +30,10 @@ import ghidra.framework.ApplicationConfiguration;
 import ghidra.program.database.ProgramBuilder;
 import ghidra.program.database.ProgramDB;
 import ghidra.program.model.address.Address;
+import ghidra.program.model.data.ByteDataType;
 import ghidra.program.model.listing.CommentType;
+import ghidra.program.model.listing.Function;
+import ghidra.program.model.listing.Variable;
 import ghidra.program.model.mem.Memory;
 import ghidra.program.model.symbol.RefType;
 import ghidra.program.model.symbol.SourceType;
@@ -129,6 +132,114 @@ public class CompleteListingWriterGhidraTest {
         String listing = exportWholeProgram();
 
         assertTrue(listing.contains("TAIL_MARKER_PLATE"));
+    }
+
+    /** Empty authored comment lines must not make the exported artifact fail diff checks. */
+    @Test
+    public void blankPlateCommentLineHasNoTrailingWhitespace() throws Exception {
+        setComment("0x1000", CommentType.PLATE, "first line\n\nlast line");
+
+        String listing = exportWholeProgram();
+
+        assertConsecutiveLines(listing,
+            "                ; first line",
+            "                ;",
+            "                ; last line");
+    }
+
+    /** A blank offcut line retains its location marker without a separator at the end. */
+    @Test
+    public void blankOffcutCommentLineHasNoTrailingWhitespace() throws Exception {
+        setComment("0x1002", CommentType.PRE, "offcut first\n\noffcut last");
+
+        String listing = exportWholeProgram();
+
+        assertConsecutiveLines(listing,
+            "                ; [offcut 00001002] offcut first",
+            "                ; [offcut 00001002]",
+            "                ; [offcut 00001002] offcut last");
+    }
+
+    /**
+     * Whitespace-only authored lines normalize to the same bare comment line as empty ones.
+     * The tab in the fixture is load-bearing: trimming spaces alone is not sufficient.
+     */
+    @Test
+    public void whitespaceOnlyPlateCommentLineHasNoTrailingWhitespace() throws Exception {
+        setComment("0x1000", CommentType.PLATE, "first line\n \t \nlast line");
+
+        String listing = exportWholeProgram();
+
+        assertConsecutiveLines(listing,
+            "                ; first line",
+            "                ;",
+            "                ; last line");
+    }
+
+    /** Function-variable comment lines stay comments and cannot retain trailing whitespace. */
+    @Test
+    public void multilineVariableCommentHasNoTrailingWhitespace() throws Exception {
+        setLocalComment("first variable line \t \nsecond variable line \t ");
+
+        String listing = exportWholeProgram();
+
+        String first = lineContaining(listing, "first variable line");
+        String second = lineContaining(listing, "second variable line");
+        assertTrue("first variable line must end at its content: [" + first + "]",
+            first.endsWith("first variable line"));
+        assertTrue("continuation must remain an assembly comment: [" + second + "]",
+            second.startsWith("                ;"));
+        assertTrue("second variable line must end at its content: [" + second + "]",
+            second.endsWith("second variable line"));
+        assertEquals("continuation text must align with the first comment line",
+            first.indexOf("first variable line"), second.indexOf("second variable line"));
+    }
+
+    /** An empty stored variable comment does not add a dangling separator. */
+    @Test
+    public void emptyVariableCommentAddsNoSeparator() throws Exception {
+        setLocalComment("");
+
+        String listing = exportWholeProgram();
+
+        String line = lineContaining(listing, "fixture_local");
+        assertFalse("empty variable comment must not add a separator: [" + line + "]",
+            line.endsWith(";"));
+    }
+
+    /** A whitespace-only stored variable comment also has no content to introduce. */
+    @Test
+    public void whitespaceOnlyVariableCommentAddsNoSeparator() throws Exception {
+        setLocalComment(" \t ");
+
+        String listing = exportWholeProgram();
+
+        String line = lineContaining(listing, "fixture_local");
+        assertFalse("whitespace-only variable comment must not add a separator: [" + line + "]",
+            line.endsWith(";"));
+    }
+
+    /** C64 cursor controls are content even when they are the entire variable comment. */
+    @Test
+    public void controlOnlyVariableCommentIsNotBlank() throws Exception {
+        setLocalComment("\u001d");
+
+        String listing = exportWholeProgram();
+
+        assertTrue("the cursor control must survive as variable-comment content",
+            lineContaining(listing, "\u001d").startsWith("                ;"));
+    }
+
+    /** The EOL renderer and completeness audit normalize the same trailing tab. */
+    @Test
+    public void eolCommentContentHasNoTrailingTab() throws Exception {
+        setComment("0x1000", CommentType.EOL, "content ends with a tab\t");
+
+        String listing = exportWholeProgram();
+
+        String line = lineContaining(listing, "content ends with a tab");
+        assertTrue("EOL comment line must end at its content: [" + line + "]",
+            line.endsWith("content ends with a tab"));
     }
 
     /** Mechanism 1: AsciiExporter clips labels at 30 characters. */
@@ -456,7 +567,8 @@ public class CompleteListingWriterGhidraTest {
      */
     @Test
     public void controlCharactersInACommentSurviveVerbatim() throws Exception {
-        String comment = "PETSCII \u0093 clears the screen, \u0007 rings the bell";
+        String comment = "PETSCII \u0093 clears the screen, \u0007 rings the bell, "
+            + "\u001d moves the cursor right\u001d";
         setComment("0x1000", CommentType.EOL, comment);
 
         String listing = exportWholeProgram();
@@ -488,6 +600,24 @@ public class CompleteListingWriterGhidraTest {
             sink.toString().lines().filter(line -> !line.contains("SWALLOWED")));
         assertTrue("the lost plate body must be reported, not counted as emitted: " + missing,
             missing != null && missing.contains("SWALLOWED plate line"));
+    }
+
+    /** A C64 cursor-control-only line remains part of the artifact completeness audit. */
+    @Test
+    public void controlOnlyCommentLineIsAudited() throws Exception {
+        setComment("0x1000", CommentType.PLATE, "\u001d");
+        CompleteListingWriter writer = new CompleteListingWriter(program, 100);
+        StringBuilder sink = new StringBuilder();
+        try (PrintWriter out = new PrintWriter(new CollectingWriter(sink))) {
+            writer.write(out, program.getMemory());
+        }
+
+        assertNull("a complete artifact must not be reported as short",
+            writer.shortfall(sink.toString().lines()));
+        String missing = writer.shortfall(
+            sink.toString().lines().filter(line -> !line.contains("\u001d")));
+        assertTrue("the lost control-only line must be reported: " + missing,
+            missing != null && missing.contains("\u001d"));
     }
 
     /**
@@ -608,6 +738,35 @@ public class CompleteListingWriterGhidraTest {
         int transaction = program.startTransaction("comment");
         try {
             program.getListing().setComment(builder.addr(address), type, text);
+        }
+        finally {
+            program.endTransaction(transaction, true);
+        }
+    }
+
+    private static void assertConsecutiveLines(String listing, String... expected) {
+        String sequence = String.join(System.lineSeparator(), expected);
+        assertTrue("missing consecutive lines:\n" + sequence, listing.contains(sequence));
+    }
+
+    private static String lineContaining(String listing, String text) {
+        return listing.lines()
+            .filter(line -> line.contains(text))
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("listing has no line containing: " + text));
+    }
+
+    private void setLocalComment(String text) throws Exception {
+        Function function = program.getFunctionManager().getFunctionAt(builder.addr("0x1000"));
+        builder.createLocalVariable(function, "fixture_local", ByteDataType.dataType, -8);
+        int transaction = program.startTransaction("variable comment");
+        try {
+            Variable local = java.util.Arrays.stream(function.getLocalVariables())
+                .filter(variable -> "fixture_local".equals(variable.getName()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError(
+                    "fixture_local was not attached to the function"));
+            local.setComment(text);
         }
         finally {
             program.endTransaction(transaction, true);
