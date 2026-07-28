@@ -231,8 +231,9 @@ final class CompleteListingWriter {
                 out.println(ADDRESS_INDENT + ";" + "*".repeat(70));
             }
             for (String line : bodyLines(comment.text())) {
-                out.println(ADDRESS_INDENT + "; "
-                    + (offcut ? "[offcut " + comment.address() + "] " : "") + line);
+                String body =
+                    (offcut ? "[offcut " + comment.address() + "] " : "") + line;
+                out.println(rstrip(ADDRESS_INDENT + "; " + body));
             }
             if (boxed) {
                 out.println(ADDRESS_INDENT + ";" + "*".repeat(70));
@@ -256,26 +257,41 @@ final class CompleteListingWriter {
 
         Function function = program.getFunctionManager().getFunctionAt(start);
         if (function != null) {
-            out.println(ADDRESS_INDENT + "; function: " + function.getPrototypeString(true, true));
+            out.println(rstrip(
+                ADDRESS_INDENT + "; function: " + function.getPrototypeString(true, true)));
             for (Variable parameter : function.getParameters()) {
-                out.println(ADDRESS_INDENT + ";   param  "
-                    + variableText(parameter));
+                writeVariable(out, "param", parameter);
             }
             for (Variable local : function.getLocalVariables()) {
-                out.println(ADDRESS_INDENT + ";   local  "
-                    + variableText(local));
+                writeVariable(out, "local", local);
             }
         }
     }
 
-    private String variableText(Variable variable) {
-        // Full text: these are the fields AsciiExporter clips at 15/15/8/20 characters.
-        DataType type = variable.getDataType();
+    private void writeVariable(PrintWriter out, String role, Variable variable) {
+        String definition = ADDRESS_INDENT + ";   " + role + "  " + variableText(variable);
         String comment = variable.getComment();
+        if (comment == null || rstrip(comment).isEmpty()) {
+            out.println(rstrip(definition));
+            return;
+        }
+
+        String firstPrefix = definition + "  ; ";
+        // Keep continuation text in assembly comments and aligned with the first line.
+        String continuation = ADDRESS_INDENT + ";"
+            + " ".repeat(firstPrefix.length() - ADDRESS_INDENT.length() - 1);
+        String[] lines = bodyLines(comment);
+        for (int index = 0; index < lines.length; index++) {
+            out.println(rstrip((index == 0 ? firstPrefix : continuation) + lines[index]));
+        }
+    }
+
+    private String variableText(Variable variable) {
+        // Full text: AsciiExporter clips these fields at 15/15/8 characters.
+        DataType type = variable.getDataType();
         return variable.getName()
             + " : " + (type == null ? "?" : type.getDisplayName())
-            + " @ " + variable.getVariableStorage()
-            + (comment == null || comment.isBlank() ? "" : "  ; " + comment);
+            + " @ " + variable.getVariableStorage();
     }
 
     private void writeCrossReferences(PrintWriter out, Address start, Address end,
@@ -593,9 +609,8 @@ final class CompleteListingWriter {
             collectedComments.merge(comment.type(), 1, Integer::sum);
             for (String line : bodyLines(comment.text())) {
                 String body = rstrip(line);
-                // A blank line carries no content to look for, and every listing has lines
-                // that reduce to nothing once trailing spaces go.
-                if (!body.isBlank()) {
+                // isBlank() would misclassify C64 control bytes $1C-$1F as whitespace.
+                if (!body.isEmpty()) {
                     expectedCommentLines.merge(body, 1, Integer::sum);
                 }
             }
@@ -767,7 +782,8 @@ final class CompleteListingWriter {
 
     private static String rstrip(String value) {
         int end = value.length();
-        while (end > 0 && value.charAt(end - 1) == ' ') {
+        while (end > 0 &&
+                (value.charAt(end - 1) == ' ' || value.charAt(end - 1) == '\t')) {
             end--;
         }
         return value.substring(0, end);
