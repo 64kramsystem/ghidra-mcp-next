@@ -10,6 +10,7 @@ import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.FunctionManager;
 import ghidra.program.model.listing.Program;
 import ghidra.program.model.mem.MemoryBlock;
+import ghidra.program.model.symbol.RefType;
 import ghidra.program.model.symbol.Symbol;
 import ghidra.program.model.symbol.SymbolIterator;
 import ghidra.program.model.symbol.SymbolTable;
@@ -28,6 +29,39 @@ import java.util.regex.Pattern;
 public final class ServiceUtils {
 
     private ServiceUtils() {} // Prevent instantiation
+
+    /**
+     * Resolve a case-insensitive public {@link RefType} field name or emitted
+     * {@link RefType#getName()} value.
+     *
+     * <p>Both forms matter for round-tripping: for example, Ghidra exposes the
+     * field {@code EXTERNAL_REF}, while that constant's display name is
+     * {@code EXTERNAL}.
+     */
+    public static RefType resolveRefType(String name) {
+        if (name == null || name.trim().isEmpty()) {
+            return null;
+        }
+        String wanted = name.trim().toUpperCase(Locale.ROOT);
+        for (java.lang.reflect.Field field : RefType.class.getFields()) {
+            if (!java.lang.reflect.Modifier.isStatic(field.getModifiers())
+                    || !RefType.class.isAssignableFrom(field.getType())) {
+                continue;
+            }
+            try {
+                RefType candidate = (RefType) field.get(null);
+                if (field.getName().equalsIgnoreCase(wanted)
+                        || candidate.getName().equalsIgnoreCase(wanted)) {
+                    return candidate;
+                }
+            }
+            catch (IllegalAccessException error) {
+                // Public fields are expected to be accessible; keep searching
+                // so one unexpected field cannot hide the remaining types.
+            }
+        }
+        return null;
+    }
 
     public static boolean isUndefinedToUndefined(String oldType, String newType) {
         return oldType != null && newType != null

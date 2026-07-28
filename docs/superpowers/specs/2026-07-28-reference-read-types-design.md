@@ -122,13 +122,13 @@ Use test-first coverage:
    existing `READ_WRITE` incompatibility, add-slot exclusivity, exact
    `READ_WRITE` add/remove, and in-bounds versus out-of-bounds overlay target
    resolution. An in-bounds qualified target must remain overlay-qualified;
-   an out-of-bounds overlay offset deliberately demotes to the mapped base
-   space because reference translation uses `forceTranslation=false`. The
-   retarget assertion also proves the old physical-space reference is gone.
+   an out-of-bounds qualified overlay target must be rejected instead of
+   silently creating a reference in the base-space occupant. The retarget
+   assertion also proves the old physical-space reference is gone.
 4. Before implementation, run the focused tests and confirm that they fail
    because the closed schema/parser rejects the new types.
 5. After implementation, run the focused fixture tests with
-   `ghidra.test.install.dir=/Users/saverio/code/ghidra`, regenerate the
+   `ghidra.test.install.dir=/Users/saverio/local/ghidra`, regenerate the
    endpoint catalog, run catalog parity tests, and complete the repository's
    standard Java/Python/package/diff gates.
 

@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -16,6 +17,7 @@ import com.google.gson.JsonObject;
 import ghidra.program.model.listing.FlowOverride;
 import ghidra.program.model.listing.Program;
 import ghidra.program.model.symbol.RefType;
+import ghidra.program.model.symbol.RefTypeFactory;
 import ghidra.util.task.TaskMonitor;
 
 /** Manual function-free control-flow metadata and evidence. */
@@ -37,8 +39,9 @@ public final class ControlFlowService {
         + "\"type\":\"object\",\"additionalProperties\":false,"
         + "\"properties\":{\"from\":{\"type\":\"string\"},"
         + "\"to\":{\"type\":\"string\"},"
-        + "\"type\":{\"enum\":[\"computed_call\",\"computed_jump\","
-        + "\"call\",\"jump\",\"data\",\"write\"]},"
+        + "\"type\":{\"type\":\"string\",\"minLength\":1,"
+        + "\"description\":\"Case-insensitive public Ghidra RefType "
+        + "field or emitted name; add.type lists the creatable subset\"},"
         + "\"operand_index\":{\"type\":\"integer\",\"minimum\":-1,"
         + "\"default\":-1}},"
         + "\"required\":[\"from\",\"to\",\"type\"]}}";
@@ -47,8 +50,23 @@ public final class ControlFlowService {
         + "\"type\":\"object\",\"additionalProperties\":false,"
         + "\"properties\":{\"from\":{\"type\":\"string\"},"
         + "\"to\":{\"type\":\"string\"},"
-        + "\"type\":{\"enum\":[\"computed_call\",\"computed_jump\","
-        + "\"call\",\"jump\",\"data\",\"write\"]},"
+        + "\"type\":{\"description\":\"Creatable Ghidra memory "
+        + "reference type or call/jump alias; canonical lowercase "
+        + "values shown, input is case-insensitive\",\"enum\":["
+        + "\"indirection\","
+        + "\"computed_call\",\"computed_jump\","
+        + "\"conditional_call\",\"conditional_jump\","
+        + "\"unconditional_call\",\"unconditional_jump\","
+        + "\"conditional_computed_call\","
+        + "\"conditional_computed_jump\","
+        + "\"param\",\"data\",\"data_ind\","
+        + "\"read\",\"read_ind\",\"write\",\"write_ind\","
+        + "\"read_write\",\"read_write_ind\","
+        + "\"call_override_unconditional\","
+        + "\"jump_override_unconditional\","
+        + "\"callother_override_call\","
+        + "\"callother_override_jump\","
+        + "\"call\",\"jump\"]},"
         + "\"operand_index\":{\"type\":\"integer\",\"minimum\":-1,"
         + "\"default\":-1},"
         + "\"primary\":{\"type\":\"boolean\",\"default\":false}},"
@@ -208,13 +226,20 @@ public final class ControlFlowService {
                 value = "add",
                 source = ParamSource.BODY,
                 optional = true,
-                schemaFragment = ADD_REFERENCES_SCHEMA)
+                schemaFragment = ADD_REFERENCES_SCHEMA,
+                description =
+                    "Exact user-defined references to create; type is "
+                        + "restricted to the nested enum")
                 Object addValue,
             @Param(
                 value = "remove",
                 source = ParamSource.BODY,
                 optional = true,
-                schemaFragment = REMOVE_REFERENCES_SCHEMA)
+                schemaFragment = REMOVE_REFERENCES_SCHEMA,
+                description =
+                    "Exact references to remove; type accepts a "
+                        + "case-insensitive public Ghidra RefType field "
+                        + "or emitted name")
                 Object removeValue,
             @Param(
                 value = "allow_non_user_removal",
@@ -492,8 +517,11 @@ public final class ControlFlowService {
             result.add(new ControlFlowCore.ReferenceRequest(
                 requiredString(map, "from", name + "[" + i + "]"),
                 requiredString(map, "to", name + "[" + i + "]"),
-                parseReferenceType(requiredString(
-                    map, "type", name + "[" + i + "]")),
+                additions
+                    ? parseAddReferenceType(requiredString(
+                        map, "type", name + "[" + i + "]"))
+                    : parseRemoveReferenceType(requiredString(
+                        map, "type", name + "[" + i + "]")),
                 operandIndex, primary));
         }
         return List.copyOf(result);
@@ -523,18 +551,48 @@ public final class ControlFlowService {
         }
     }
 
-    private static RefType parseReferenceType(String value) {
-        return switch (value) {
-            case "computed_call" -> RefType.COMPUTED_CALL;
-            case "computed_jump" -> RefType.COMPUTED_JUMP;
+    private static RefType parseAddReferenceType(String value) {
+        RefType type = parseReferenceAlias(value);
+        if (type == null) {
+            type = ServiceUtils.resolveRefType(value);
+        }
+        if (type != null && isMemoryReferenceType(type)) {
+            return type;
+        }
+        throw new IllegalArgumentException(
+            "add reference type must name a member of "
+                + "RefTypeFactory.getMemoryRefTypes() or the call/jump "
+                + "alias");
+    }
+
+    private static RefType parseRemoveReferenceType(String value) {
+        RefType type = parseReferenceAlias(value);
+        if (type == null) {
+            type = ServiceUtils.resolveRefType(value);
+        }
+        if (type != null) {
+            return type;
+        }
+        throw new IllegalArgumentException(
+            "remove reference type must name a public Ghidra RefType "
+                + "constant or the call/jump alias");
+    }
+
+    private static RefType parseReferenceAlias(String value) {
+        return switch (value.toLowerCase(Locale.ROOT)) {
             case "call" -> RefType.UNCONDITIONAL_CALL;
             case "jump" -> RefType.UNCONDITIONAL_JUMP;
-            case "data" -> RefType.DATA;
-            case "write" -> RefType.WRITE;
-            default -> throw new IllegalArgumentException(
-                "reference type must be computed_call, computed_jump, "
-                    + "call, jump, data, or write");
+            default -> null;
         };
+    }
+
+    private static boolean isMemoryReferenceType(RefType type) {
+        for (RefType memoryType : RefTypeFactory.getMemoryRefTypes()) {
+            if (type == memoryType) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static RefType parseJumpReferenceType(String value) {
@@ -667,26 +725,14 @@ public final class ControlFlowService {
         return result;
     }
 
-    private static String wireType(RefType type) {
-        if (type == RefType.COMPUTED_CALL) {
-            return "computed_call";
-        }
-        if (type == RefType.COMPUTED_JUMP) {
-            return "computed_jump";
-        }
+    static String wireType(RefType type) {
         if (type == RefType.UNCONDITIONAL_CALL) {
             return "call";
         }
         if (type == RefType.UNCONDITIONAL_JUMP) {
             return "jump";
         }
-        if (type == RefType.DATA) {
-            return "data";
-        }
-        if (type == RefType.WRITE) {
-            return "write";
-        }
-        return type.getName().toLowerCase();
+        return type.getName().toLowerCase(Locale.ROOT);
     }
 
     private static Map<String, Object> stringMap(
