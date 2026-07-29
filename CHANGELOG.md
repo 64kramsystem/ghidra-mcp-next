@@ -6,6 +6,8 @@ Complete version history for the GhidraMCP-next project.
 
 ## Unreleased
 
+## 0.101.2
+
 ### Added
 
 - Added `open_project` with one absolute `.gpr` path; it refuses unsaved data or busy tools, saves project state best-effort, then closes the active project before opening the requested local project.
