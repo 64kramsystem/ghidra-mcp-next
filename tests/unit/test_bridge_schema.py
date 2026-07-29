@@ -10,7 +10,6 @@ def tool_schema():
     return {
         "tools": [
             {
-                "name": "read_memory",
                 "path": "/read_memory",
                 "method": "GET",
                 "params": [
@@ -23,7 +22,6 @@ def tool_schema():
                 ],
             },
             {
-                "name": "add_references",
                 "path": "/add_references",
                 "method": "POST",
                 "params": [
@@ -60,6 +58,21 @@ def test_parse_and_generated_signature():
     signature = inspect.signature(function)
     assert signature.parameters["address"].default is inspect.Parameter.empty
     assert signature.parameters["length"].default == 16
+
+
+def test_slash_in_server_tool_name_becomes_underscore():
+    raw = {
+        "tools": [
+            {
+                "path": "/debugger/attach",
+                "method": "POST",
+                "params": [],
+            }
+        ]
+    }
+    definition = schema.parse(raw)[0]
+    assert definition["name"] == "debugger_attach"
+    assert definition["endpoint"] == "/debugger/attach"
 
 
 def test_generated_get_and_post_routing(monkeypatch):
@@ -104,7 +117,6 @@ def test_json_and_any_publish_as_unrestricted_valid_schemas(monkeypatch):
     raw = {
         "tools": [
             {
-                "name": "accept_values",
                 "path": "/accept_values",
                 "method": "POST",
                 "params": [
@@ -150,7 +162,6 @@ def test_meaningful_empty_string_without_default_is_forwarded(monkeypatch):
         {
             "tools": [
                 {
-                    "name": "set_comment",
                     "path": "/set_comment",
                     "method": "POST",
                     "params": [
@@ -173,19 +184,18 @@ def test_meaningful_empty_string_without_default_is_forwarded(monkeypatch):
     "raw",
     [
         {},
-        {"tools": [{"name": "list_instances", "path": "/x"}]},
+        {"tools": [{"path": "/list_instances"}]},
         {
             "tools": [
-                {"name": "same", "path": "/a"},
-                {"name": "same", "path": "/b"},
+                {"path": "/same"},
+                {"path": "/same"},
             ]
         },
-        {"tools": [{"name": "bad name", "path": "/x"}]},
-        {"tools": [{"name": "x", "path": "/x", "method": "DELETE"}]},
+        {"tools": [{"path": "/bad name"}]},
+        {"tools": [{"path": "/x", "method": "DELETE"}]},
         {
             "tools": [
                 {
-                    "name": "x",
                     "path": "/x",
                     "params": [{"name": "value", "type": "address"}],
                 }
