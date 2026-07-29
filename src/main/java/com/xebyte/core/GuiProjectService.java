@@ -6,17 +6,22 @@ import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.function.Supplier;
 
 import javax.swing.SwingUtilities;
 
 import ghidra.framework.main.AppInfo;
 import ghidra.framework.main.FrontEndTool;
+import ghidra.framework.model.DomainFile;
 import ghidra.framework.model.Project;
 import ghidra.framework.model.ProjectListener;
 import ghidra.framework.model.ProjectLocator;
 import ghidra.framework.model.ProjectManager;
 import ghidra.framework.plugintool.PluginTool;
+import ghidra.framework.plugintool.PluginToolAccessUtils;
 
 /** Project lifecycle operations that require a live Ghidra GUI tool. */
 public final class GuiProjectService {
@@ -163,6 +168,208 @@ public final class GuiProjectService {
         return result[0];
     }
 
+    @McpTool(path = "/open_project", method = "POST",
+        description = "Open an existing local project; refuses unsaved data or "
+            + "busy/unclosable tools, saves project state best-effort, then closes the active "
+            + "project")
+    public Response openProject(
+            @Param(value = "path", source = ParamSource.BODY,
+                description = "Absolute path to an existing .gpr file")
+            String projectPath) {
+        if (projectPath == null || projectPath.isBlank()) {
+            return error("invalid_request", "path is required");
+        }
+
+        File marker = new File(projectPath);
+        if (!marker.isAbsolute()
+                || !marker.getName().endsWith(ProjectLocator.getProjectExtension())) {
+            return error("invalid_request", "path must be an absolute .gpr file");
+        }
+        try {
+            marker = marker.getCanonicalFile();
+        } catch (IOException e) {
+            return error("invalid_request", "Invalid project path: " + e.getMessage());
+        }
+        if (security.resolveWithinFileRoot(marker.getPath()) == null) {
+            return error("path_not_allowed", "Project is outside GHIDRA_MCP_FILE_ROOT");
+        }
+
+        String fileName = marker.getName();
+        String name = fileName.substring(
+            0, fileName.length() - ProjectLocator.getProjectExtension().length());
+        ProjectLocator locator;
+        try {
+            locator = new ProjectLocator(marker.getParent(), name);
+        } catch (IllegalArgumentException e) {
+            return error("invalid_request", "Invalid project path: " + e.getMessage());
+        }
+        try {
+            if (security.resolveWithinFileRoot(
+                    locator.getProjectDir().getCanonicalPath()) == null) {
+                return error("path_not_allowed",
+                    "Project directory is outside GHIDRA_MCP_FILE_ROOT");
+            }
+        } catch (IOException e) {
+            return error("invalid_request", "Invalid project directory: " + e.getMessage());
+        }
+
+        ProjectManager manager = projectManagerSupplier.get();
+        if (manager == null) {
+            return error("project_manager_unavailable", "ProjectManager is not available");
+        }
+
+        Response[] result = new Response[1];
+        File canonicalMarker = marker;
+        try {
+            runOnEdt(() -> result[0] = openOnEdt(
+                canonicalMarker, locator, manager));
+        } catch (Exception e) {
+            return error("project_open_failed", "EDT invocation failed: " + message(e));
+        }
+        return result[0];
+    }
+
+    private Response openOnEdt(File marker, ProjectLocator locator, ProjectManager manager) {
+        if (!locator.exists()) {
+            return error("project_not_found", "Project does not exist: " + marker);
+        }
+
+        ActiveProjectController activeProjects = activeProjectControllerSupplier.get();
+        if (activeProjects == null) {
+            return error("project_open_failed", "FrontEndTool is not available");
+        }
+
+        Project current = manager.getActiveProject();
+        if (current != null) {
+            try {
+                if (marker.equals(
+                        current.getProjectLocator().getMarkerFile().getCanonicalFile())) {
+                    return Response.ok(JsonHelper.mapOf(
+                        "success", true,
+                        "project", locator.getName(),
+                        "path", marker.getPath(),
+                        "active", true,
+                        "already_active", true));
+                }
+            } catch (IOException e) {
+                return error("project_open_failed",
+                    "Failed to identify current project: " + message(e));
+            }
+
+            Response preparationFailure = prepareToClose(current);
+            if (preparationFailure != null) {
+                return preparationFailure;
+            }
+
+            Exception closeFailure = null;
+            try {
+                current.close();
+            } catch (Exception e) {
+                closeFailure = e;
+            }
+
+            boolean closed = closeFailure == null;
+            if (!closed) {
+                try {
+                    closed = current.isClosed();
+                } catch (RuntimeException ignored) {
+                    closed = false;
+                }
+            }
+            if (closed) {
+                try {
+                    activeProjects.projectClosed(current);
+                } catch (Exception e) {
+                    if (closeFailure == null) {
+                        closeFailure = e;
+                    }
+                }
+                try {
+                    activeProjects.setActiveProject(null);
+                } finally {
+                    AppInfo.setActiveProject(null);
+                }
+            }
+            if (closeFailure != null) {
+                return error("project_open_failed",
+                    "Failed to close current project: " + message(closeFailure));
+            }
+        }
+
+        Project opened = null;
+        try {
+            opened = manager.openProject(locator, true, false);
+            if (opened == null) {
+                throw new IOException("ProjectManager.openProject returned null");
+            }
+            activeProjects.setActiveProject(opened);
+            AppInfo.setActiveProject(opened);
+            if (activeProjects.getActiveProject() != opened
+                    || AppInfo.getActiveProject() != opened) {
+                throw new IllegalStateException("Opened project did not become active");
+            }
+            return Response.ok(JsonHelper.mapOf(
+                "success", true,
+                "project", opened.getName(),
+                "path", marker.getPath(),
+                "active", true,
+                "already_active", false));
+        } catch (Exception e) {
+            boolean cleaned = closeFailedProject(
+                manager, locator, opened, activeProjects);
+            String detail = "Failed to open project: " + message(e);
+            if (!cleaned) {
+                detail += "; cleanup failed and the partial project remains active";
+            }
+            return error("project_open_failed", detail);
+        }
+    }
+
+    private Response prepareToClose(Project project) {
+        if (project.getToolManager() != null) {
+            PluginTool[] tools = project.getToolManager().getRunningTools();
+            Map<String, Integer> changedToolNames = new HashMap<>();
+            for (PluginTool tool : tools) {
+                if (tool.isExecutingCommand()) {
+                    return error("project_close_refused",
+                        "A project tool is busy: " + tool.getName());
+                }
+                if (tool.hasConfigChanged()) {
+                    changedToolNames.merge(tool.getToolName(), 1, Integer::sum);
+                }
+            }
+            if (changedToolNames.values().stream().anyMatch(count -> count > 1)) {
+                return error("project_close_refused",
+                    "Multiple changed session tools share a name; save them before switching");
+            }
+            for (PluginTool tool : tools) {
+                if (!PluginToolAccessUtils.canClose(tool)) {
+                    return error("project_close_refused",
+                        "A project tool refused to close: " + tool.getName());
+                }
+            }
+        }
+
+        List<DomainFile> openData = project.getOpenData();
+        if (openData != null) {
+            for (DomainFile file : openData) {
+                if (file.isChanged()) {
+                    return error("unsaved_changes",
+                        "Save modified project data before opening another project: "
+                            + file.getPathname());
+                }
+            }
+        }
+
+        if (project.getToolManager() != null && !project.saveSessionTools()) {
+            return error("project_open_failed",
+                "Failed to save current project session tools");
+        }
+
+        project.save();
+        return null;
+    }
+
     private Response createOnEdt(File parent, ProjectLocator locator, ProjectManager manager,
             Path markerPath, Path projectDirPath, String destination) {
         if (!parent.exists()) {
@@ -217,15 +424,21 @@ public final class GuiProjectService {
                 "path", destination,
                 "active", true));
         } catch (Exception e) {
+            boolean cleaned = true;
             if (clearOnFailure) {
-                closeFailedProject(manager, locator, created, activeProjects);
+                cleaned = closeFailedProject(
+                    manager, locator, created, activeProjects);
+            }
+            String detail = message(e);
+            if (!cleaned) {
+                detail += "; cleanup failed and the partial project remains active";
             }
             return creationError(destination,
-                createdKnown || artifactsExist(markerPath, projectDirPath), message(e));
+                createdKnown || artifactsExist(markerPath, projectDirPath), detail);
         }
     }
 
-    private void closeFailedProject(ProjectManager manager, ProjectLocator locator,
+    private boolean closeFailedProject(ProjectManager manager, ProjectLocator locator,
             Project created, ActiveProjectController activeProjects) {
         Project failed = created;
         if (failed == null) {
@@ -234,20 +447,45 @@ public final class GuiProjectService {
         if (failed == null) {
             failed = AppInfo.getActiveProject();
         }
-        if (failed != null && locator.equals(failed.getProjectLocator())) {
+        if (failed == null) {
+            return true;
+        }
+        if (!locator.equals(failed.getProjectLocator())) {
+            return false;
+        }
+
+        Exception closeFailure = null;
+        try {
+            failed.close();
+        } catch (Exception e) {
+            closeFailure = e;
+        }
+
+        boolean closed = closeFailure == null;
+        if (!closed) {
             try {
-                failed.close();
-                activeProjects.projectClosed(failed);
-            } catch (Exception ignored) {
-                // Keep the failure response; disk artifacts are intentionally preserved.
+                closed = failed.isClosed();
+            } catch (RuntimeException ignored) {
+                closed = false;
             }
         }
+        if (!closed) {
+            return false;
+        }
+
+        try {
+            activeProjects.projectClosed(failed);
+        } catch (Exception ignored) {
+            // The project is closed; holder normalization must still complete.
+        }
+
         try {
             activeProjects.setActiveProject(null);
         } catch (Exception ignored) {
             // AppInfo must still be cleared when FrontEnd cleanup fails.
         }
         AppInfo.setActiveProject(null);
+        return true;
     }
 
     private void runOnEdt(Runnable task) throws Exception {

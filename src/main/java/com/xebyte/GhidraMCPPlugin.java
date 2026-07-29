@@ -3,6 +3,7 @@ package com.xebyte;
 import com.xebyte.core.ServerManager;
 
 import ghidra.app.plugin.PluginCategoryNames;
+import ghidra.framework.main.ApplicationLevelPlugin;
 import ghidra.framework.options.Options;
 import ghidra.framework.plugintool.Plugin;
 import ghidra.framework.plugintool.PluginInfo;
@@ -19,7 +20,7 @@ import java.io.IOException;
     shortDescription = "GhidraMCP-next",
     description = "Local MCP access to the active Ghidra project and debugger."
 )
-public final class GhidraMCPPlugin extends Plugin {
+public final class GhidraMCPPlugin extends Plugin implements ApplicationLevelPlugin {
 
     private static final String OPTIONS = "GhidraMCP-next";
     private static final String TCP_ENABLED = "Enable TCP Transport";

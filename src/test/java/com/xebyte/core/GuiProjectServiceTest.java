@@ -39,9 +39,12 @@ import org.junit.rules.TemporaryFolder;
 import org.mockito.MockedStatic;
 
 import ghidra.framework.main.AppInfo;
+import ghidra.framework.model.DomainFile;
 import ghidra.framework.model.Project;
 import ghidra.framework.model.ProjectLocator;
 import ghidra.framework.model.ProjectManager;
+import ghidra.framework.model.ToolManager;
+import ghidra.framework.plugintool.PluginTool;
 
 public class GuiProjectServiceTest {
 
@@ -246,6 +249,492 @@ public class GuiProjectServiceTest {
         assertEquals(Boolean.TRUE, result.get("success"));
         assertEquals("NewProject", result.get("project"));
         assertEquals(parent.resolve("NewProject").toString(), result.get("path"));
+    }
+
+    @Test
+    public void openRejectsInvalidOrIncompleteProjectBeforeTouchingActiveProject()
+            throws Exception {
+        ProjectManager manager = mock(ProjectManager.class);
+        Project current = mock(Project.class);
+        when(manager.getActiveProject()).thenReturn(current);
+        GuiProjectService service = new GuiProjectService(security, () -> manager);
+
+        assertError(parse(service.openProject("relative.gpr")), "invalid_request");
+        Path wrongSuffix = temporaryFolder.newFile("not-a-project.txt").toPath();
+        assertError(parse(service.openProject(wrongSuffix.toString())), "invalid_request");
+        Path marker = temporaryFolder.newFile("MissingDirectory.gpr").toPath();
+        assertError(parse(service.openProject(marker.toString())), "project_not_found");
+
+        verify(current, never()).save();
+        verify(current, never()).close();
+        verify(manager, never()).openProject(any(ProjectLocator.class), eq(true), eq(false));
+    }
+
+    @Test
+    public void openRejectsMarkerOutsideFileRoot() throws Exception {
+        Path parent = newProjectsParent();
+        Path marker = Files.createFile(parent.resolve("NewProject.gpr"));
+        Files.createDirectory(parent.resolve("NewProject.rep"));
+        when(security.resolveWithinFileRoot(marker.toString())).thenReturn(null);
+        ProjectManager manager = mock(ProjectManager.class);
+        GuiProjectService service = new GuiProjectService(security, () -> manager);
+
+        Map<String, Object> result = parse(service.openProject(marker.toString()));
+
+        assertError(result, "path_not_allowed");
+        verify(manager, never()).getActiveProject();
+        verify(manager, never()).openProject(any(ProjectLocator.class), eq(true), eq(false));
+    }
+
+    @Test
+    public void openRejectsProjectDirectoryOutsideFileRoot() throws Exception {
+        Path parent = newProjectsParent();
+        Path marker = Files.createFile(parent.resolve("NewProject.gpr"));
+        Path outside = temporaryFolder.newFolder("outside-project").toPath().toRealPath();
+        Path projectDirectory = parent.resolve("NewProject.rep");
+        try {
+            Files.createSymbolicLink(projectDirectory, outside);
+        } catch (UnsupportedOperationException | IOException e) {
+            assumeNoException(e);
+        }
+        when(security.resolveWithinFileRoot(outside.toString())).thenReturn(null);
+        ProjectManager manager = mock(ProjectManager.class);
+        GuiProjectService service = new GuiProjectService(security, () -> manager);
+
+        Map<String, Object> result = parse(service.openProject(marker.toString()));
+
+        assertError(result, "path_not_allowed");
+        verify(manager, never()).getActiveProject();
+        verify(manager, never()).openProject(any(ProjectLocator.class), eq(true), eq(false));
+    }
+
+    @Test
+    public void openReturnsAlreadyActiveWithoutReopening() throws Exception {
+        Path parent = newProjectsParent();
+        Path marker = Files.createFile(parent.resolve("NewProject.gpr"));
+        Files.createDirectory(parent.resolve("NewProject.rep"));
+        ProjectLocator locator = new ProjectLocator(parent.toString(), "NewProject");
+        ProjectManager manager = mock(ProjectManager.class);
+        Project current = mock(Project.class);
+        when(manager.getActiveProject()).thenReturn(current);
+        when(current.getProjectLocator()).thenReturn(locator);
+        AtomicReference<Project> toolProject = new AtomicReference<>(current);
+        GuiProjectService service = new GuiProjectService(
+            security, () -> manager, () -> activeProjectController(toolProject));
+
+        Map<String, Object> result = parse(service.openProject(marker.toString()));
+
+        assertEquals(Boolean.TRUE, result.get("success"));
+        assertEquals(Boolean.TRUE, result.get("already_active"));
+        assertSame(current, toolProject.get());
+        verify(current, never()).save();
+        verify(current, never()).close();
+        verify(manager, never()).openProject(any(ProjectLocator.class), eq(true), eq(false));
+    }
+
+    @Test
+    public void openAbortsWithoutClosingWhenCurrentProjectHasUnsavedDomainData()
+            throws Exception {
+        Path parent = newProjectsParent();
+        Path marker = Files.createFile(parent.resolve("NewProject.gpr"));
+        Files.createDirectory(parent.resolve("NewProject.rep"));
+        ProjectManager manager = mock(ProjectManager.class);
+        Project current = mock(Project.class);
+        DomainFile changed = mock(DomainFile.class);
+        when(changed.isChanged()).thenReturn(true);
+        when(current.getOpenData()).thenReturn(List.of(changed));
+        when(manager.getActiveProject()).thenReturn(current);
+        when(current.getProjectLocator()).thenReturn(
+            new ProjectLocator(parent.toString(), "OldProject"));
+        AtomicReference<Project> toolProject = new AtomicReference<>(current);
+        AppInfo.setActiveProject(current);
+        GuiProjectService service = new GuiProjectService(
+            security, () -> manager, () -> activeProjectController(toolProject));
+
+        Map<String, Object> result = parse(service.openProject(marker.toString()));
+
+        assertError(result, "unsaved_changes");
+        assertSame(current, AppInfo.getActiveProject());
+        assertSame(current, toolProject.get());
+        verify(current, never()).save();
+        verify(current, never()).close();
+        verify(manager, never()).openProject(any(ProjectLocator.class), eq(true), eq(false));
+    }
+
+    @Test
+    public void openRefusesBusyProjectToolWithoutClosing() throws Exception {
+        Path parent = newProjectsParent();
+        Path marker = Files.createFile(parent.resolve("NewProject.gpr"));
+        Files.createDirectory(parent.resolve("NewProject.rep"));
+        ProjectManager manager = mock(ProjectManager.class);
+        Project current = mock(Project.class);
+        ToolManager toolManager = mock(ToolManager.class);
+        PluginTool busyTool = pluginToolOrSkip();
+        when(manager.getActiveProject()).thenReturn(current);
+        when(current.getProjectLocator()).thenReturn(
+            new ProjectLocator(parent.toString(), "OldProject"));
+        when(current.getToolManager()).thenReturn(toolManager);
+        when(toolManager.getRunningTools()).thenReturn(new PluginTool[] { busyTool });
+        when(busyTool.isExecutingCommand()).thenReturn(true);
+        when(busyTool.getName()).thenReturn("CodeBrowser");
+        GuiProjectService service = new GuiProjectService(
+            security, () -> manager, () -> activeProjectController(
+                new AtomicReference<>(current)));
+
+        Map<String, Object> result = parse(service.openProject(marker.toString()));
+
+        assertError(result, "project_close_refused");
+        verify(current, never()).saveSessionTools();
+        verify(current, never()).close();
+        verify(manager, never()).openProject(any(ProjectLocator.class), eq(true), eq(false));
+    }
+
+    @Test
+    public void openRefusesAmbiguousChangedSessionToolsWithoutDialog() throws Exception {
+        Path parent = newProjectsParent();
+        Path marker = Files.createFile(parent.resolve("NewProject.gpr"));
+        Files.createDirectory(parent.resolve("NewProject.rep"));
+        ProjectManager manager = mock(ProjectManager.class);
+        Project current = mock(Project.class);
+        ToolManager toolManager = mock(ToolManager.class);
+        PluginTool first = pluginToolOrSkip();
+        PluginTool second = pluginToolOrSkip();
+        when(manager.getActiveProject()).thenReturn(current);
+        when(current.getProjectLocator()).thenReturn(
+            new ProjectLocator(parent.toString(), "OldProject"));
+        when(current.getToolManager()).thenReturn(toolManager);
+        when(toolManager.getRunningTools()).thenReturn(
+            new PluginTool[] { first, second });
+        when(first.hasConfigChanged()).thenReturn(true);
+        when(second.hasConfigChanged()).thenReturn(true);
+        when(first.getName()).thenReturn("CodeBrowser");
+        when(second.getName()).thenReturn("CodeBrowser(2)");
+        when(first.getToolName()).thenReturn("CodeBrowser");
+        when(second.getToolName()).thenReturn("CodeBrowser");
+        GuiProjectService service = new GuiProjectService(
+            security, () -> manager, () -> activeProjectController(
+                new AtomicReference<>(current)));
+
+        Map<String, Object> result = parse(service.openProject(marker.toString()));
+
+        assertError(result, "project_close_refused");
+        assertTrue(result.get("message").toString().contains("share a name"));
+        verify(current, never()).saveSessionTools();
+        verify(current, never()).close();
+        verify(manager, never()).openProject(any(ProjectLocator.class), eq(true), eq(false));
+    }
+
+    @Test
+    public void openRefusesToolThatCannotClose() throws Exception {
+        Path parent = newProjectsParent();
+        Path marker = Files.createFile(parent.resolve("NewProject.gpr"));
+        Files.createDirectory(parent.resolve("NewProject.rep"));
+        ProjectManager manager = mock(ProjectManager.class);
+        Project current = mock(Project.class);
+        ToolManager toolManager = mock(ToolManager.class);
+        PluginTool tool = pluginToolOrSkip();
+        when(manager.getActiveProject()).thenReturn(current);
+        when(current.getProjectLocator()).thenReturn(
+            new ProjectLocator(parent.toString(), "OldProject"));
+        when(current.getToolManager()).thenReturn(toolManager);
+        when(toolManager.getRunningTools()).thenReturn(new PluginTool[] { tool });
+        when(tool.getName()).thenReturn("CodeBrowser");
+        GuiProjectService service = new GuiProjectService(
+            security, () -> manager, () -> activeProjectController(
+                new AtomicReference<>(current)));
+
+        Map<String, Object> result = parse(service.openProject(marker.toString()));
+
+        assertError(result, "project_close_refused");
+        assertTrue(result.get("message").toString().contains("refused"));
+        verify(current, never()).saveSessionTools();
+        verify(current, never()).close();
+    }
+
+    @Test
+    public void openAbortsWhenSessionToolsCannotBeSaved() throws Exception {
+        Path parent = newProjectsParent();
+        Path marker = Files.createFile(parent.resolve("NewProject.gpr"));
+        Files.createDirectory(parent.resolve("NewProject.rep"));
+        ProjectManager manager = mock(ProjectManager.class);
+        Project current = mock(Project.class);
+        ToolManager toolManager = mock(ToolManager.class);
+        when(manager.getActiveProject()).thenReturn(current);
+        when(current.getProjectLocator()).thenReturn(
+            new ProjectLocator(parent.toString(), "OldProject"));
+        when(current.getToolManager()).thenReturn(toolManager);
+        when(toolManager.getRunningTools()).thenReturn(new PluginTool[0]);
+        when(current.saveSessionTools()).thenReturn(false);
+        GuiProjectService service = new GuiProjectService(
+            security, () -> manager, () -> activeProjectController(
+                new AtomicReference<>(current)));
+
+        Map<String, Object> result = parse(service.openProject(marker.toString()));
+
+        assertError(result, "project_open_failed");
+        assertTrue(result.get("message").toString().contains("session tools"));
+        verify(current, never()).save();
+        verify(current, never()).close();
+    }
+
+    @Test
+    public void openSavesUnchangedProjectBeforeClosing() throws Exception {
+        Path parent = newProjectsParent();
+        Path marker = Files.createFile(parent.resolve("NewProject.gpr"));
+        Files.createDirectory(parent.resolve("NewProject.rep"));
+        ProjectManager manager = mock(ProjectManager.class);
+        Project current = mock(Project.class);
+        Project opened = mock(Project.class);
+        AtomicReference<Project> managerProject = new AtomicReference<>(current);
+        when(manager.getActiveProject()).thenAnswer(invocation -> managerProject.get());
+        when(current.getProjectLocator()).thenReturn(
+            new ProjectLocator(parent.toString(), "OldProject"));
+        doAnswer(invocation -> {
+            managerProject.set(null);
+            return null;
+        }).when(current).close();
+        when(manager.openProject(any(ProjectLocator.class), eq(true), eq(false)))
+            .thenAnswer(invocation -> {
+                managerProject.set(opened);
+                AppInfo.setActiveProject(opened);
+                return opened;
+            });
+        when(opened.getName()).thenReturn("NewProject");
+        GuiProjectService service = new GuiProjectService(
+            security, () -> manager, () -> activeProjectController(
+                new AtomicReference<>()));
+
+        Map<String, Object> result = parse(service.openProject(marker.toString()));
+
+        assertEquals(Boolean.TRUE, result.get("success"));
+        verify(current).save();
+        verify(current).close();
+    }
+
+    @Test
+    public void openClearsActiveHoldersWhenCloseNotificationFails() throws Exception {
+        Path parent = newProjectsParent();
+        Path marker = Files.createFile(parent.resolve("NewProject.gpr"));
+        Files.createDirectory(parent.resolve("NewProject.rep"));
+        ProjectManager manager = mock(ProjectManager.class);
+        Project current = mock(Project.class);
+        when(manager.getActiveProject()).thenReturn(current);
+        when(current.getProjectLocator()).thenReturn(
+            new ProjectLocator(parent.toString(), "OldProject"));
+        when(current.saveSessionTools()).thenReturn(true);
+        AtomicReference<Project> toolProject = new AtomicReference<>(current);
+        AppInfo.setActiveProject(current);
+        GuiProjectService.ActiveProjectController controller =
+            new GuiProjectService.ActiveProjectController() {
+                @Override
+                public Project getActiveProject() {
+                    return toolProject.get();
+                }
+
+                @Override
+                public void setActiveProject(Project project) {
+                    toolProject.set(project);
+                }
+
+                @Override
+                public void projectClosed(Project project) {
+                    throw new IllegalStateException("listener failed");
+                }
+            };
+        GuiProjectService service = new GuiProjectService(
+            security, () -> manager, () -> controller);
+
+        Map<String, Object> result = parse(service.openProject(marker.toString()));
+
+        assertError(result, "project_open_failed");
+        verify(current).close();
+        assertNull(AppInfo.getActiveProject());
+        assertNull(toolProject.get());
+        verify(manager, never()).openProject(any(ProjectLocator.class), eq(true), eq(false));
+    }
+
+    @Test
+    public void openNormalizesHoldersWhenProjectMarksClosedBeforeThrowing()
+            throws Exception {
+        Path parent = newProjectsParent();
+        Path marker = Files.createFile(parent.resolve("NewProject.gpr"));
+        Files.createDirectory(parent.resolve("NewProject.rep"));
+        ProjectManager manager = mock(ProjectManager.class);
+        Project current = mock(Project.class);
+        when(manager.getActiveProject()).thenReturn(current);
+        when(current.getProjectLocator()).thenReturn(
+            new ProjectLocator(parent.toString(), "OldProject"));
+        when(current.isClosed()).thenReturn(true);
+        doAnswer(invocation -> {
+            AppInfo.setActiveProject(null);
+            throw new IllegalStateException("dispose failed");
+        }).when(current).close();
+        AtomicReference<Project> toolProject = new AtomicReference<>(current);
+        AtomicReference<Project> notified = new AtomicReference<>();
+        AppInfo.setActiveProject(current);
+        GuiProjectService.ActiveProjectController controller =
+            new GuiProjectService.ActiveProjectController() {
+                @Override
+                public Project getActiveProject() {
+                    return toolProject.get();
+                }
+
+                @Override
+                public void setActiveProject(Project project) {
+                    toolProject.set(project);
+                }
+
+                @Override
+                public void projectClosed(Project project) {
+                    notified.set(project);
+                }
+            };
+        GuiProjectService service = new GuiProjectService(
+            security, () -> manager, () -> controller);
+
+        Map<String, Object> result = parse(service.openProject(marker.toString()));
+
+        assertError(result, "project_open_failed");
+        assertSame(current, notified.get());
+        assertNull(AppInfo.getActiveProject());
+        assertNull(toolProject.get());
+        verify(manager, never()).openProject(any(ProjectLocator.class), eq(true), eq(false));
+    }
+
+    @Test
+    public void openRunsLifecycleAsOneEdtTaskAndActivatesProject() throws Exception {
+        Path parent = newProjectsParent();
+        Path marker = Files.createFile(parent.resolve("NewProject.gpr"));
+        Files.createDirectory(parent.resolve("NewProject.rep"));
+        ProjectManager manager = mock(ProjectManager.class);
+        Project previous = mock(Project.class);
+        Project opened = mock(Project.class);
+        AtomicReference<Project> managerProject = new AtomicReference<>(previous);
+        AtomicReference<Project> toolProject = new AtomicReference<>(previous);
+        List<String> events = new ArrayList<>();
+        when(previous.getProjectLocator()).thenReturn(
+            new ProjectLocator(parent.toString(), "OldProject"));
+        when(previous.hasChanged()).thenReturn(true, false);
+        GuiProjectService.ActiveProjectController controller =
+            new GuiProjectService.ActiveProjectController() {
+                @Override
+                public Project getActiveProject() {
+                    return toolProject.get();
+                }
+
+                @Override
+                public void setActiveProject(Project project) {
+                    events.add("tool:" + (project == null ? "null" : "opened") + ":"
+                        + SwingUtilities.isEventDispatchThread());
+                    toolProject.set(project);
+                }
+
+                @Override
+                public void projectClosed(Project project) {
+                    events.add("notify-closed:" + SwingUtilities.isEventDispatchThread());
+                }
+            };
+
+        when(manager.getActiveProject()).thenAnswer(invocation -> managerProject.get());
+        doAnswer(invocation -> {
+            events.add("save:" + SwingUtilities.isEventDispatchThread());
+            return null;
+        }).when(previous).save();
+        doAnswer(invocation -> {
+            events.add("close:" + SwingUtilities.isEventDispatchThread());
+            managerProject.set(null);
+            AppInfo.setActiveProject(null);
+            return null;
+        }).when(previous).close();
+        when(manager.openProject(any(ProjectLocator.class), eq(true), eq(false)))
+            .thenAnswer(invocation -> {
+                events.add("open:" + SwingUtilities.isEventDispatchThread());
+                managerProject.set(opened);
+                AppInfo.setActiveProject(opened);
+                return opened;
+            });
+        when(opened.getName()).thenReturn("NewProject");
+
+        GuiProjectService service = new GuiProjectService(
+            security, () -> manager, () -> controller);
+        Map<String, Object> result = parse(service.openProject(marker.toString()));
+
+        assertEquals(List.of("save:true", "close:true", "notify-closed:true",
+            "tool:null:true", "open:true", "tool:opened:true"), events);
+        assertEquals(Boolean.TRUE, result.get("success"));
+        assertEquals(Boolean.FALSE, result.get("already_active"));
+        assertSame(opened, AppInfo.getActiveProject());
+        assertSame(opened, controller.getActiveProject());
+    }
+
+    @Test
+    public void openClosesHalfOpenedProjectWhenRestoreFails() throws Exception {
+        Path parent = newProjectsParent();
+        Path marker = Files.createFile(parent.resolve("NewProject.gpr"));
+        Files.createDirectory(parent.resolve("NewProject.rep"));
+        ProjectLocator locator = new ProjectLocator(parent.toString(), "NewProject");
+        ProjectManager manager = mock(ProjectManager.class);
+        Project partiallyOpened = mock(Project.class);
+        AtomicReference<Project> managerProject = new AtomicReference<>();
+        AtomicReference<Project> toolProject = new AtomicReference<>();
+        when(manager.getActiveProject()).thenAnswer(invocation -> managerProject.get());
+        when(manager.openProject(any(ProjectLocator.class), eq(true), eq(false)))
+            .thenAnswer(invocation -> {
+                managerProject.set(partiallyOpened);
+                AppInfo.setActiveProject(partiallyOpened);
+                throw new IOException("restore failed");
+            });
+        when(partiallyOpened.getProjectLocator()).thenReturn(locator);
+        doAnswer(invocation -> {
+            managerProject.set(null);
+            AppInfo.setActiveProject(null);
+            return null;
+        }).when(partiallyOpened).close();
+
+        GuiProjectService service = new GuiProjectService(
+            security, () -> manager, () -> activeProjectController(toolProject));
+        Map<String, Object> result = parse(service.openProject(marker.toString()));
+
+        assertError(result, "project_open_failed");
+        assertTrue(result.get("message").toString().contains("restore failed"));
+        verify(partiallyOpened).close();
+        assertNull(managerProject.get());
+        assertNull(toolProject.get());
+        assertNull(AppInfo.getActiveProject());
+    }
+
+    @Test
+    public void openRetainsHalfOpenedProjectHoldersWhenCleanupCloseFails()
+            throws Exception {
+        Path parent = newProjectsParent();
+        Path marker = Files.createFile(parent.resolve("NewProject.gpr"));
+        Files.createDirectory(parent.resolve("NewProject.rep"));
+        ProjectLocator locator = new ProjectLocator(parent.toString(), "NewProject");
+        ProjectManager manager = mock(ProjectManager.class);
+        Project partiallyOpened = mock(Project.class);
+        AtomicReference<Project> managerProject = new AtomicReference<>();
+        AtomicReference<Project> toolProject = new AtomicReference<>(partiallyOpened);
+        when(manager.getActiveProject()).thenAnswer(invocation -> managerProject.get());
+        when(manager.openProject(any(ProjectLocator.class), eq(true), eq(false)))
+            .thenAnswer(invocation -> {
+                managerProject.set(partiallyOpened);
+                AppInfo.setActiveProject(partiallyOpened);
+                throw new IOException("restore failed");
+            });
+        when(partiallyOpened.getProjectLocator()).thenReturn(locator);
+        doAnswer(invocation -> {
+            throw new IllegalStateException("close failed");
+        }).when(partiallyOpened).close();
+
+        GuiProjectService service = new GuiProjectService(
+            security, () -> manager, () -> activeProjectController(toolProject));
+        Map<String, Object> result = parse(service.openProject(marker.toString()));
+
+        assertError(result, "project_open_failed");
+        assertTrue(result.get("message").toString().contains("cleanup failed"));
+        assertSame(partiallyOpened, managerProject.get());
+        assertSame(partiallyOpened, toolProject.get());
+        assertSame(partiallyOpened, AppInfo.getActiveProject());
     }
 
     @Test
@@ -470,6 +959,45 @@ public class GuiProjectServiceTest {
     }
 
     @Test
+    public void udsOpenRouteRequiresPathAndSerializesServiceResponse() throws Exception {
+        Path parent = newProjectsParent();
+        Path marker = Files.createFile(parent.resolve("NewProject.gpr"));
+        Files.createDirectory(parent.resolve("NewProject.rep"));
+        ProjectLocator locator = new ProjectLocator(parent.toString(), "NewProject");
+        ProjectManager manager = mock(ProjectManager.class);
+        Project opened = mock(Project.class);
+        AtomicReference<Project> managerProject = new AtomicReference<>();
+        AtomicReference<Project> toolProject = new AtomicReference<>();
+        when(manager.getActiveProject()).thenAnswer(invocation -> managerProject.get());
+        when(manager.openProject(any(ProjectLocator.class), eq(true), eq(false)))
+            .thenAnswer(invocation -> {
+                managerProject.set(opened);
+                AppInfo.setActiveProject(opened);
+                return opened;
+            });
+        when(opened.getName()).thenReturn("NewProject");
+        when(opened.getProjectLocator()).thenReturn(locator);
+        GuiProjectService service = new GuiProjectService(
+            security, () -> manager,
+            () -> activeProjectController(toolProject));
+        EndpointDef endpoint = new AnnotationScanner(service).getEndpoints().stream()
+            .filter(candidate -> "/open_project".equals(candidate.path()))
+            .findFirst()
+            .orElseThrow();
+
+        assertEquals("POST", endpoint.method());
+        assertError(parse(endpoint.handler().handle(Map.of(), Map.of())),
+            "invalid_request");
+        Response response = endpoint.handler().handle(
+            Map.of(), Map.of("path", marker.toString()));
+        Map<String, Object> result = JsonHelper.parseJson(response.toJson());
+
+        assertEquals(Boolean.TRUE, result.get("success"));
+        assertEquals("NewProject", result.get("project"));
+        assertEquals(marker.toString(), result.get("path"));
+    }
+
+    @Test
     public void bundledGhidraExposesFrontEndProjectListenerContract() throws Exception {
         try (InputStream classFile = getClass().getClassLoader().getResourceAsStream(
                 "ghidra/framework/main/FrontEndTool.class")) {
@@ -501,6 +1029,15 @@ public class GuiProjectServiceTest {
 
     private Map<String, Object> parse(Response response) {
         return JsonHelper.parseJson(response.toJson());
+    }
+
+    private PluginTool pluginToolOrSkip() {
+        try {
+            return mock(PluginTool.class);
+        } catch (Throwable failure) {
+            assumeNoException(failure);
+            return null;
+        }
     }
 
     private GuiProjectService.ActiveProjectController activeProjectController(

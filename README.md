@@ -32,7 +32,7 @@ Manual packaging after prerequisites are installed:
 mvn clean package assembly:single -DskipTests
 ```
 
-Enable **GhidraMCP-next** in a CodeBrowser tool through **File > Configure**. The extension then starts a per-process Unix-domain socket automatically.
+Enable **GhidraMCP-next** in the Ghidra Project Window through **File > Configure**. The extension then keeps one per-process Unix-domain socket across project switches.
 
 Loopback TCP is optional. Enable **GhidraMCP-next > Enable TCP Transport** in Ghidra only for a local client that cannot use the stdio bridge, such as `c64-mcp`.
 
@@ -74,7 +74,7 @@ The retained surface covers:
 - program import, open, save, close, memory reads, and rebasing;
 - functions, labels, equates, comments, references, and datatypes;
 - memory blocks, data creation, disassembly, flow, bytes, and coverage;
-- complete text listings and project archives;
+- complete text listings, local project creation and opening, and project archives;
 - TraceRMI memory, registers, breakpoints, execution, target methods, and launchers.
 
 Use address-space-qualified addresses for overlays or ambiguous maps.
