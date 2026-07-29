@@ -6,6 +6,10 @@ Complete version history for the GhidraMCP-next project.
 
 ## Unreleased
 
+### Added
+
+- Added `restore_project_archive`, which restores one native GAR into a fresh local project for subsequent `open_project` use.
+
 ## 0.101.2
 
 ### Added

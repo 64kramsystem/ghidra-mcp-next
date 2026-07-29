@@ -20,6 +20,7 @@ import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
 
 import org.junit.Before;
+import org.junit.BeforeClass;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -31,6 +32,17 @@ import ghidra.framework.model.Project;
 import ghidra.framework.model.ProjectLocator;
 
 public class ProjectArchiveServiceTest {
+
+    @BeforeClass
+    public static void registerGhidraUrlHandler() {
+        String key = "java.protocol.handler.pkgs";
+        String packages = System.getProperty(key, "");
+        if (!packages.contains("ghidra.framework.protocol")) {
+            System.setProperty(key, packages.isEmpty()
+                ? "ghidra.framework.protocol"
+                : packages + "|ghidra.framework.protocol");
+        }
+    }
 
     @Rule
     public TemporaryFolder temporaryFolder = new TemporaryFolder();
@@ -134,6 +146,30 @@ public class ProjectArchiveServiceTest {
         assertErrorContains(response, "GAR export failed");
         assertEquals("old", Files.readString(destination));
         assertNoTemporaryFiles(destination.getParent());
+    }
+
+    @Test
+    public void restoresArchiveIntoFreshLocalProject() throws Exception {
+        Path parent = temporaryFolder.newFolder("projects").toPath();
+        Path archive = temporaryFolder.getRoot().toPath().resolve("fixture.gar");
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(archive))) {
+            jar.putNextEntry(new JarEntry("JAR_FORMAT"));
+            jar.closeEntry();
+            jar.putNextEntry(new JarEntry("fixture.gpr"));
+            jar.closeEntry();
+            jar.putNextEntry(new JarEntry("idata/00/payload"));
+            jar.write("program".getBytes());
+            jar.closeEntry();
+        }
+
+        Response response = service(ProjectArchiveServiceTest::writeGar)
+            .restoreProjectArchive(archive.toString(), parent.toString(), "Restored");
+
+        assertTrue(response.toJson(), response instanceof Response.Ok);
+        assertTrue(Files.isRegularFile(parent.resolve("Restored.gpr")));
+        assertEquals("program",
+            Files.readString(parent.resolve("Restored.rep/idata/00/payload")));
+        assertFalse(Files.exists(parent.resolve("Restored.rep/fixture.gpr")));
     }
 
     private ProjectArchiveService service(ProjectArchiveService.ArchiveWriter writer) {

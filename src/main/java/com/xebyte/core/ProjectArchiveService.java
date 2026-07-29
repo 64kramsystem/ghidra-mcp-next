@@ -27,14 +27,21 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.function.Supplier;
+import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 
 /** Exports the active project with Ghidra's native GAR writer. */
 public final class ProjectArchiveService {
+
+    private static final String PROJECT_EXTENSION = ".gpr";
+    private static final String PROJECT_PROPERTIES = "project.prp";
+    private static final String PROJECT_STATE = "projectState";
 
     @FunctionalInterface
     interface ArchiveWriter {
@@ -140,6 +147,99 @@ public final class ProjectArchiveService {
         }
     }
 
+    @McpTool(path = "/restore_project_archive", method = "POST",
+        description = "Restore a native GAR archive into a fresh local Ghidra project")
+    public Response restoreProjectArchive(
+            @Param(value = "archive_path", source = ParamSource.BODY,
+                description = "Absolute path to an existing .gar archive")
+                String archivePath,
+            @Param(value = "parent_dir", source = ParamSource.BODY,
+                description = "Existing local directory that will contain the project")
+                String parentDir,
+            @Param(value = "name", source = ParamSource.BODY,
+                description = "Name for the restored project")
+                String name) {
+        if (archivePath == null || archivePath.isBlank()
+                || parentDir == null || parentDir.isBlank()
+                || name == null || name.isBlank()) {
+            return Response.err("archive_path, parent_dir, and name are required");
+        }
+
+        Path archive;
+        Path parent;
+        try {
+            archive = Path.of(archivePath);
+            parent = Path.of(parentDir);
+        }
+        catch (InvalidPathException e) {
+            return Response.err("invalid archive_path or parent_dir");
+        }
+        if (!archive.isAbsolute() || !parent.isAbsolute()) {
+            return Response.err("archive_path and parent_dir must be absolute");
+        }
+        if (!archivePath.toLowerCase(Locale.ROOT)
+                .endsWith(ProjectArchiveBridge.ARCHIVE_EXTENSION)) {
+            return Response.err("archive_path must end in "
+                + ProjectArchiveBridge.ARCHIVE_EXTENSION);
+        }
+
+        archive = security.resolveWithinFileRoot(archivePath);
+        parent = security.resolveWithinFileRoot(parentDir);
+        if (archive == null || parent == null) {
+            return Response.err("archive_path and parent_dir must be within GHIDRA_MCP_FILE_ROOT");
+        }
+        if (!Files.isRegularFile(archive)) {
+            return Response.err("archive does not exist: " + archive);
+        }
+        if (!Files.isDirectory(parent)) {
+            return Response.err("parent directory does not exist: " + parent);
+        }
+
+        ProjectLocator locator;
+        try {
+            locator = new ProjectLocator(parent.toString(), name);
+        }
+        catch (IllegalArgumentException e) {
+            return Response.err("invalid project name: " + e.getMessage());
+        }
+        Path marker = locator.getMarkerFile().toPath();
+        Path projectDir = locator.getProjectDir().toPath();
+        if (security.resolveWithinFileRoot(marker.toString()) == null
+                || security.resolveWithinFileRoot(projectDir.toString()) == null) {
+            return Response.err("project destination is outside GHIDRA_MCP_FILE_ROOT");
+        }
+        if (Files.exists(marker) || Files.exists(projectDir)) {
+            return Response.err("project destination already exists: " + marker);
+        }
+
+        Path temporary = null;
+        boolean moved = false;
+        try {
+            temporary = Files.createTempDirectory(parent, "." + name + "-restore-");
+            extractGar(archive, temporary);
+            Files.move(temporary, projectDir);
+            moved = true;
+            Files.createFile(marker);
+
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("project", name);
+            result.put("path", marker.toString());
+            result.put("archive_path", archive.toString());
+            return Response.ok(result);
+        }
+        catch (Exception e) {
+            deleteTree(moved ? projectDir : temporary);
+            try {
+                Files.deleteIfExists(marker);
+            }
+            catch (IOException ignored) {
+                // Best-effort cleanup after a failed restore.
+            }
+            String message = e.getMessage() != null ? e.getMessage() : e.toString();
+            return Response.err("GAR restore failed: " + message);
+        }
+    }
+
     private void saveChangedFiles(Project project) throws Exception {
         ProjectLocator activeLocator = project.getProjectLocator();
         for (DomainFile file : project.getOpenData()) {
@@ -172,6 +272,71 @@ public final class ProjectArchiveService {
                     || jar.getJarEntry(projectName + ".gpr") == null) {
                 throw new IOException("native archive writer produced an invalid GAR");
             }
+        }
+    }
+
+    private static void extractGar(Path archive, Path destination) throws IOException {
+        try (JarFile jar = new JarFile(archive.toFile())) {
+            if (jar.getJarEntry("JAR_FORMAT") == null) {
+                throw new IOException("archive is missing JAR_FORMAT");
+            }
+            var entries = jar.entries();
+            while (entries.hasMoreElements()) {
+                JarEntry entry = entries.nextElement();
+                Path relative = Path.of(entry.getName()).normalize();
+                if (relative.isAbsolute() || relative.startsWith("..")) {
+                    throw new IOException("unsafe archive entry: " + entry.getName());
+                }
+                if (skipRestoreEntry(relative)) {
+                    continue;
+                }
+                Path target = destination.resolve(relative).normalize();
+                if (!target.startsWith(destination)) {
+                    throw new IOException("unsafe archive entry: " + entry.getName());
+                }
+                if (entry.isDirectory()) {
+                    Files.createDirectories(target);
+                    continue;
+                }
+                Files.createDirectories(target.getParent());
+                try (var input = jar.getInputStream(entry)) {
+                    Files.copy(input, target, StandardCopyOption.REPLACE_EXISTING);
+                }
+            }
+        }
+    }
+
+    private static boolean skipRestoreEntry(Path relative) {
+        if (relative.getNameCount() == 0) {
+            return true;
+        }
+        String root = relative.getName(0).toString();
+        String filename = relative.getFileName().toString();
+        return root.equalsIgnoreCase("JAR_FORMAT")
+            || root.equalsIgnoreCase(PROJECT_PROPERTIES)
+            || root.equalsIgnoreCase(PROJECT_STATE)
+            || root.equalsIgnoreCase("save")
+            || root.equalsIgnoreCase("groups")
+            || filename.equalsIgnoreCase(".properties")
+            || filename.toLowerCase(Locale.ROOT).endsWith(PROJECT_EXTENSION);
+    }
+
+    private static void deleteTree(Path root) {
+        if (root == null || !Files.exists(root)) {
+            return;
+        }
+        try (var paths = Files.walk(root)) {
+            paths.sorted(Comparator.reverseOrder()).forEach(path -> {
+                try {
+                    Files.deleteIfExists(path);
+                }
+                catch (IOException ignored) {
+                    // Best-effort cleanup after a failed restore.
+                }
+            });
+        }
+        catch (IOException ignored) {
+            // Best-effort cleanup after a failed restore.
         }
     }
 }
