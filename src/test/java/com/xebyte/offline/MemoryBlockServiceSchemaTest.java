@@ -124,6 +124,7 @@ public class MemoryBlockServiceSchemaTest {
             .filter("/create_memory_block"::equals).count());
         for (String path : List.of(
                 "/create_memory_block",
+                "/apply_memory_image",
                 "/update_memory_block",
                 "/split_memory_block",
                 "/move_memory_block",
@@ -133,6 +134,23 @@ public class MemoryBlockServiceSchemaTest {
                 "/patch_bytes")) {
             assertEquals(path, "memory", tools.get(path).category());
         }
+        assertEquals(
+            List.of(
+                "blocks", "metadata", "conflict_policy",
+                "dry_run", "program"),
+            tools.get("/apply_memory_image").params().stream()
+                .map(AnnotationScanner.ParamDescriptor::name).toList());
+        Map<String, AnnotationScanner.ParamDescriptor> imageParameters =
+            tools.get("/apply_memory_image").params().stream()
+                .collect(Collectors.toMap(
+                    AnnotationScanner.ParamDescriptor::name,
+                    Function.identity()));
+        assertTrue(imageParameters.get("metadata").optional());
+        assertFalse(imageParameters.get("program").optional());
+        assertEquals("error",
+            imageParameters.get("conflict_policy").defaultValue());
+        assertEquals("true",
+            imageParameters.get("dry_run").defaultValue());
         assertEquals(
             List.of(
                 "name", "start", "length", "bytes", "file_path",
@@ -202,6 +220,7 @@ public class MemoryBlockServiceSchemaTest {
         assertTrue(conflictPolicy.description().contains("split"));
         for (String path : List.of(
                 "/create_memory_block",
+                "/apply_memory_image",
                 "/update_memory_block",
                 "/split_memory_block",
                 "/move_memory_block",

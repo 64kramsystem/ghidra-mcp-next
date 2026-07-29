@@ -5,12 +5,19 @@ Complete version history for the GhidraMCP-next project.
 ---
 
 ## Unreleased
+### Added
+
+- Added `apply_memory_image`, which requires an explicitly named existing program and atomically applies a fully preflighted set of initialized ordinary/overlay blocks plus optional string-valued capture metadata stored durably in Program Information. It accepts native byte arrays or hexadecimal strings, preserves preview/commit plan parity, and supports only conflict-free creation or `replace_exact` of a same-name, same-range initialized block. Exact replacement writes in place, preserving analysis, references, and file provenance while updating the requested block metadata; partial overlaps roll the whole request back, and omitted metadata preserves the stored capture record.
+- Added `search_6502_indexed_operands`, a read-only, bounded instruction-aware search for absolute X/Y-indexed 6502 memory operands in explicitly qualified source and target ranges. Rows classify READ, WRITE, and READ_WRITE access, report every reference in the exact operand slot with overlay-aware status, and include a directly usable `batch_update_references` dry-run request.
+- Added `find_split_pointer_partners`, a read-only bounded search for the missing half of a known split 16-bit pointer table. It tests both low/high and high/low layouts under a fixed byte-pair work cap, labels its numeric results as false-positive-prone hypotheses, and returns directly usable `apply_data_regions` region proposals.
+
 ### Changed
 
 - `tools/release` now refuses when HEAD is already tagged `v<version>`, instead of reporting nothing to release and exiting 0.
 
 ### Fixed
 
+- `create_memory_block` and symbol-profile memory-block application can now add a non-overlapping block to an explicitly qualified existing overlay when `overlay=false`, with identical preview/commit descriptors. `overlay=true` at an overlay address remains rejected as unsupported nested-overlay creation.
 - `disassemble_flow` commits now continue through repeated-byte instruction runs exactly as preview does. Ghidra's stock repeat-pattern guard previously stopped after 16 identical instructions, causing valid plans to diverge and roll back.
 
 ## 0.100.0
