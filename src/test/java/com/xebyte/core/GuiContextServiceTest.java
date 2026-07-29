@@ -391,10 +391,6 @@ public class GuiContextServiceTest {
             throw new UnsupportedOperationException();
         }
 
-        @Override
-        public boolean isHeadless() {
-            return false;
-        }
     }
 
     private static final class FakeGuiAccess

@@ -1,98 +1,68 @@
-"""Schema parsing — converts the upstream /mcp/schema to internal tool defs."""
+"""Parse the plugin's endpoint schema."""
+
+import re
 
 from .config import STATIC_TOOL_NAMES
-from .validation import sanitize_tool_name, _allocate_tool_name
 
-# JSON type → Python type mapping
-_TYPE_MAP = {
+TYPE_MAP = {
     "string": str,
-    # fieldsJson parameters accept either a pre-serialized JSON string or a
-    # native JSON array/object. AnnotationScanner normalizes both forms.
-    "json": object,
     "integer": int,
     "boolean": bool,
     "number": float,
     "object": dict,
     "array": list,
-    "any": str,
-    "address": str,
 }
+JSON_SCHEMA_TYPES = set(TYPE_MAP)
+TOOL_NAME = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 
 
-def _normalize_tool_def_names(schema: list[dict]) -> list[dict]:
-    """Normalize and de-duplicate MCP-visible names while keeping HTTP endpoints intact."""
-    normalized_schema: list[dict] = []
-    used_names = set(STATIC_TOOL_NAMES)
-
-    for tool_def in schema:
-        raw_name = (
-            tool_def.get("original_name")
-            or tool_def.get("name")
-            or tool_def["endpoint"].lstrip("/")
-        )
-        sanitized_name = sanitize_tool_name(raw_name)
-        # Preserve an exact overlap with an active bridge-defined tool so the
-        # registration layer can de-duplicate it. All other collisions receive
-        # a stable suffix; TraceRMI debugger names are not bridge-defined and
-        # therefore remain unsuffixed.
-        if sanitized_name in STATIC_TOOL_NAMES and sanitized_name == raw_name:
-            name = sanitized_name
-        else:
-            name = _allocate_tool_name(sanitized_name, used_names)
-
-        normalized = dict(tool_def)
-        normalized["name"] = name
-        normalized["original_name"] = raw_name
-        normalized["sanitized_name"] = sanitized_name
-        normalized["name_collided"] = name != sanitized_name
-        normalized_schema.append(normalized)
-
-    return normalized_schema
-
-
-def _parse_schema(raw: dict) -> list[dict]:
-    """Convert upstream AnnotationScanner schema to internal tool defs.
-
-    Upstream format: {"tools": [{"path", "method", "description", "category", "params": [...]}]}
-    Internal format: [{"name", "endpoint", "http_method", "description", "category", "input_schema"}]
-    """
-    tool_defs = []
-    for tool in raw.get("tools", []):
-        path = tool["path"]
-        raw_name = tool.get("name") or path.lstrip("/")
-        params = tool.get("params", [])
-
-        properties = {}
-        required = []
-        for p in params:
-            fragment = p.get("schema")
-            pdef: dict = (
-                dict(fragment)
-                if isinstance(fragment, dict)
-                else {"type": p.get("type", "string")}
-            )
-            if p.get("description"):
-                pdef["description"] = p["description"]
-            if "default" in p and p["default"] is not None:
-                pdef["default"] = p["default"]
-            if p.get("source"):
-                pdef["source"] = p["source"]
-            if p.get("param_type"):
-                pdef["param_type"] = p["param_type"]
-            properties[p["name"]] = pdef
-            if p.get("required", False):
-                required.append(p["name"])
-
-        tool_defs.append(
+def parse(raw: dict) -> list[dict]:
+    if not isinstance(raw, dict) or not isinstance(raw.get("tools"), list):
+        raise ValueError("Schema must contain a tools array.")
+    result: list[dict] = []
+    names = set(STATIC_TOOL_NAMES)
+    for item in raw["tools"]:
+        if not isinstance(item, dict):
+            raise ValueError("Every schema tool must be an object.")
+        endpoint = item.get("path")
+        method = str(item.get("method", "GET")).upper()
+        name = item.get("name") or str(endpoint or "").lstrip("/")
+        if not endpoint or method not in {"GET", "POST"}:
+            raise ValueError(f"Invalid endpoint for tool {name!r}.")
+        if not isinstance(name, str) or not TOOL_NAME.fullmatch(name):
+            raise ValueError(f"Invalid MCP tool name {name!r}.")
+        if name in names:
+            raise ValueError(f"Duplicate MCP tool name {name!r}.")
+        names.add(name)
+        properties: dict = {}
+        required: list[str] = []
+        for param in item.get("params", []):
+            definition = dict(param.get("schema") or {})
+            kind = definition.get("type", param.get("type", "string"))
+            if kind in {"json", "any"}:
+                definition.pop("type", None)
+            elif kind not in JSON_SCHEMA_TYPES:
+                raise ValueError(
+                    f"Invalid schema type {kind!r} for parameter "
+                    f"{param.get('name')!r}."
+                )
+            else:
+                definition["type"] = kind
+            if param.get("description"):
+                definition["description"] = param["description"]
+            if param.get("default") is not None:
+                definition["default"] = param["default"]
+            if param.get("source"):
+                definition["source"] = param["source"]
+            properties[param["name"]] = definition
+            if param.get("required"):
+                required.append(param["name"])
+        result.append(
             {
-                "name": raw_name,
-                "original_name": raw_name,
-                "endpoint": path,
-                "http_method": tool.get("method", "GET"),
-                "description": tool.get("description", ""),
-                "category": tool.get("category", "unknown"),
-                "category_description": tool.get("category_description", ""),
-                "supports_synthetic_dry_run": tool.get("supports_dry_run", True),
+                "name": name,
+                "endpoint": endpoint,
+                "method": method,
+                "description": item.get("description", ""),
                 "input_schema": {
                     "type": "object",
                     "properties": properties,
@@ -100,5 +70,4 @@ def _parse_schema(raw: dict) -> list[dict]:
                 },
             }
         )
-
-    return _normalize_tool_def_names(tool_defs)
+    return result

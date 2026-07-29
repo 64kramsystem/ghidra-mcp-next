@@ -2,7 +2,6 @@ package com.xebyte.core;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotEquals;
-import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import com.google.gson.JsonObject;
@@ -19,43 +18,26 @@ public class VersionPayloadTest {
     }
 
     @Test
-    public void guiAndHeadlessExposeTheSameRequiredShape() {
-        JsonObject gui = JsonParser.parseString(
-            VersionPayload.toJson("gui", 17)).getAsJsonObject();
-        JsonObject headless = JsonParser.parseString(
-            VersionPayload.toJson("headless", 19)).getAsJsonObject();
+    public void exposesTheRequiredShape() {
+        JsonObject payload = JsonParser.parseString(
+            VersionPayload.toJson(17)).getAsJsonObject();
 
         for (String field : new String[] {
                 "plugin_name", "plugin_version", "build_timestamp",
                 "build_number", "full_version", "ghidra_version",
-                "java_version", "endpoint_count", "mode"}) {
-            assertTrue(field, gui.has(field));
-            assertTrue(field, headless.has(field));
-            assertFalse(field, gui.get(field).isJsonNull());
-            assertFalse(field, headless.get(field).isJsonNull());
+                "java_version", "endpoint_count"}) {
+            assertTrue(field, payload.has(field));
         }
-        assertEquals("gui", gui.get("mode").getAsString());
-        assertEquals("headless", headless.get("mode").getAsString());
-        assertEquals(17, gui.get("endpoint_count").getAsInt());
-        assertEquals(19, headless.get("endpoint_count").getAsInt());
-        // plugin_version is the semantic version; build_timestamp is the build
-        // time. They were identical while both came from release.timestamp, and
-        // asserting that again would re-couple two deliberately separate facts.
+        assertEquals(17, payload.get("endpoint_count").getAsInt());
         assertTrue("plugin_version must be semantic",
-            gui.get("plugin_version").getAsString().matches("\\d+\\.\\d+\\.\\d+"));
+            payload.get("plugin_version").getAsString().matches("\\d+\\.\\d+\\.\\d+"));
         assertNotEquals(
-            gui.get("build_timestamp").getAsString(),
-            gui.get("plugin_version").getAsString());
+            payload.get("build_timestamp").getAsString(),
+            payload.get("plugin_version").getAsString());
         assertEquals(
-            gui.get("plugin_name").getAsString() + " "
-                + gui.get("plugin_version").getAsString(),
-            gui.get("full_version").getAsString());
-        for (String field : new String[] {
-                "plugin_name", "plugin_version", "build_timestamp",
-                "build_number", "full_version", "ghidra_version",
-                "java_version"}) {
-            assertEquals(field, gui.get(field), headless.get(field));
-        }
+            payload.get("plugin_name").getAsString() + " "
+                + payload.get("plugin_version").getAsString(),
+            payload.get("full_version").getAsString());
     }
 
     @Test
@@ -65,7 +47,7 @@ public class VersionPayloadTest {
             scanner.generateSchema()).getAsJsonObject();
         JsonObject version = JsonParser.parseString(
             VersionPayload.toJson(
-                "gui", scanner.getDescriptors().size())).getAsJsonObject();
+                scanner.getDescriptors().size())).getAsJsonObject();
 
         assertEquals(
             schema.getAsJsonArray("tools").size(),

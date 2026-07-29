@@ -73,9 +73,6 @@ import java.util.stream.Collectors;
  * (Window → Debugger). The AI then uses these endpoints to control the
  * debug session while the user sees everything in Ghidra's synchronized UI.</p>
  */
-@McpToolGroup(value = "debugger",
-        description = "Live debugging: attach, breakpoints, step, registers, memory. " +
-                "Requires a CodeBrowser with Debugger view open.")
 public class DebuggerService {
 
     private static final long ACTION_TIMEOUT_MS = 15_000;
@@ -1251,7 +1248,7 @@ public class DebuggerService {
     @McpTool(path = "/debugger/set_breakpoint", method = "POST",
             description = "Set a software execution breakpoint at an address in the trace")
     public Response setBreakpoint(
-            @Param(value = "address", paramType = "address",
+            @Param(value = "address",
                     description = "Address to break at (in trace address space)") String addressStr) {
         TraceContext ctx = getContext();
         if (ctx == null) return noTrace();
@@ -1280,7 +1277,7 @@ public class DebuggerService {
     @McpTool(path = "/debugger/remove_breakpoint", method = "POST",
             description = "Remove a breakpoint at an address")
     public Response removeBreakpoint(
-            @Param(value = "address", paramType = "address",
+            @Param(value = "address",
                     description = "Address of breakpoint to remove") String addressStr) {
         TraceContext ctx = getContext();
         if (ctx == null) return noTrace();
@@ -1414,7 +1411,7 @@ public class DebuggerService {
     @McpTool(path = "/debugger/read_memory",
             description = "Read memory from the debugged process. Returns hex dump and DWORD interpretation.")
     public Response readMemory(
-            @Param(value = "address", paramType = "address",
+            @Param(value = "address",
                     description = "Start address to read from") String addressStr,
             @Param(value = "size", defaultValue = "64",
                     description = "Number of bytes to read (max 4096)") int size) {
@@ -1594,19 +1591,16 @@ public class DebuggerService {
     }
 
     @McpTool(path = "/copy_debugger_memory_to_program", method = "POST",
-            category = "debugger",
             description = "Create and populate a program memory block from the active trace")
     public Response copyDebuggerMemoryToProgram(
-            @Param(value = "source_address", source = ParamSource.BODY,
-                    paramType = "address", description = "Trace source address")
+            @Param(value = "source_address", source = ParamSource.BODY, description = "Trace source address")
                     String sourceAddress,
             @Param(value = "length", source = ParamSource.BODY,
                     description = "Positive byte count") long length,
             @Param(value = "program", source = ParamSource.BODY,
                     description = "Explicitly selected open destination program")
                     String programName,
-            @Param(value = "destination_address", source = ParamSource.BODY,
-                    paramType = "address", description = "Program block start address")
+            @Param(value = "destination_address", source = ParamSource.BODY, description = "Program block start address")
                     String destinationAddress,
             @Param(value = "block_name", source = ParamSource.BODY,
                     description = "Unique destination memory-block name") String blockName) {
@@ -1725,7 +1719,7 @@ public class DebuggerService {
             description = "Translate a static Ghidra program address to a runtime " +
                     "dynamic address in the current trace")
     public Response staticToDynamic(
-            @Param(value = "address", paramType = "address",
+            @Param(value = "address",
                     description = "Static address from a Ghidra program") String addressStr,
             @Param(value = "program", defaultValue = "",
                     description = "Program name for context") String programName) {
@@ -1776,7 +1770,7 @@ public class DebuggerService {
             description = "Translate a runtime dynamic address from the current trace " +
                     "back to a static Ghidra program address")
     public Response dynamicToStatic(
-            @Param(value = "address", paramType = "address",
+            @Param(value = "address",
                     description = "Dynamic address from the trace") String addressStr) {
         TraceContext ctx = getContext();
         if (ctx == null) return noTrace();

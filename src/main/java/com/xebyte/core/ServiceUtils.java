@@ -575,43 +575,6 @@ public final class ServiceUtils {
         }
         addressStr = addressStr.strip();
 
-        // Detect array-shaped input. Workers occasionally send a JSON array
-        // of addresses for the `address` parameter when they meant to use the
-        // batch-comments inner lists (decompiler_comments / disassembly_comments).
-        // The default error message ("could not be resolved... try <space>:<hex>")
-        // misled at least one worker into prepending "ram:" to the array, then
-        // retrying with the same wrong shape. Detect and fail fast with a
-        // structured hint instead.
-        if (addressStr.startsWith("[")) {
-            lastParseError.set("Address must be a single string, not an array. "
-                    + "Got: " + (addressStr.length() > 80 ? addressStr.substring(0, 80) + "..." : addressStr) + ". "
-                    + "If you're calling batch_set_comments, the top-level `address` is the "
-                    + "function entry only; per-line addresses go inside the `decompiler_comments` "
-                    + "and `disassembly_comments` arrays as objects like {\"address\": \"0x...\", \"comment\": \"...\"}. "
-                    + "If you're addressing a single location, pass one hex string like \"0x6ff6a4a0\".");
-            return null;
-        }
-
-        // Detect a delimited multi-address string, e.g. "10020295;100202af;..." — another
-        // shape workers send when they meant to use the batch-comments inner lists. The plain
-        // "could not be resolved... try <space>:<hex>" message used to suggest prepending the
-        // space name to the WHOLE string, and the retry ("ram:..;ram:..") then produced a
-        // second, self-contradictory "Unknown address space 'ram'. Available: ram" error.
-        // Fail fast with the same structured hint as the array case instead. (addressStr is
-        // already stripped, so any remaining whitespace is internal — i.e. list-shaped.)
-        boolean looksLikeList = addressStr.indexOf(';') >= 0
-                || addressStr.indexOf(',') >= 0
-                || addressStr.chars().anyMatch(Character::isWhitespace);
-        if (looksLikeList) {
-            lastParseError.set("Address must be a single location, not a list. "
-                    + "Got: " + (addressStr.length() > 80 ? addressStr.substring(0, 80) + "..." : addressStr) + ". "
-                    + "If you're calling batch_set_comments, the top-level `address` is the "
-                    + "function entry only; per-line addresses go inside the `decompiler_comments` "
-                    + "and `disassembly_comments` arrays as objects like {\"address\": \"0x...\", \"comment\": \"...\"}. "
-                    + "If you're addressing a single location, pass one hex string like \"0x6ff6a4a0\".");
-            return null;
-        }
-
         // Detect if this is a segment:offset form for better error messages
         boolean hasColon = addressStr.contains(":");
 

@@ -1,13 +1,10 @@
 package com.xebyte.core;
 
 import java.nio.charset.StandardCharsets;
-import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Base64;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.HexFormat;
@@ -17,13 +14,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import javax.crypto.Mac;
-import javax.crypto.spec.SecretKeySpec;
-
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
 
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressIterator;
@@ -50,7 +42,6 @@ import ghidra.program.model.symbol.SymbolTable;
 /**
  * Function-independent, bounded reader for Ghidra's authoritative mixed listing.
  */
-@McpToolGroup(value = "listing", description = "Mixed code, data, and undefined listing reads")
 public final class ListingRangeService {
 
     private static final int MAX_UNITS_LIMIT = 10_000;
@@ -60,9 +51,6 @@ public final class ListingRangeService {
     private static final int COMPACT_INLINE_BYTES = 32;
     private static final int COMPACT_TEXT_CAP = 256;
     private static final String COMPACT_TEXT_SUFFIX = "\u2026";
-    private static final int CURSOR_VERSION = 1;
-    private static final String CURSOR_MAC_ALGORITHM = "HmacSHA256";
-    private static final byte[] CURSOR_MAC_KEY = randomKey();
     private static final HexFormat HEX = HexFormat.of();
     private static final Gson OUTPUT_JSON = new GsonBuilder()
         .disableHtmlEscaping()
@@ -83,12 +71,11 @@ public final class ListingRangeService {
         description = "Read an authoritative mixed instruction/data/undefined listing range "
             + "without requiring or creating functions. Compact output is the default; "
             + "it summarizes byte payloads above 32 bytes and truncates comment/data "
-            + "renderings above 256 characters. Pass compact=false for exact full records.",
-        category = "listing")
+            + "renderings above 256 characters. Pass compact=false for exact full records.")
     public Response getListingRange(
-            @Param(value = "start", paramType = "address",
+            @Param(value = "start",
                 description = "Inclusive start address") String startText,
-            @Param(value = "end", paramType = "address",
+            @Param(value = "end",
                 description = "Inclusive end address") String endText,
             @Param(value = "max_units", defaultValue = "1000",
                 description = "Maximum listing units (1..10000)") int maxUnits,
@@ -100,8 +87,6 @@ public final class ListingRangeService {
             @Param(value = "compact", defaultValue = "true",
                 description = "Return bounded summaries with an exact full-page replay request")
                 boolean compact,
-            @Param(value = "cursor", defaultValue = "",
-                description = "Opaque cursor from a previous page") String cursor,
             @Param(value = "program", defaultValue = "",
                 description = "Target program name") String programName) {
         ServiceUtils.ProgramOrError resolved =
@@ -119,7 +104,7 @@ public final class ListingRangeService {
             Program program = resolved.program();
             return threadingStrategy.executeRead(() -> readAuthoritativeRange(
                 program, startText, endText, maxUnits, maxBytes,
-                maxIncomingRefsPerUnit, compact, cursor));
+                maxIncomingRefsPerUnit, compact));
         }
         catch (Exception exception) {
             return Response.err("Error reading listing range: " + exception.getMessage());
@@ -133,8 +118,7 @@ public final class ListingRangeService {
             int maxUnits,
             int maxBytes,
             int maxIncomingRefsPerUnit,
-            boolean compact,
-            String cursor) throws Exception {
+            boolean compact) throws Exception {
         // This snapshot intentionally precedes every model-dependent parse,
         // containment check, unit expansion, index build, and byte read.
         long modificationNumber = program.getModificationNumber();
@@ -166,18 +150,7 @@ public final class ListingRangeService {
             return Response.err("Expanded listing-unit boundaries include unmapped addresses.");
         }
 
-        String programId = programIdentity(program);
         Address pageStart = effectiveStart;
-        if (cursor != null && !cursor.isBlank()) {
-            CursorValidation validation = ListingCursorCodec.decodeAndValidate(
-                cursor, program, programId, modificationNumber,
-                requestedStart, requestedEnd, effectiveStart, effectiveEnd,
-                maxUnits, maxBytes, maxIncomingRefsPerUnit);
-            if (validation.error() != null) {
-                return Response.err(validation.error());
-            }
-            pageStart = validation.nextAddress();
-        }
 
         CodeUnit containingPageStart = definedUnitContaining(listing, pageStart);
         if (containingPageStart != null
@@ -187,7 +160,7 @@ public final class ListingRangeService {
         RangeIndex index = RangeIndex.build(program, pageStart, effectiveEnd);
 
         Page page = readPage(
-            program, index, programId, modificationNumber,
+            program, index,
             requestedStart, requestedEnd, effectiveStart, effectiveEnd,
             pageStart, maxUnits, maxBytes, maxIncomingRefsPerUnit, compact);
         if (program.getModificationNumber() != modificationNumber) {
@@ -237,8 +210,6 @@ public final class ListingRangeService {
     private static Page readPage(
             Program program,
             RangeIndex index,
-            String programId,
-            long modificationNumber,
             Address requestedStart,
             Address requestedEnd,
             Address effectiveStart,
@@ -271,7 +242,7 @@ public final class ListingRangeService {
                     metadata = index.collectMetadata(
                         current, unitEnd, maxIncomingRefsPerUnit);
                     units.add(renderUnit(
-                        metadata, programId, modificationNumber, existing,
+                        metadata, existing,
                         current, unitEnd, true, null, false, true, compact,
                         program.getName()));
                     returnedEnd = unitEnd;
@@ -309,7 +280,7 @@ public final class ListingRangeService {
             }
 
             units.add(renderUnit(
-                metadata, programId, modificationNumber, existing,
+                metadata, existing,
                 current, unitEnd, initialized, bytes, bytesComplete, false,
                 compact, program.getName()));
             returnedEnd = unitEnd;
@@ -333,12 +304,7 @@ public final class ListingRangeService {
                 throw new IllegalStateException(
                     "Address overflow before effective listing range ended.");
             }
-            CursorPayload payload = new CursorPayload(
-                CURSOR_VERSION, programId, modificationNumber,
-                address(requestedStart), address(requestedEnd),
-                address(effectiveStart), address(effectiveEnd),
-                maxUnits, maxBytes, maxIncomingRefsPerUnit, address(current));
-            response.put("next_cursor", ListingCursorCodec.encode(payload));
+            response.put("next_start", address(current));
         }
         if (compact) {
             response.put("compact", true);
@@ -362,8 +328,6 @@ public final class ListingRangeService {
 
     private static Map<String, Object> renderUnit(
             UnitMetadata metadata,
-            String programId,
-            long modificationNumber,
             CodeUnit existing,
             Address start,
             Address end,
@@ -379,14 +343,12 @@ public final class ListingRangeService {
                 bytesComplete, oversized, programName);
         }
         return renderFullUnit(
-            metadata, programId, modificationNumber, existing, start, end,
+            metadata, existing, start, end,
             initialized, bytes, bytesComplete, oversized);
     }
 
     private static Map<String, Object> renderFullUnit(
             UnitMetadata metadata,
-            String programId,
-            long modificationNumber,
             CodeUnit existing,
             Address start,
             Address end,
@@ -436,14 +398,12 @@ public final class ListingRangeService {
             .toList());
 
         unit.put("outgoing_references", metadata.outgoing().stream()
-            .map(reference -> referenceRecord(
-                programId, modificationNumber, reference))
+            .map(ListingRangeService::referenceRecord)
             .toList());
 
         IncomingPage incoming = metadata.incoming();
         unit.put("incoming_references", incoming.included().stream()
-            .map(reference -> referenceRecord(
-                programId, modificationNumber, reference))
+            .map(ListingRangeService::referenceRecord)
             .toList());
         unit.put("incoming_references_complete", incoming.complete());
         if (!incoming.complete()) {
@@ -643,29 +603,14 @@ public final class ListingRangeService {
         record.put(field + "_truncated", true);
     }
 
-    private static Map<String, Object> referenceRecord(
-            String programId, long modificationNumber, Reference reference) {
+    private static Map<String, Object> referenceRecord(Reference reference) {
         Map<String, Object> record = new LinkedHashMap<>();
-        record.put("id", referenceId(programId, modificationNumber, reference));
         record.put("source", address(reference.getFromAddress()));
         record.put("destination", address(reference.getToAddress()));
         record.put("type", reference.getReferenceType().getName());
         record.put("operand_index", reference.getOperandIndex());
         record.put("source_kind", ReferenceOrdering.sourceKind(reference.getSource()));
         return record;
-    }
-
-    private static String referenceId(
-            String programId, long modificationNumber, Reference reference) {
-        String identity = String.join("\u001f",
-            programId,
-            Long.toString(modificationNumber),
-            address(reference.getFromAddress()),
-            address(reference.getToAddress()),
-            reference.getReferenceType().getName(),
-            Integer.toString(reference.getOperandIndex()),
-            ReferenceOrdering.sourceKind(reference.getSource()));
-        return sha256(identity);
     }
 
     private static String sha256(String text) {
@@ -735,10 +680,6 @@ public final class ListingRangeService {
         return address.toString();
     }
 
-    private static String programIdentity(Program program) {
-        return Long.toUnsignedString(program.getUniqueProgramID());
-    }
-
     private static String namespace(Symbol symbol) {
         Namespace namespace = symbol.getParentNamespace();
         return namespace == null ? "" : namespace.getName(true);
@@ -752,42 +693,6 @@ public final class ListingRangeService {
         return new DataMetadata(
             dataType.getDisplayName(),
             dataType.getPathName());
-    }
-
-    private static byte[] randomKey() {
-        byte[] key = new byte[32];
-        new SecureRandom().nextBytes(key);
-        return key;
-    }
-
-    private static byte[] cursorMac(byte[] payload) {
-        try {
-            Mac mac = Mac.getInstance(CURSOR_MAC_ALGORITHM);
-            mac.init(new SecretKeySpec(CURSOR_MAC_KEY, CURSOR_MAC_ALGORITHM));
-            return mac.doFinal(payload);
-        }
-        catch (GeneralSecurityException exception) {
-            throw new IllegalStateException("Cursor HMAC is unavailable.", exception);
-        }
-    }
-
-    // compact is presentation-only and intentionally absent, so a cursor can
-    // continue in either compact or full mode without changing page membership.
-    record CursorPayload(
-        int version,
-        String programId,
-        long modificationNumber,
-        String requestedStart,
-        String requestedEnd,
-        String effectiveStart,
-        String effectiveEnd,
-        int maxUnits,
-        int maxBytes,
-        int maxIncoming,
-        String nextAddress) {
-    }
-
-    record CursorValidation(Address nextAddress, String error) {
     }
 
     record LabelRecord(
@@ -1147,122 +1052,4 @@ public final class ListingRangeService {
         }
     }
 
-    static final class ListingCursorCodec {
-        private ListingCursorCodec() {
-        }
-
-        static String encode(CursorPayload payload) {
-            Map<String, Object> values = new LinkedHashMap<>();
-            values.put("version", payload.version());
-            values.put("program_id", payload.programId());
-            values.put("modification_number", payload.modificationNumber());
-            values.put("requested_start", payload.requestedStart());
-            values.put("requested_end", payload.requestedEnd());
-            values.put("effective_start", payload.effectiveStart());
-            values.put("effective_end", payload.effectiveEnd());
-            values.put("max_units", payload.maxUnits());
-            values.put("max_bytes", payload.maxBytes());
-            values.put("max_incoming", payload.maxIncoming());
-            values.put("next_address", payload.nextAddress());
-            byte[] json =
-                JsonHelper.toJson(values).getBytes(StandardCharsets.UTF_8);
-            String encodedPayload =
-                Base64.getUrlEncoder().withoutPadding().encodeToString(json);
-            String encodedMac = Base64.getUrlEncoder().withoutPadding()
-                .encodeToString(cursorMac(json));
-            return encodedPayload + "." + encodedMac;
-        }
-
-        static CursorValidation decodeAndValidate(
-                String cursor,
-                Program program,
-                String programId,
-                long modificationNumber,
-                Address requestedStart,
-                Address requestedEnd,
-                Address effectiveStart,
-                Address effectiveEnd,
-                int maxUnits,
-                int maxBytes,
-                int maxIncoming) {
-            String[] parts = cursor.split("\\.", -1);
-            if (parts.length != 2 || parts[0].isEmpty() || parts[1].isEmpty()) {
-                return new CursorValidation(null, "Listing cursor is malformed.");
-            }
-
-            final byte[] payload;
-            final byte[] suppliedMac;
-            try {
-                payload = Base64.getUrlDecoder().decode(parts[0]);
-                suppliedMac = Base64.getUrlDecoder().decode(parts[1]);
-            }
-            catch (IllegalArgumentException exception) {
-                return new CursorValidation(null, "Listing cursor is malformed.");
-            }
-            if (!MessageDigest.isEqual(cursorMac(payload), suppliedMac)) {
-                return new CursorValidation(
-                    null, "Listing cursor integrity check failed.");
-            }
-
-            final JsonObject json;
-            try {
-                json = JsonParser.parseString(
-                    new String(payload, StandardCharsets.UTF_8)).getAsJsonObject();
-            }
-            catch (Exception exception) {
-                return new CursorValidation(null, "Listing cursor is malformed.");
-            }
-            try {
-                if (json.get("version").getAsInt() != CURSOR_VERSION) {
-                    return new CursorValidation(
-                        null, "Listing cursor version is unsupported.");
-                }
-                if (!json.get("program_id").getAsString().equals(programId)) {
-                    return new CursorValidation(
-                        null, "Listing cursor belongs to a different program.");
-                }
-                if (json.get("modification_number").getAsLong()
-                        != modificationNumber) {
-                    return new CursorValidation(
-                        null,
-                        "Listing cursor is invalid because the program changed; "
-                            + "retry from the first page.");
-                }
-                if (!same(json, "requested_start", requestedStart)
-                        || !same(json, "requested_end", requestedEnd)
-                        || !same(json, "effective_start", effectiveStart)
-                        || !same(json, "effective_end", effectiveEnd)) {
-                    return new CursorValidation(
-                        null, "Listing cursor bounds do not match this request.");
-                }
-                // compact is deliberately not validated: presentation mode
-                // does not affect these cursor-bound page limits.
-                if (json.get("max_units").getAsInt() != maxUnits
-                        || json.get("max_bytes").getAsInt() != maxBytes
-                        || json.get("max_incoming").getAsInt() != maxIncoming) {
-                    return new CursorValidation(
-                        null, "Listing cursor limits do not match this request.");
-                }
-                Address nextAddress = ServiceUtils.parseAddress(
-                    program, json.get("next_address").getAsString());
-                if (nextAddress == null
-                        || !nextAddress.getAddressSpace()
-                            .equals(effectiveStart.getAddressSpace())
-                        || nextAddress.compareTo(effectiveStart) <= 0
-                        || nextAddress.compareTo(effectiveEnd) > 0) {
-                    return new CursorValidation(
-                        null, "Listing cursor next address is invalid.");
-                }
-                return new CursorValidation(nextAddress, null);
-            }
-            catch (Exception exception) {
-                return new CursorValidation(null, "Listing cursor is malformed.");
-            }
-        }
-
-        private static boolean same(
-                JsonObject json, String field, Address expected) {
-            return json.get(field).getAsString().equals(address(expected));
-        }
-    }
 }

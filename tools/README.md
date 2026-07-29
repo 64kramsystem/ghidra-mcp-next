@@ -32,5 +32,4 @@ Manual Java packaging remains available:
 mvn clean package assembly:single -DskipTests
 ```
 
-New general-purpose reverse-engineering functionality usually belongs in a Java
-service endpoint. Trusted in-Ghidra utilities belong in `ghidra_scripts/`.
+General-purpose reverse-engineering functionality belongs in a Java service endpoint.

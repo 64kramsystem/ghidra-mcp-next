@@ -5,18 +5,29 @@ Complete version history for the GhidraMCP-next project.
 ---
 
 ## Unreleased
-### Added
 
-- Added `set_repeatable_comment` to replace or clear repeatable listing comments at exact ordinary or overlay addresses without creating functions or other program artifacts.
+### Removed
+
+- **Breaking:** Removed headless mode, script execution and bundled scripts, MCP HTTP/SSE serving, bearer authentication, lazy tool profiles, symbol profiles, comparison/emulation products, heuristic composites, duplicate aliases, synthetic dry-run behavior, `open_project`, `/run_analysis` (use `/reanalyze`), and obsolete endpoint-specific workflows.
+- Removed unused schema metadata, export seams, Python integration scaffolding, and test-only dependencies. The stdio bridge supports POSIX hosts; the extension's optional loopback TCP transport remains available to local clients.
+
 ### Changed
 
-- `tools/release` now refuses when HEAD is already tagged `v<version>`, instead of reporting nothing to release and exiting 0.
+- The bridge now exposes five management tools and forwards each generated endpoint exactly once.
+- Dynamic GET operations allow 120 seconds and POST operations 300 seconds.
+- Unrestricted JSON inputs publish valid JSON Schema; unknown schema types are rejected.
+- Xref results use normalized source kinds and numeric address ordering.
+- `get_listing_range` continuation uses `next_start`.
+- `list_segments` returns a paged envelope with total, offset, and limit.
+- `set_comment` selects any listing comment kind; `set_equate` handles value equates.
+- `batch_create_labels` accepts optional nested namespace paths.
+- Datatype creation uses structured function parameters and refuses unknown fields, unknown parameter types, and same-named existing types instead of dropping or replacing data.
+- `tools/release` builds, commits, tags, and atomically pushes without GitHub API authentication or release-asset machinery.
 
 ### Fixed
 
 - `get_entry_points` no longer misreports the image base as a program entry.
-- `open_project` can launch a CodeBrowser from the project manager's active project when the serving front-end tool has no project of its own.
-- `disassemble_flow` commits now continue through repeated-byte instruction runs exactly as preview does. Ghidra's stock repeat-pattern guard previously stopped after 16 identical instructions, causing valid plans to diverge and roll back.
+- `disassemble_flow` commits continue through repeated-byte instruction runs exactly as preview does instead of stopping at Ghidra's repeat-pattern guard.
 
 ## 0.100.0
 ### Removed

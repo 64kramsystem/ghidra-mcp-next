@@ -21,10 +21,7 @@ import java.util.concurrent.Callable;
 import java.util.function.Supplier;
 
 /**
- * Interface for executing code with proper threading and transaction handling.
- *
- * In GUI mode, this wraps SwingUtilities.invokeAndWait() for EDT safety.
- * In headless mode, this executes directly with synchronized blocks.
+ * Executes Ghidra reads and transactional writes on the required thread.
  */
 public interface ThreadingStrategy {
 
@@ -118,10 +115,4 @@ public interface ThreadingStrategy {
         }
     }
 
-    /**
-     * Check if we're running in headless mode.
-     *
-     * @return true if running headless (no GUI)
-     */
-    boolean isHeadless();
 }

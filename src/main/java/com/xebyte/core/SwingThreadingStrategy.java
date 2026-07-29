@@ -98,8 +98,4 @@ public class SwingThreadingStrategy implements ThreadingStrategy {
         return result.get();
     }
 
-    @Override
-    public boolean isHeadless() {
-        return false;
-    }
 }

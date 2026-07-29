@@ -8,7 +8,7 @@
     <packaging>jar</packaging>
     <version>0.100.0</version>
     <name>GhidraMCP-next</name>
-    <description>Production-ready Model Context Protocol server for Ghidra reverse engineering platform. Provides MCP-based tooling and automation for reverse engineering workflows: convention-enforcing rename/type/comment endpoints, batch operations, P-code emulation, live debugger integration, headless server, and Ghidra Server multi-version support.</description>
+    <description>Local MCP access to Ghidra's GUI project and TraceRMI debugger.</description>
     <url>https://github.com/64kramsystem/ghidra-mcp-next</url>
     <properties>
         <maven.compiler.release>21</maven.compiler.release>
@@ -93,12 +93,6 @@
         <dependency>
             <groupId>ghidra</groupId>
             <artifactId>Help</artifactId>
-            <version>${ghidra.version}</version>
-        </dependency>
-        <!-- Ghidra Emulation (for EmulationService P-code emulator) -->
-        <dependency>
-            <groupId>ghidra</groupId>
-            <artifactId>Emulation</artifactId>
             <version>${ghidra.version}</version>
         </dependency>
         <!-- Ghidra Debug module dependencies (for DebuggerService) -->
@@ -341,50 +335,6 @@
                                 <additionalClasspathElement>${ghidra.test.install.dir}/Ghidra/Framework/SoftwareModeling/lib/antlr-runtime-3.5.2.jar</additionalClasspathElement>
                             </additionalClasspathElements>
                         </configuration>
-                    </plugin>
-                </plugins>
-            </build>
-        </profile>
-
-        <!-- Headless Server Profile -->
-        <profile>
-            <id>headless</id>
-            <build>
-                <plugins>
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-jar-plugin</artifactId>
-                        <version>3.5.0</version>
-                        <configuration>
-                            <archive>
-                                <manifest>
-                                    <mainClass>com.xebyte.headless.GhidraMCPHeadlessServer</mainClass>
-                                    <addClasspath>true</addClasspath>
-                                    <classpathPrefix>lib/</classpathPrefix>
-                                </manifest>
-                            </archive>
-                            <outputDirectory>${project.build.directory}</outputDirectory>
-                        </configuration>
-                    </plugin>
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-assembly-plugin</artifactId>
-                        <version>3.8.0</version>
-                        <configuration>
-                            <descriptors>
-                                <descriptor>src/assembly/headless-jar.xml</descriptor>
-                            </descriptors>
-                            <appendAssemblyId>false</appendAssemblyId>
-                        </configuration>
-                        <executions>
-                            <execution>
-                                <id>make-headless-assembly</id>
-                                <phase>package</phase>
-                                <goals>
-                                    <goal>single</goal>
-                                </goals>
-                            </execution>
-                        </executions>
                     </plugin>
                 </plugins>
             </build>

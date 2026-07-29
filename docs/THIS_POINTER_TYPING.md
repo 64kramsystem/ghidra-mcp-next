@@ -4,7 +4,7 @@
 
 On 32-bit Windows PE binaries, member functions often use `__thiscall`: the receiver lives in **ECX**.
 
-Ghidra models that as an **auto-parameter** named `this` with storage like `ECX:4 (auto)`. Auto-parameters are **immutable** through the program API — the Ghidra docs state plainly: *"Within the Program API, auto-parameters may not be directly manipulated and are immutable."* Calls such as `HighFunctionDBUtil.updateDBVariable`, `Parameter.setDataType`, or `set_local_variable_type` on `this` fail with errors like `Cannot modify auto-parameter: this`.
+Ghidra models that as an **auto-parameter** named `this` with storage like `ECX:4 (auto)`. Auto-parameters are **immutable** through the program API — the Ghidra docs state plainly: *"Within the Program API, auto-parameters may not be directly manipulated and are immutable."* Calls such as `HighFunctionDBUtil.updateDBVariable`, `Parameter.setDataType`, or `set_variable_type` on `this` fail with errors like `Cannot modify auto-parameter: this`.
 
 That is a **Ghidra platform rule**, not a bug in the MCP bridge.
 
@@ -29,11 +29,11 @@ POST /set_function_this_type
 {"function_address":"0x00401000","this_type":"Widget *"}
 ```
 
-The function becomes `Widget::<name>`, and `this` types as `Widget *` under auto-storage. Call `force_decompile` / `get_decompiled_code` to refresh output.
+The function becomes `Widget::<name>`, and `this` types as `Widget *` under auto-storage. Call `decompile_function` to refresh output.
 
 ### Prerequisites
 
-- The structure named by `this_type` must already exist — create it first with `create_struct` (or `recreate_struct`).
+- The structure named by `this_type` must already exist; create it first with `create_struct`.
 - The function must be `__thiscall` / `__fastcall` so Ghidra creates the implicit `this`. Set it with `set_function_prototype` if needed. The prototype does **not** need to mention `this` — it is implicit:
 
 ```http

@@ -9,7 +9,7 @@ import java.net.URI;
 
 /**
  * Wraps {@link com.sun.net.httpserver.HttpExchange} as a {@link HttpExchange}.
- * Thin delegation so headless server (which uses Sun HTTP) can share dispatch
+ * Adapts the optional loopback HTTP transport to the shared dispatcher.
  * infrastructure with the GUI plugin (which uses UDS).
  */
 public class SunHttpExchangeAdapter implements HttpExchange {

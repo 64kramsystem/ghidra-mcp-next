@@ -23,9 +23,6 @@ import java.util.List;
 import java.util.Set;
 import java.util.function.Supplier;
 
-@McpToolGroup(
-    value = "gui",
-    description = "Current Ghidra GUI context and navigation")
 public final class GuiContextService {
 
     record GuiContext(
@@ -85,9 +82,7 @@ public final class GuiContextService {
 
     @McpTool(
         path = "/get_current_address",
-        category = "gui",
-        description = "Return the normalized active GUI program and cursor address",
-        supportsDryRun = false)
+        description = "Return the normalized active GUI program and cursor address")
     public Response getCurrentAddress() {
         try {
             return Response.ok(toJson(threading.executeRead(this::readContext)));
@@ -99,9 +94,7 @@ public final class GuiContextService {
 
     @McpTool(
         path = "/get_current_selection",
-        category = "gui",
-        description = "Return the normalized GUI context and every selected address range",
-        supportsDryRun = false)
+        description = "Return the normalized GUI context and every selected address range")
     public Response getCurrentSelection() {
         try {
             return Response.ok(threading.executeRead(() -> {
@@ -132,14 +125,11 @@ public final class GuiContextService {
     @McpTool(
         path = "/go_to_address",
         method = "POST",
-        category = "gui",
-        description = "Activate an open program and navigate the GUI to an exact address",
-        supportsDryRun = false)
+        description = "Activate an open program and navigate the GUI to an exact address")
     public Response goToAddress(
             @Param(
                 value = "address",
                 source = ParamSource.BODY,
-                paramType = "address",
                 description = "Exact target address")
             String addressText,
             @Param(

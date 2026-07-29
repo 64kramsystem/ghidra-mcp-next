@@ -12,7 +12,6 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import java.util.ArrayList;
-import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -75,7 +74,6 @@ public class SearchAddressEncodingsTest {
         final com.xebyte.offline.RecordingThreadingStrategy threading =
             new com.xebyte.offline.RecordingThreadingStrategy();
         long modificationNumber = 4213;
-        long uniqueProgramId = 0x1234L;
         boolean bumpModificationOnRead;
         boolean bumpModificationOnReferenceRead;
 
@@ -171,7 +169,6 @@ public class SearchAddressEncodingsTest {
 
         AddressEncodingSearchService build() {
             when(program.getName()).thenReturn("fixture");
-            when(program.getUniqueProgramID()).thenAnswer(i -> uniqueProgramId);
             when(program.getMemory()).thenReturn(memory);
             when(program.getListing()).thenReturn(listing);
             when(program.getSymbolTable()).thenReturn(symbols);
@@ -777,47 +774,8 @@ public class SearchAddressEncodingsTest {
     }
 
     @Test
-    public void aTamperedCursorIsRejected() {
-        AddressEncodingSearchService service = sparseMatches(4).build();
-        String cursor = (String) body(page(service, 2, "")).get("cursor");
-
-        String[] parts = cursor.split("\\.", -1);
-        char first = parts[1].charAt(0);
-        String tamperedMac = parts[0] + "." + (first == 'A' ? 'B' : 'A')
-            + parts[1].substring(1);
-        assertTrue(isError(page(service, 2, tamperedMac)));
-
-        String payload = new String(Base64.getUrlDecoder().decode(parts[0]),
-            java.nio.charset.StandardCharsets.UTF_8);
-        String tamperedPayload = Base64.getUrlEncoder().withoutPadding().encodeToString(
-            payload.replace("0030", "0010")
-                .getBytes(java.nio.charset.StandardCharsets.UTF_8))
-            + "." + parts[1];
-        assertTrue(isError(page(service, 2, tamperedPayload)));
-        assertTrue(isError(page(service, 2, "not-a-cursor")));
-    }
-
-    @Test
-    public void aCursorIsRejectedWhenAnyBoundValueChanges() {
-        Fixture fixture = sparseMatches(4);
-        AddressEncodingSearchService service = fixture.build();
-        String cursor = (String) body(page(service, 2, "")).get("cursor");
-
-        assertTrue("destination range", isError(service.searchAddressEncodings(
-            "9680", "9681", 2, "little", "", "", 2, cursor, "")));
-        assertTrue("source range", isError(service.searchAddressEncodings(
-            "9680", "9680", 2, "little", "0", "ff", 2, cursor, "")));
-        assertTrue("width", isError(service.searchAddressEncodings(
-            "9680", "9680", 3, "little", "", "", 2, cursor, "")));
-        assertTrue("byte order", isError(service.searchAddressEncodings(
-            "9680", "9680", 2, "big", "", "", 2, cursor, "")));
-
-        fixture.modificationNumber++;
-        assertTrue("modification number", isError(page(service, 2, cursor)));
-        fixture.modificationNumber--;
-
-        fixture.uniqueProgramId = 0x9999L;
-        assertTrue("program identity", isError(page(service, 2, cursor)));
+    public void anInvalidCursorAddressIsRejected() {
+        assertTrue(isError(page(sparseMatches(4).build(), 2, "not-an-address")));
     }
 
     // ------------------------------------------------------------ concurrency

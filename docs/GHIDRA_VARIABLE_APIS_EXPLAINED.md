@@ -107,7 +107,7 @@ HighFunctionDBUtil.updateDBVariable(
 
 - **Decompiled code output** (this is what users see!)
 - Decompiler window in Ghidra
-- `get_decompiled_code` MCP tool output
+- `decompile_function` MCP tool output
 
 ### Purpose
 

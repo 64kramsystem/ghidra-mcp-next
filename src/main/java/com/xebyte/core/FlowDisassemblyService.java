@@ -36,13 +36,11 @@ import ghidra.program.model.listing.Program;
 import ghidra.program.model.mem.Memory;
 import ghidra.program.model.symbol.FlowType;
 import ghidra.program.model.symbol.SourceType;
-import ghidra.util.Msg;
 import ghidra.util.task.TaskMonitor;
 
 /**
  * Bounded recursive-descent disassembly with a side-effect-free planning phase.
  */
-@McpToolGroup(value = "disassembly", description = "Safe bounded instruction discovery")
 public final class FlowDisassemblyService {
 
     static final int DEFAULT_MAX_INSTRUCTIONS = 4_096;
@@ -90,18 +88,9 @@ public final class FlowDisassemblyService {
         }
     }
 
-    /**
-     * @param worker headless scoped-analysis thread, or {@code null} when
-     *     Ghidra owns GUI background-analysis scheduling
-     */
     record AnalysisSubmission(
             boolean queued,
-            String requestIdentity,
-            Thread worker) {
-
-        AnalysisSubmission(boolean queued, String requestIdentity) {
-            this(queued, requestIdentity, null);
-        }
+            String requestIdentity) {
     }
 
     record PreparedPlan(
@@ -130,7 +119,7 @@ public final class FlowDisassemblyService {
         this(
             programProvider,
             threadingStrategy,
-            defaultAnalysisQueue(threadingStrategy));
+            defaultAnalysisQueue());
     }
 
     FlowDisassemblyService(
@@ -194,9 +183,7 @@ public final class FlowDisassemblyService {
     @McpTool(
         path = "/disassemble_flow",
         method = "POST",
-        description = "Preview or commit bounded recursive-descent disassembly from explicit seeds",
-        category = "disassembly",
-        supportsDryRun = false)
+        description = "Preview or commit bounded recursive-descent disassembly from explicit seeds")
     public Response disassembleFlow(
             @Param(
                 value = "seeds",
@@ -207,13 +194,11 @@ public final class FlowDisassemblyService {
             @Param(
                 value = "restrict_start",
                 source = ParamSource.BODY,
-                paramType = "address",
                 description = "Inclusive start of the traversal boundary")
             String restrictStart,
             @Param(
                 value = "restrict_end",
                 source = ParamSource.BODY,
-                paramType = "address",
                 description = "Inclusive end of the traversal boundary")
             String restrictEnd,
             @Param(value = "dry_run", source = ParamSource.BODY, defaultValue = "true")
@@ -1395,46 +1380,18 @@ public final class FlowDisassemblyService {
         return disassembler.disassemble(starts, restriction, followFlow);
     }
 
-    static AnalysisQueue defaultAnalysisQueue(
-            ThreadingStrategy threadingStrategy) {
-        return (program, created) ->
-            submitAnalysis(program, created, threadingStrategy);
+    static AnalysisQueue defaultAnalysisQueue() {
+        return FlowDisassemblyService::submitAnalysis;
     }
 
     private static AnalysisSubmission submitAnalysis(
-            Program program,
-            AddressSetView created,
-            ThreadingStrategy threadingStrategy) {
+            Program program, AddressSetView created) {
         AutoAnalysisManager manager =
             AutoAnalysisManager.getAnalysisManager(program);
         manager.codeDefined(created);
         String requestIdentity = "analysis-" + UUID.randomUUID();
-        if (!threadingStrategy.isHeadless()) {
-            return new AnalysisSubmission(
-                manager.startBackgroundAnalysis(), requestIdentity);
-        }
-
-        Thread worker = new Thread(() -> {
-            try {
-                threadingStrategy.executeWrite(
-                    program,
-                    "Run Scoped Auto Analysis",
-                    () -> {
-                        manager.startAnalysis(TaskMonitor.DUMMY);
-                        return null;
-                    });
-            }
-            catch (Exception failure) {
-                Msg.error(
-                    FlowDisassemblyService.class,
-                    "Scoped auto-analysis request " + requestIdentity +
-                        " failed",
-                    failure);
-            }
-        }, "ghidra-mcp-" + requestIdentity);
-        worker.setDaemon(true);
-        worker.start();
-        return new AnalysisSubmission(true, requestIdentity, worker);
+        return new AnalysisSubmission(
+            manager.startBackgroundAnalysis(), requestIdentity);
     }
 
     private static Map<String, Object> resultMap(

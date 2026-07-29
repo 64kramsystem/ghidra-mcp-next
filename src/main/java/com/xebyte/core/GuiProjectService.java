@@ -6,22 +6,17 @@ import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.util.Collections;
-import java.util.Map;
 import java.util.function.Supplier;
 
 import javax.swing.SwingUtilities;
 
 import ghidra.framework.main.AppInfo;
 import ghidra.framework.main.FrontEndTool;
-import ghidra.framework.model.DomainFile;
 import ghidra.framework.model.Project;
 import ghidra.framework.model.ProjectListener;
 import ghidra.framework.model.ProjectLocator;
 import ghidra.framework.model.ProjectManager;
 import ghidra.framework.plugintool.PluginTool;
-import ghidra.program.model.listing.Program;
-import ghidra.util.task.TaskMonitor;
 
 /** Project lifecycle operations that require a live Ghidra GUI tool. */
 public final class GuiProjectService {
@@ -107,8 +102,7 @@ public final class GuiProjectService {
     }
 
     @McpTool(path = "/create_project", method = "POST",
-        description = "Create and activate a new local Ghidra project",
-        category = "headless")
+        description = "Create and activate a new local Ghidra project")
     public Response createProject(
             @Param(value = "parentDir", source = ParamSource.BODY,
                 description = "Existing local directory that will contain the project")
@@ -169,232 +163,6 @@ public final class GuiProjectService {
         return result[0];
     }
 
-    /** Open or switch to an existing GUI project. */
-    public String openProject(String projectPath, boolean headless,
-            String programToLaunch) {
-        if (projectPath == null || projectPath.trim().isEmpty()) {
-            return "{\"error\": \"path parameter is required\"}";
-        }
-
-        File pathFile = new File(projectPath);
-        String location;
-        String name;
-        String projectExtension = ProjectLocator.getProjectExtension();
-        String directoryExtension = ProjectLocator.getProjectDirExtension();
-        String filename = pathFile.getName();
-        if (filename.endsWith(projectExtension)) {
-            location = pathFile.getParent();
-            name = filename.substring(0, filename.length() - projectExtension.length());
-        } else if (filename.endsWith(directoryExtension)) {
-            location = pathFile.getParent();
-            name = filename.substring(0, filename.length() - directoryExtension.length());
-        } else {
-            location = pathFile.getParent();
-            name = filename;
-        }
-        if (location == null || location.isEmpty()) {
-            return "{\"error\": \"path must include a parent directory: "
-                + escapeJson(projectPath) + "\"}";
-        }
-
-        ProjectLocator locator;
-        try {
-            locator = new ProjectLocator(location, name);
-        } catch (IllegalArgumentException e) {
-            return "{\"error\": \"Invalid project path: " + escapeJson(e.getMessage())
-                + "\"}";
-        }
-        if (!locator.exists()) {
-            return "{\"error\": \"Project does not exist: " + escapeJson(projectPath)
-                + "\"}";
-        }
-
-        ProjectManager manager = projectManagerSupplier.get();
-        if (manager == null) {
-            return "{\"error\": \"ProjectManager not available on this tool\"}";
-        }
-        ActiveProjectController activeProjects;
-        try {
-            activeProjects = activeProjectControllerSupplier.get();
-        } catch (Exception e) {
-            return "{\"error\": \"FrontEndTool not available: "
-                + escapeJson(message(e)) + "\"}";
-        }
-        if (activeProjects == null) {
-            return "{\"error\": \"FrontEndTool not available\"}";
-        }
-
-        Project currentProject = manager.getActiveProject();
-        if (currentProject != null && locator.equals(currentProject.getProjectLocator())) {
-            String launchResult = null;
-            if (!headless && programToLaunch != null && !programToLaunch.isEmpty()) {
-                launchResult = launchCodeBrowser(programToLaunch);
-            }
-            return "{\"success\": true, \"project\": \"" + escapeJson(name) + "\", "
-                + "\"already_open\": true, \"headless\": " + headless
-                + (launchResult != null
-                    ? ", \"program_launch_result\": " + launchResult : "")
-                + "}";
-        }
-
-        String[] error = {null};
-        Project[] opened = {null};
-        boolean[] previousClosed = {false};
-        boolean[] cleanupNeeded = {false};
-        Runnable openTask = () -> {
-            try {
-                if (currentProject != null) {
-                    try {
-                        currentProject.save();
-                    } catch (Exception ignored) {
-                        // Preserve the existing best-effort save policy.
-                    }
-                    currentProject.close();
-                    activeProjects.projectClosed(currentProject);
-                    previousClosed[0] = true;
-                    activeProjects.setActiveProject(null);
-                    AppInfo.setActiveProject(null);
-                }
-                cleanupNeeded[0] = true;
-                Project project = manager.openProject(locator, true, false);
-                if (project == null) {
-                    throw new IOException("ProjectManager.openProject returned null");
-                }
-                opened[0] = project;
-                activeProjects.setActiveProject(project);
-                AppInfo.setActiveProject(project);
-                if (activeProjects.getActiveProject() != project
-                        || AppInfo.getActiveProject() != project) {
-                    throw new IllegalStateException("Opened project did not become active");
-                }
-            } catch (Exception e) {
-                if (previousClosed[0] || cleanupNeeded[0] || opened[0] != null) {
-                    closeFailedProject(manager, locator, opened[0], activeProjects);
-                    opened[0] = null;
-                }
-                error[0] = e.getClass().getSimpleName() + ": " + e.getMessage();
-            }
-        };
-        try {
-            if (SwingUtilities.isEventDispatchThread()) {
-                openTask.run();
-            } else {
-                SwingUtilities.invokeAndWait(openTask);
-            }
-        } catch (Exception e) {
-            return "{\"error\": \"EDT invocation failed: " + escapeJson(e.getMessage())
-                + "\"}";
-        }
-        if (error[0] != null) {
-            return "{\"error\": \"Failed to open project: " + escapeJson(error[0])
-                + "\"}";
-        }
-        if (opened[0] == null) {
-            return "{\"error\": \"openProject returned null without an error\"}";
-        }
-
-        String launchResult = null;
-        if (!headless && programToLaunch != null && !programToLaunch.isEmpty()) {
-            launchResult = launchCodeBrowser(programToLaunch);
-        }
-        StringBuilder json = new StringBuilder(256);
-        json.append("{\"success\": true, \"project\": \"")
-            .append(escapeJson(opened[0].getName()))
-            .append("\", \"headless\": ").append(headless);
-        if (launchResult != null) {
-            json.append(", \"program_launch_result\": ").append(launchResult);
-        }
-        json.append("}");
-        return json.toString();
-    }
-
-    @McpTool(path = "/open_project", method = "POST",
-        description = "Open or switch to an existing local Ghidra project",
-        category = "headless")
-    public Response openProjectEndpoint(
-            @Param(value = "path", source = ParamSource.BODY,
-                description = "Local .gpr file or project directory")
-            String projectPath,
-            @Param(value = "headless", source = ParamSource.BODY,
-                defaultValue = "true",
-                description = "Keep the project in the FrontEnd without launching CodeBrowser")
-            boolean headless,
-            @Param(value = "program", source = ParamSource.BODY,
-                defaultValue = "",
-                description = "Optional project program to open when headless is false")
-            String programToLaunch) {
-        return Response.text(openProject(projectPath, headless, programToLaunch));
-    }
-
-    /** Launch a CodeBrowser, optionally opening a project file. */
-    public String launchCodeBrowser(String filePath) {
-        ProjectManager manager = projectManagerSupplier.get();
-        Project project = manager != null ? manager.getActiveProject() : null;
-        if (project == null) {
-            return "{\"error\": \"No project open\"}";
-        }
-
-        DomainFile domainFile = null;
-        if (filePath != null && !filePath.trim().isEmpty()) {
-            domainFile = project.getProjectData().getFile(filePath);
-            if (domainFile == null) {
-                return "{\"error\": \"File not found in project: " + escapeJson(filePath)
-                    + "\"}";
-            }
-        }
-
-        try {
-            ghidra.framework.model.ToolServices toolServices = project.getToolServices();
-            if (toolServices == null) {
-                return "{\"error\": \"ToolServices not available\"}";
-            }
-
-            ghidra.framework.model.ToolManager toolManager = project.getToolManager();
-            PluginTool codeBrowser = null;
-            if (toolManager != null) {
-                for (PluginTool runningTool : toolManager.getRunningTools()) {
-                    if (runningTool.getService(ghidra.app.services.ProgramManager.class)
-                            != null) {
-                        codeBrowser = runningTool;
-                        break;
-                    }
-                }
-            }
-
-            if (codeBrowser != null && domainFile != null) {
-                ghidra.app.services.ProgramManager programManager = codeBrowser.getService(
-                    ghidra.app.services.ProgramManager.class);
-                Program program = (Program) domainFile.getDomainObject(
-                    this, false, false, TaskMonitor.DUMMY);
-                SwingUtilities.invokeAndWait(() -> {
-                    programManager.openProgram(program);
-                    programManager.setCurrentProgram(program);
-                });
-                return "{\"success\": true, \"message\": "
-                    + "\"Opened in existing CodeBrowser\", \"tool\": \""
-                    + escapeJson(codeBrowser.getName()) + "\", \"program\": \""
-                    + escapeJson(program.getName()) + "\", \"path\": \""
-                    + escapeJson(filePath) + "\"}";
-            }
-            if (domainFile != null) {
-                DomainFile file = domainFile;
-                SwingUtilities.invokeAndWait(() ->
-                    toolServices.launchDefaultTool(Collections.singletonList(file)));
-                return "{\"success\": true, \"message\": "
-                    + "\"Launched new CodeBrowser\", \"path\": \""
-                    + escapeJson(filePath) + "\"}";
-            }
-
-            SwingUtilities.invokeAndWait(() ->
-                toolServices.launchDefaultTool(Collections.emptyList()));
-            return "{\"success\": true, \"message\": "
-                + "\"Launched new CodeBrowser (no file)\"}";
-        } catch (Exception e) {
-            return "{\"error\": \"Failed to launch CodeBrowser: "
-                + escapeJson(e.getMessage()) + "\"}";
-        }
-    }
-
     private Response createOnEdt(File parent, ProjectLocator locator, ProjectManager manager,
             Path markerPath, Path projectDirPath, String destination) {
         if (!parent.exists()) {
@@ -422,7 +190,7 @@ public final class GuiProjectService {
                 try {
                     current.save();
                 } catch (Exception ignored) {
-                    // Match the existing /open_project best-effort save policy.
+                    // Preserve the current project when possible.
                 }
                 current.close();
                 activeProjects.projectClosed(current);
@@ -520,14 +288,4 @@ public final class GuiProjectService {
             "message", message));
     }
 
-    private String escapeJson(String value) {
-        if (value == null) {
-            return "";
-        }
-        return value.replace("\\", "\\\\")
-            .replace("\"", "\\\"")
-            .replace("\n", "\\n")
-            .replace("\r", "\\r")
-            .replace("\t", "\\t");
-    }
 }
