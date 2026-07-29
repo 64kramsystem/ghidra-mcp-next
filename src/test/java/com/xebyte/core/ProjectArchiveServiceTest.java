@@ -3,6 +3,7 @@ package com.xebyte.core;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assume.assumeNoException;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
@@ -12,6 +13,7 @@ import static org.mockito.Mockito.when;
 
 import java.io.File;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
@@ -28,8 +30,11 @@ import org.junit.rules.TemporaryFolder;
 import com.xebyte.headless.DirectThreadingStrategy;
 
 import ghidra.framework.model.DomainFile;
+import ghidra.framework.data.DefaultProjectData;
 import ghidra.framework.model.Project;
 import ghidra.framework.model.ProjectLocator;
+import ghidra.util.PropertyFile;
+import ghidra.util.SystemUtilities;
 
 public class ProjectArchiveServiceTest {
 
@@ -170,6 +175,35 @@ public class ProjectArchiveServiceTest {
         assertEquals("program",
             Files.readString(parent.resolve("Restored.rep/idata/00/payload")));
         assertFalse(Files.exists(parent.resolve("Restored.rep/fixture.gpr")));
+        PropertyFile properties =
+            new PropertyFile(parent.resolve("Restored.rep").toFile(), "project");
+        assertEquals(SystemUtilities.getUserName(),
+            properties.getString(DefaultProjectData.OWNER, null));
+    }
+
+    @Test
+    public void rejectsDanglingMarkerSymlinkWithoutDeletingIt() throws Exception {
+        Path parent = temporaryFolder.newFolder("projects").toPath();
+        Path archive = temporaryFolder.getRoot().toPath().resolve("fixture.gar");
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(archive))) {
+            jar.putNextEntry(new JarEntry("JAR_FORMAT"));
+            jar.closeEntry();
+        }
+        Path marker = parent.resolve("Restored.gpr");
+        try {
+            Files.createSymbolicLink(marker, parent.resolve("missing-marker-target"));
+        }
+        catch (UnsupportedOperationException | java.io.IOException e) {
+            assumeNoException(e);
+        }
+
+        Response response = service(ProjectArchiveServiceTest::writeGar)
+            .restoreProjectArchive(archive.toString(), parent.toString(), "Restored");
+
+        assertErrorContains(response, "already exists");
+        assertTrue(Files.exists(marker, LinkOption.NOFOLLOW_LINKS));
+        assertFalse(Files.exists(parent.resolve("Restored.rep"),
+            LinkOption.NOFOLLOW_LINKS));
     }
 
     private ProjectArchiveService service(ProjectArchiveService.ArchiveWriter writer) {

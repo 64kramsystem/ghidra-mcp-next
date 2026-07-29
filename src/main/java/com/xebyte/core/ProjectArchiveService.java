@@ -16,16 +16,20 @@
 package com.xebyte.core;
 
 import ghidra.app.plugin.core.archive.ProjectArchiveBridge;
+import ghidra.framework.data.DefaultProjectData;
 import ghidra.framework.model.DomainFile;
 import ghidra.framework.model.Project;
 import ghidra.framework.model.ProjectLocator;
 import ghidra.util.Msg;
+import ghidra.util.PropertyFile;
+import ghidra.util.SystemUtilities;
 import ghidra.util.task.TaskMonitor;
 
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.Comparator;
@@ -202,39 +206,35 @@ public final class ProjectArchiveService {
         catch (IllegalArgumentException e) {
             return Response.err("invalid project name: " + e.getMessage());
         }
+        String projectName = locator.getName();
         Path marker = locator.getMarkerFile().toPath();
         Path projectDir = locator.getProjectDir().toPath();
-        if (security.resolveWithinFileRoot(marker.toString()) == null
-                || security.resolveWithinFileRoot(projectDir.toString()) == null) {
-            return Response.err("project destination is outside GHIDRA_MCP_FILE_ROOT");
-        }
-        if (Files.exists(marker) || Files.exists(projectDir)) {
+        if (Files.exists(marker, LinkOption.NOFOLLOW_LINKS)
+                || Files.exists(projectDir, LinkOption.NOFOLLOW_LINKS)) {
             return Response.err("project destination already exists: " + marker);
         }
 
         Path temporary = null;
         boolean moved = false;
         try {
-            temporary = Files.createTempDirectory(parent, "." + name + "-restore-");
+            temporary = Files.createTempDirectory(parent, "." + projectName + "-restore-");
             extractGar(archive, temporary);
             Files.move(temporary, projectDir);
             moved = true;
+            PropertyFile properties = new PropertyFile(projectDir.toFile(), "project");
+            properties.putString(DefaultProjectData.OWNER, SystemUtilities.getUserName());
+            properties.writeState();
             Files.createFile(marker);
 
             Map<String, Object> result = new LinkedHashMap<>();
-            result.put("project", name);
+            result.put("project", projectName);
             result.put("path", marker.toString());
             result.put("archive_path", archive.toString());
             return Response.ok(result);
         }
         catch (Exception e) {
             deleteTree(moved ? projectDir : temporary);
-            try {
-                Files.deleteIfExists(marker);
-            }
-            catch (IOException ignored) {
-                // Best-effort cleanup after a failed restore.
-            }
+            Msg.error(this, "GAR restore failed for project '" + projectName + "'", e);
             String message = e.getMessage() != null ? e.getMessage() : e.toString();
             return Response.err("GAR restore failed: " + message);
         }
