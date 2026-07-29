@@ -7,6 +7,7 @@ Complete version history for the GhidraMCP-next project.
 ## Unreleased
 ### Added
 
+- Added `export_program_xml`, which requires a lowercase `.xml` output path and publishes native Ghidra XML with its required same-stem `.bytes` sidecar for logical re-import; `overwrite=true` replaces both files.
 - Added `set_executable_path`, a transactional setter for the executable/import path metadata Ghidra launchers consult; Ghidra's `unknown` sentinel clears the stored location.
 - Added `set_repeatable_comment` to replace or clear repeatable listing comments at exact ordinary or overlay addresses without creating functions or other program artifacts.
 - Added `apply_memory_image`, which requires an explicitly named existing program and atomically applies a fully preflighted set of initialized ordinary/overlay blocks plus optional string-valued capture metadata stored durably in Program Information. It accepts native byte arrays or hexadecimal strings, preserves preview/commit plan parity, and supports only conflict-free creation or `replace_exact` of a same-name, same-range initialized block. Exact replacement writes in place, preserving analysis, references, and file provenance while updating the requested block metadata; partial overlaps roll the whole request back, and omitted metadata preserves the stored capture record.
