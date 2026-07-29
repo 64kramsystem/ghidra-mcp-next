@@ -8,9 +8,6 @@ import com.google.gson.JsonObject;
 import java.io.File;
 import java.io.IOException;
 import java.io.PrintWriter;
-import java.nio.ByteBuffer;
-import java.nio.channels.SeekableByteChannel;
-import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
@@ -20,7 +17,6 @@ import java.util.UUID;
 
 import ghidra.app.util.exporter.AsciiExporter;
 import ghidra.app.util.exporter.ExporterException;
-import ghidra.app.util.exporter.XmlExporter;
 import ghidra.framework.model.DomainObject;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressRange;
@@ -39,7 +35,6 @@ import ghidra.util.task.TaskMonitor;
 public final class ExportService {
 
     private static final Gson OUTPUT_GSON = new Gson();
-    private static final Object XML_EXPORT_LOCK = new Object();
 
     interface ExportRunner {
         boolean supportsAddressRestrictedExport();
@@ -54,7 +49,8 @@ public final class ExportService {
         }
 
         /**
-         * Extra result fields describing what this runner emitted.
+         * Extra result fields describing what this runner emitted. Empty for runners that
+         * delegate to a Ghidra exporter, whose payload therefore stays unchanged.
          */
         default Map<String, Object> report() {
             return Map.of();
@@ -109,70 +105,6 @@ public final class ExportService {
         @Override
         public String diagnostic() {
             return lastDiagnostic.get();
-        }
-    }
-
-    /**
-     * Exports Ghidra's complete, re-importable program XML rather than a database copy.
-     *
-     * <p>The native exporter's defaults include memory blocks and contents, instructions,
-     * data, symbols, equates, comments, properties, bookmarks, trees, references, functions,
-     * register values, relocations, entry points, and external libraries.</p>
-     */
-    static final class XmlExportRunner implements ExportRunner {
-        private final ThreadLocal<String> lastDiagnostic =
-            ThreadLocal.withInitial(() -> "");
-        private final ThreadLocal<Map<String, Object>> lastReport =
-            ThreadLocal.withInitial(Map::of);
-
-        @Override
-        public boolean supportsAddressRestrictedExport() {
-            return false;
-        }
-
-        @Override
-        public boolean export(File file, DomainObject object, AddressSetView selection,
-                TaskMonitor monitor) throws ExporterException, IOException {
-            lastDiagnostic.set("");
-            lastReport.set(Map.of());
-            Program program = (Program) object;
-            XmlExporter exporter = new XmlExporter();
-            long modificationNumber = program.getModificationNumber();
-            try {
-                boolean exported = exporter.export(file, object, selection, monitor);
-                String diagnostic = exporter.getMessageLog() == null
-                    ? ""
-                    : exporter.getMessageLog().toString();
-                lastDiagnostic.set(diagnostic);
-                lastReport.set(diagnostic.isBlank()
-                    ? Map.of()
-                    : Map.of("message_log", diagnostic.strip()));
-                if (program.getModificationNumber() != modificationNumber) {
-                    lastDiagnostic.set("program changed during export; nothing was published");
-                    return false;
-                }
-                return exported;
-            }
-            finally {
-                if (lastDiagnostic.get().isEmpty() && exporter.getMessageLog() != null) {
-                    lastDiagnostic.set(exporter.getMessageLog().toString());
-                }
-            }
-        }
-
-        @Override
-        public String name() {
-            return XmlExporter.class.getName();
-        }
-
-        @Override
-        public String diagnostic() {
-            return lastDiagnostic.get();
-        }
-
-        @Override
-        public Map<String, Object> report() {
-            return lastReport.get();
         }
     }
 
@@ -263,7 +195,6 @@ public final class ExportService {
     private final ProgramProvider programProvider;
     private final SecurityConfig security;
     private final ExportRunner runner;
-    private final ExportRunner xmlRunner;
     private final ResultFactory resultFactory;
 
     public ExportService(ProgramProvider programProvider) {
@@ -271,27 +202,19 @@ public final class ExportService {
     }
 
     ExportService(ProgramProvider programProvider, SecurityConfig security) {
-        this(programProvider, security, new AsciiExportRunner(), new XmlExportRunner(),
-            ExportService::buildExportResult);
+        this(programProvider, security, new AsciiExportRunner());
     }
 
     ExportService(ProgramProvider programProvider, SecurityConfig security,
             ExportRunner runner) {
-        this(programProvider, security, runner, new XmlExportRunner(),
-            ExportService::buildExportResult);
+        this(programProvider, security, runner, ExportService::buildExportResult);
     }
 
     ExportService(ProgramProvider programProvider, SecurityConfig security,
             ExportRunner runner, ResultFactory resultFactory) {
-        this(programProvider, security, runner, new XmlExportRunner(), resultFactory);
-    }
-
-    ExportService(ProgramProvider programProvider, SecurityConfig security,
-            ExportRunner runner, ExportRunner xmlRunner, ResultFactory resultFactory) {
         this.programProvider = programProvider;
         this.security = security;
         this.runner = runner;
-        this.xmlRunner = xmlRunner;
         this.resultFactory = resultFactory;
     }
 
@@ -356,198 +279,6 @@ public final class ExportService {
         }
         return export(new CompleteListingRunner(xrefWrapColumn), programName, outputPath,
             normalizeOptional(start), normalizeOptional(end), overwrite);
-    }
-
-    @McpTool(path = "/export_program_xml", method = "POST",
-        description = "Export native Ghidra program XML and its required memory-bytes "
-            + "sidecar for logical re-import. The native XML format includes memory, "
-            + "code/data, symbols, comments, references, entry points, register values, "
-            + "relocations, properties, bookmarks, and trees, subject to Ghidra XML "
-            + "format limitations.",
-        category = "export", supportsDryRun = false)
-    public Response exportProgramXml(
-            @Param(value = "output_path", source = ParamSource.BODY,
-                description = "Destination filesystem path") String outputPath,
-            @Param(value = "overwrite", source = ParamSource.BODY,
-                defaultValue = "false",
-                description = "Replace both an existing lowercase-.xml destination and "
-                    + "its same-stem .bytes sidecar after successful export")
-                boolean overwrite,
-            @Param(value = "program", defaultValue = "",
-                description = "Target program name (omit to use the active program)")
-                String programName) {
-        return exportXmlPair(programName, outputPath, overwrite);
-    }
-
-    private Response exportXmlPair(String programName, String outputPath,
-            boolean overwrite) {
-        if (outputPath == null || outputPath.isBlank()) {
-            return Response.err("output_path is required");
-        }
-
-        Program program = programProvider.resolveProgram(programName);
-        if (program == null) {
-            return Response.err(programName == null || programName.isBlank()
-                ? "No program currently loaded"
-                : "Program not found: " + programName);
-        }
-
-        Path destination = security.resolveWithinFileRoot(outputPath);
-        if (destination == null) {
-            return Response.err(
-                "output_path is outside GHIDRA_MCP_FILE_ROOT: " + outputPath);
-        }
-        if (destination.getFileName() == null ||
-                !destination.getFileName().toString().endsWith(".xml")) {
-            return Response.err("resolved output_path must end with lowercase .xml");
-        }
-        Path parent = destination.getParent();
-        if (parent == null || !Files.exists(parent)) {
-            return Response.err("destination parent directory does not exist: " + parent);
-        }
-        if (!Files.isDirectory(parent)) {
-            return Response.err("destination parent is not a directory: " + parent);
-        }
-
-        synchronized (XML_EXPORT_LOCK) {
-            return exportXmlPairLocked(
-                program, destination, xmlSidecar(destination), overwrite);
-        }
-    }
-
-    private Response exportXmlPairLocked(Program program, Path destination,
-            Path sidecar, boolean overwrite) {
-        if (!overwrite && (Files.exists(destination) || Files.exists(sidecar))) {
-            return Response.err("destination XML or bytes sidecar already exists; "
-                + "set overwrite=true to replace both: " + destination);
-        }
-
-        Path temporaryDirectory =
-            destination.getParent().resolve(".xml-export-" + UUID.randomUUID());
-        Path temporaryXml = temporaryDirectory.resolve(destination.getFileName());
-        Path temporaryBytes = xmlSidecar(temporaryXml);
-        Path bytesBackup = temporaryDirectory.resolve(".previous.bytes");
-        try {
-            Files.createDirectory(temporaryDirectory);
-            boolean exported = xmlRunner.export(
-                temporaryXml.toFile(), program, program.getMemory(), TaskMonitor.DUMMY);
-            if (!exported) {
-                return Response.err(exportFailureMessage(
-                    xmlRunner.name() + " returned false", xmlRunner.diagnostic()));
-            }
-            if (!Files.isRegularFile(temporaryXml) ||
-                    !Files.isRegularFile(temporaryBytes)) {
-                return Response.err("Ghidra XML export did not produce both .xml and "
-                    + ".bytes files");
-            }
-
-            if (!hasXmlClosingTag(temporaryXml)) {
-                return Response.err(
-                    "Ghidra XML export is incomplete; closing </PROGRAM> is absent");
-            }
-
-            long xmlBytes = Files.size(temporaryXml);
-            long memoryBytes = Files.size(temporaryBytes);
-            Response.Ok result = resultFactory.build(program, destination, null, null,
-                program.getMemory(), xmlBytes + memoryBytes, xmlRunner.name());
-            if (result.data() instanceof JsonObject data) {
-                data.addProperty("sidecar_path", sidecar.toString());
-                data.addProperty("xml_bytes", xmlBytes);
-                data.addProperty("memory_bytes", memoryBytes);
-            }
-            mergeReport(result, xmlRunner.report());
-
-            publishXmlPair(temporaryXml, temporaryBytes, destination, sidecar,
-                bytesBackup, overwrite, (source, target) ->
-                    Files.move(source, target, StandardCopyOption.ATOMIC_MOVE,
-                        StandardCopyOption.REPLACE_EXISTING));
-            return result;
-        }
-        catch (FileAlreadyExistsException e) {
-            return Response.err("destination XML or bytes sidecar already exists; "
-                + "set overwrite=true to replace both: " + destination);
-        }
-        catch (ExporterException | IOException | RuntimeException e) {
-            String message = e.getMessage() != null ? e.getMessage() : e.toString();
-            return Response.err(exportFailureMessage(message, xmlRunner.diagnostic()));
-        }
-        finally {
-            deleteTreeBestEffort(temporaryDirectory);
-        }
-    }
-
-    static void publishXmlPair(Path temporaryXml, Path temporaryBytes,
-            Path destination, Path sidecar, Path bytesBackup, boolean overwrite,
-            AtomicReplace atomicReplace) throws IOException {
-        boolean hadPreviousBytes = false;
-        if (overwrite && Files.exists(sidecar)) {
-            Files.move(sidecar, bytesBackup, StandardCopyOption.ATOMIC_MOVE);
-            hadPreviousBytes = true;
-        }
-        try {
-            publish(temporaryBytes, sidecar, overwrite, atomicReplace);
-            try {
-                publish(temporaryXml, destination, overwrite, atomicReplace);
-            }
-            catch (IOException | RuntimeException e) {
-                if (hadPreviousBytes) {
-                    Files.move(bytesBackup, sidecar, StandardCopyOption.ATOMIC_MOVE,
-                        StandardCopyOption.REPLACE_EXISTING);
-                }
-                else {
-                    Files.deleteIfExists(sidecar);
-                }
-                throw e;
-            }
-        }
-        catch (IOException | RuntimeException e) {
-            if (hadPreviousBytes && Files.exists(bytesBackup) &&
-                    !Files.exists(sidecar)) {
-                Files.move(bytesBackup, sidecar, StandardCopyOption.ATOMIC_MOVE,
-                    StandardCopyOption.REPLACE_EXISTING);
-            }
-            throw e;
-        }
-    }
-
-    private static boolean hasXmlClosingTag(Path xml) throws IOException {
-        long size = Files.size(xml);
-        int window = (int) Math.min(size, 256);
-        ByteBuffer buffer = ByteBuffer.allocate(window);
-        try (SeekableByteChannel channel = Files.newByteChannel(xml)) {
-            channel.position(size - window);
-            while (buffer.hasRemaining() && channel.read(buffer) >= 0) {
-                // Read the bounded tail completely.
-            }
-        }
-        String tail = new String(buffer.array(), 0, buffer.position(),
-            StandardCharsets.UTF_8).stripTrailing();
-        return tail.endsWith("</PROGRAM>");
-    }
-
-    private static void deleteTreeBestEffort(Path directory) {
-        if (!Files.exists(directory)) {
-            return;
-        }
-        try (var paths = Files.walk(directory)) {
-            paths.sorted(java.util.Comparator.reverseOrder()).forEach(path -> {
-                try {
-                    Files.deleteIfExists(path);
-                }
-                catch (IOException ignored) {
-                    // Continue removing the rest of a private export directory.
-                }
-            });
-        }
-        catch (IOException ignored) {
-            // Best effort after a failed export or publication.
-        }
-    }
-
-    private static Path xmlSidecar(Path xmlPath) {
-        String name = xmlPath.getFileName().toString();
-        return xmlPath.resolveSibling(
-            name.substring(0, name.length() - ".xml".length()) + ".bytes");
     }
 
     private Response export(ExportRunner runner, String programName, String outputPath,
@@ -716,7 +447,7 @@ public final class ExportService {
         atomicReplace.move(temporary, destination);
     }
 
-    static Response.Ok buildExportResult(Program program, Path destination,
+    private static Response.Ok buildExportResult(Program program, Path destination,
             String requestedStart, String requestedEnd, AddressSetView selection,
             long bytesWritten, String exporterName) {
         JsonObject result = new JsonObject();

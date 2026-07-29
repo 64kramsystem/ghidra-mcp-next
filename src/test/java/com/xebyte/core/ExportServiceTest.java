@@ -449,12 +449,6 @@ public class ExportServiceTest {
     }
 
     @Test
-    public void xmlRunnerIsNativeGhidraXmlExporter() {
-        ExportService.XmlExportRunner runner = new ExportService.XmlExportRunner();
-        assertEquals("ghidra.app.util.exporter.XmlExporter", runner.name());
-    }
-
-    @Test
     public void schemaDeclaresPostExportToolWithDocumentedParameterSources() {
         AnnotationScanner scanner = new AnnotationScanner(
             provider, service(new RecordingExportRunner("unused\n", true, Outcome.SUCCESS)));
@@ -534,188 +528,6 @@ public class ExportServiceTest {
             tool.params().stream().map(AnnotationScanner.ParamDescriptor::source).toList());
     }
 
-    @Test
-    public void schemaDeclaresWholeProgramXmlExport() {
-        AnnotationScanner scanner = new AnnotationScanner(
-            provider, service(new RecordingExportRunner("unused\n", true, Outcome.SUCCESS)));
-        AnnotationScanner.ToolDescriptor tool = scanner.getDescriptors().stream()
-            .filter(candidate -> candidate.path().equals("/export_program_xml"))
-            .findFirst()
-            .orElseThrow();
-
-        assertEquals("POST", tool.method());
-        assertEquals("export", tool.category());
-        assertFalse(tool.supportsDryRun());
-        assertEquals(List.of("output_path", "overwrite", "program"),
-            tool.params().stream().map(AnnotationScanner.ParamDescriptor::name).toList());
-        assertEquals(List.of("body", "body", "query"),
-            tool.params().stream().map(AnnotationScanner.ParamDescriptor::source).toList());
-    }
-
-    @Test
-    public void xmlExportPublishesXmlAndBytesWithoutTransientFiles() throws Exception {
-        Path outputDir = temporaryFolder.newFolder("xml-pair").toPath();
-        Path destination = outputDir.resolve("fixture.xml");
-        XmlPairRecordingRunner xmlRunner = new XmlPairRecordingRunner(Outcome.SUCCESS);
-        ExportService service = new ExportService(provider, security,
-            new RecordingExportRunner("unused\n", true, Outcome.SUCCESS), xmlRunner,
-            ExportService::buildExportResult);
-
-        Response response =
-            service.exportProgramXml(destination.toString(), false, "fixture");
-
-        assertTrue(response.toJson(), response instanceof Response.Ok);
-        Path sidecar = outputDir.resolve("fixture.bytes");
-        assertEquals("<PROGRAM></PROGRAM>\n", Files.readString(destination));
-        assertEquals("memory-bytes", Files.readString(sidecar));
-        assertEquals((double) (Files.size(destination) + Files.size(sidecar)),
-            result(response).get("bytes_written"));
-        assertEquals(sidecar.toFile().getCanonicalPath(),
-            result(response).get("sidecar_path"));
-        try (var files = Files.list(outputDir)) {
-            assertEquals(List.of("fixture.bytes", "fixture.xml"),
-                files.map(path -> path.getFileName().toString()).sorted().toList());
-        }
-    }
-
-    @Test
-    public void failedXmlExportCleansXmlBytesAndPrivateDirectory() throws Exception {
-        Path outputDir = temporaryFolder.newFolder("xml-failure").toPath();
-        Path destination = outputDir.resolve("fixture.xml");
-        XmlPairRecordingRunner xmlRunner = new XmlPairRecordingRunner(Outcome.THROW);
-        ExportService service = new ExportService(provider, security,
-            new RecordingExportRunner("unused\n", true, Outcome.SUCCESS), xmlRunner,
-            ExportService::buildExportResult);
-
-        assertErrorContains(
-            service.exportProgramXml(destination.toString(), false, "fixture"),
-            "simulated exporter failure");
-
-        try (var files = Files.list(outputDir)) {
-            assertEquals(List.of(), files.toList());
-        }
-    }
-
-    @Test
-    public void truncatedXmlIsRejectedAndBothOutputsAreCleaned() throws Exception {
-        Path outputDir = temporaryFolder.newFolder("xml-truncated").toPath();
-        Path destination = outputDir.resolve("fixture.xml");
-        XmlPairRecordingRunner xmlRunner = new XmlPairRecordingRunner(Outcome.TRUNCATED);
-        ExportService service = new ExportService(provider, security,
-            new RecordingExportRunner("unused\n", true, Outcome.SUCCESS), xmlRunner,
-            ExportService::buildExportResult);
-
-        assertErrorContains(
-            service.exportProgramXml(destination.toString(), false, "fixture"),
-            "closing </PROGRAM> is absent");
-
-        try (var files = Files.list(outputDir)) {
-            assertEquals(List.of(), files.toList());
-        }
-    }
-
-    @Test
-    public void falseXmlExporterResultPublishesNothing() throws Exception {
-        Path outputDir = temporaryFolder.newFolder("xml-false").toPath();
-        Path destination = outputDir.resolve("fixture.xml");
-        XmlPairRecordingRunner xmlRunner = new XmlPairRecordingRunner(Outcome.FALSE);
-        ExportService service = new ExportService(provider, security,
-            new RecordingExportRunner("unused\n", true, Outcome.SUCCESS), xmlRunner,
-            ExportService::buildExportResult);
-
-        assertErrorContains(
-            service.exportProgramXml(destination.toString(), false, "fixture"),
-            "returned false");
-
-        try (var files = Files.list(outputDir)) {
-            assertEquals(List.of(), files.toList());
-        }
-    }
-
-    @Test
-    public void xmlExportRejectsNonLowercaseXmlSuffixAndExistingSidecar()
-            throws Exception {
-        Path outputDir = temporaryFolder.newFolder("xml-validation").toPath();
-        XmlPairRecordingRunner xmlRunner = new XmlPairRecordingRunner(Outcome.SUCCESS);
-        ExportService service = new ExportService(provider, security,
-            new RecordingExportRunner("unused\n", true, Outcome.SUCCESS), xmlRunner,
-            ExportService::buildExportResult);
-
-        assertErrorContains(service.exportProgramXml(
-            outputDir.resolve("fixture.XML").toString(), false, "fixture"),
-            "lowercase .xml");
-        assertErrorContains(
-            service.exportProgramXml("/", false, "fixture"), "lowercase .xml");
-
-        Path destination = outputDir.resolve("fixture.xml");
-        Path sidecar = outputDir.resolve("fixture.bytes");
-        Files.writeString(sidecar, "existing");
-        assertErrorContains(service.exportProgramXml(
-            destination.toString(), false, "fixture"), "sidecar already exists");
-        assertEquals("existing", Files.readString(sidecar));
-        assertFalse(Files.exists(destination));
-    }
-
-    @Test
-    public void xmlOverwriteReplacesBothFiles() throws Exception {
-        Path outputDir = temporaryFolder.newFolder("xml-overwrite").toPath();
-        Path destination = outputDir.resolve("fixture.xml");
-        Path sidecar = outputDir.resolve("fixture.bytes");
-        Files.writeString(destination, "old-xml");
-        Files.writeString(sidecar, "old-bytes");
-        XmlPairRecordingRunner xmlRunner = new XmlPairRecordingRunner(Outcome.SUCCESS);
-        ExportService service = new ExportService(provider, security,
-            new RecordingExportRunner("unused\n", true, Outcome.SUCCESS), xmlRunner,
-            ExportService::buildExportResult);
-
-        Response response =
-            service.exportProgramXml(destination.toString(), true, "fixture");
-
-        assertTrue(response.toJson(), response instanceof Response.Ok);
-        assertEquals("<PROGRAM></PROGRAM>\n", Files.readString(destination));
-        assertEquals("memory-bytes", Files.readString(sidecar));
-        try (var files = Files.list(outputDir)) {
-            assertEquals(List.of("fixture.bytes", "fixture.xml"),
-                files.map(path -> path.getFileName().toString()).sorted().toList());
-        }
-    }
-
-    @Test
-    public void xmlPairRollbackRestoresPreviousBytesWhenXmlPublishFails()
-            throws Exception {
-        Path directory = temporaryFolder.newFolder("xml-rollback").toPath();
-        Path temporaryXml = directory.resolve("new.xml");
-        Path temporaryBytes = directory.resolve("new.bytes");
-        Path destination = directory.resolve("fixture.xml");
-        Path sidecar = directory.resolve("fixture.bytes");
-        Path backup = directory.resolve("backup.bytes");
-        Files.writeString(temporaryXml, "new-xml");
-        Files.writeString(temporaryBytes, "new-bytes");
-        Files.writeString(destination, "old-xml");
-        Files.writeString(sidecar, "old-bytes");
-
-        boolean failed = false;
-        try {
-            ExportService.publishXmlPair(temporaryXml, temporaryBytes,
-                destination, sidecar, backup, true, (source, target) -> {
-                    if (target.equals(destination)) {
-                        throw new IOException("simulated XML publication failure");
-                    }
-                    Files.move(source, target,
-                        java.nio.file.StandardCopyOption.ATOMIC_MOVE,
-                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-                });
-        }
-        catch (IOException expected) {
-            failed = true;
-        }
-
-        assertTrue(failed);
-        assertEquals("old-xml", Files.readString(destination));
-        assertEquals("old-bytes", Files.readString(sidecar));
-        assertFalse(Files.exists(backup));
-    }
-
     /**
      * The Ascii runner reports nothing, so adding ExportRunner.report() must leave its
      * payload byte-for-byte as it was.
@@ -761,7 +573,6 @@ public class ExportServiceTest {
     private enum Outcome {
         SUCCESS,
         FALSE,
-        TRUNCATED,
         THROW
     }
 
@@ -834,40 +645,6 @@ public class ExportServiceTest {
 
         void createDestinationDuringExport(String content) {
             racedDestinationContent = content;
-        }
-    }
-
-    private static final class XmlPairRecordingRunner implements ExportService.ExportRunner {
-        private final Outcome outcome;
-
-        XmlPairRecordingRunner(Outcome outcome) {
-            this.outcome = outcome;
-        }
-
-        @Override
-        public boolean supportsAddressRestrictedExport() {
-            return false;
-        }
-
-        @Override
-        public boolean export(File file, DomainObject object, AddressSetView selection,
-                TaskMonitor monitor) throws IOException {
-            String name = file.getName();
-            Path sidecar = file.toPath().resolveSibling(
-                name.substring(0, name.length() - ".xml".length()) + ".bytes");
-            Files.writeString(file.toPath(), outcome == Outcome.TRUNCATED
-                ? "<PROGRAM>\n"
-                : "<PROGRAM></PROGRAM>\n");
-            Files.writeString(sidecar, "memory-bytes");
-            if (outcome == Outcome.THROW) {
-                throw new IOException("simulated exporter failure");
-            }
-            return outcome == Outcome.SUCCESS || outcome == Outcome.TRUNCATED;
-        }
-
-        @Override
-        public String name() {
-            return "test.XmlExporter";
         }
     }
 }

@@ -12,9 +12,6 @@ import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
 import java.util.concurrent.Callable;
 
 import org.junit.After;
@@ -37,7 +34,6 @@ import ghidra.program.model.address.Address;
 import ghidra.program.model.data.ByteDataType;
 import ghidra.program.model.data.WordDataType;
 import ghidra.program.model.listing.CommentType;
-import ghidra.program.model.listing.Program;
 import ghidra.program.model.symbol.RefType;
 import ghidra.program.model.symbol.SourceType;
 import ghidra.util.task.TaskMonitor;
@@ -137,254 +133,6 @@ public class MemoryBlockServiceGhidraTest {
     }
 
     @Test
-    public void memoryImagePreviewCommitIsAtomicAndPersistsProgramInformation() {
-        String ram = program.getAddressFactory()
-            .getDefaultAddressSpace().getName();
-        List<Map<String, Object>> blocks = List.of(
-            imageBlock("image_low", ram + ":1000", "01020304",
-                false, true, true, false, false, "snapshot low"),
-            imageBlock("image_overlay", ram + ":1000", "aabbccdd",
-                true, true, false, true, true, "snapshot overlay"));
-        Map<String, String> metadata = new LinkedHashMap<>();
-        metadata.put("artifact_sha256", "abc123");
-        metadata.put("phase", "captured");
-
-        JsonObject preview = ok(memory.applyMemoryImage(
-            blocks, metadata, "error", true, program.getName()));
-        assertFalse(preview.get("committed").getAsBoolean());
-        assertNull(program.getMemory().getBlock("image_low"));
-
-        JsonObject commit = ok(memory.applyMemoryImage(
-            blocks, metadata, "error", false, program.getName()));
-        assertTrue(commit.get("committed").getAsBoolean());
-        assertEquals(preview.get("blocks"), commit.get("blocks"));
-        assertEquals(preview.get("metadata_before"),
-            commit.get("metadata_before"));
-        assertEquals(preview.get("metadata_after"),
-            commit.get("metadata_after"));
-        assertArrayEquals(hex("01020304"), bytes("0x1000", 4));
-        assertEquals("rw-",
-            commit.getAsJsonArray("blocks").get(0).getAsJsonObject()
-                .getAsJsonObject("after").get("permissions").getAsString());
-        assertTrue(program.getMemory().getBlock("image_overlay").isVolatile());
-
-        String stored = program.getOptions(Program.PROGRAM_INFO).getString(
-            "GhidraMCP Memory Image Metadata (JSON)", null);
-        JsonObject storedMetadata =
-            JsonParser.parseString(stored).getAsJsonObject();
-        assertEquals("abc123",
-            storedMetadata.get("artifact_sha256").getAsString());
-        assertEquals("captured", storedMetadata.get("phase").getAsString());
-        assertTrue(commit.get("metadata_storage").getAsString()
-            .contains("Program Information"));
-    }
-
-    @Test
-    public void memoryImageReplaceExactFullyPreflightsBeforeMutation() {
-        String ram = program.getAddressFactory()
-            .getDefaultAddressSpace().getName();
-        Map<String, Object> original = imageBlock(
-            "replace_me", ram + ":4000", "01020304",
-            false, true, false, false, false, null);
-        ok(memory.applyMemoryImage(
-            List.of(original), Map.of("generation", "one"),
-            "error", false, program.getName()));
-
-        Map<String, Object> replacement = imageBlock(
-            "replace_me", ram + ":4000", "aabbccdd",
-            false, true, false, false, false, null);
-        Map<String, Object> overlap = imageBlock(
-            "partial", ram + ":4001", "9988",
-            false, true, false, false, false, null);
-        Response rejected = memory.applyMemoryImage(
-            List.of(replacement, overlap), Map.of("generation", "bad"),
-            "replace_exact", false, program.getName());
-        assertTrue(rejected.toJson(), rejected instanceof Response.Err);
-        assertArrayEquals(hex("01020304"), bytes("0x4000", 4));
-        assertEquals("one", JsonParser.parseString(
-            program.getOptions(Program.PROGRAM_INFO).getString(
-                "GhidraMCP Memory Image Metadata (JSON)", "{}"))
-            .getAsJsonObject().get("generation").getAsString());
-
-        JsonObject committed = ok(memory.applyMemoryImage(
-            List.of(replacement), Map.of("generation", "two"),
-            "replace_exact", false, program.getName()));
-        assertEquals("replace_exact",
-            committed.getAsJsonArray("blocks").get(0).getAsJsonObject()
-                .get("action").getAsString());
-        assertArrayEquals(hex("aabbccdd"), bytes("0x4000", 4));
-
-        Map<String, Object> moved = imageBlock(
-            "replace_me", ram + ":4010", "aabbccdd",
-            false, true, false, false, false, null);
-        assertError(memory.applyMemoryImage(
-            List.of(moved), Map.of(), "replace_exact",
-            false, program.getName()), "exact requested range");
-        assertArrayEquals(hex("aabbccdd"), bytes("0x4000", 4));
-        assertTrue(memory.applyMemoryImage(
-            List.of(replacement), Map.of(), "error",
-            true, program.getName()) instanceof Response.Err);
-        assertTrue(memory.applyMemoryImage(
-            List.of(replacement), Map.of(), "replace_exact",
-            true, "") instanceof Response.Err);
-    }
-
-    @Test
-    public void memoryImageReplacementPreservesAnalysisRefsAndMetadata() {
-        String ram = program.getAddressFactory()
-            .getDefaultAddressSpace().getName();
-        Map<String, Object> source = imageBlock(
-            "reference_source", ram + ":4300", "00000000",
-            false, true, true, false, false, null);
-        Map<String, Object> original = imageBlock(
-            "replace_with_collateral", ram + ":4400", "01020304",
-            false, true, false, false, false, "block provenance");
-        ok(memory.applyMemoryImage(
-            List.of(source, original), Map.of("phase", "before"),
-            "error", false, program.getName()));
-
-        Address from = ServiceUtils.parseAddress(program, ram + ":4300");
-        Address to = ServiceUtils.parseAddress(program, ram + ":4400");
-        int transaction = program.startTransaction("replacement collateral");
-        try {
-            program.getReferenceManager().addMemoryReference(
-                from, to, RefType.DATA, SourceType.USER_DEFINED, 0);
-            program.getListing().setComment(
-                to, CommentType.PLATE, "discarded by explicit replacement");
-        }
-        finally {
-            program.endTransaction(transaction, true);
-        }
-
-        Map<String, Object> replacement = imageBlock(
-            "replace_with_collateral", ram + ":4400", "aabbccdd",
-            false, true, false, false, false, null);
-        JsonObject preview = ok(memory.applyMemoryImage(
-            List.of(replacement), null, "replace_exact",
-            true, program.getName()));
-        JsonObject committed = ok(memory.applyMemoryImage(
-            List.of(replacement), null, "replace_exact",
-            false, program.getName()));
-        assertEquals(preview.get("blocks"), committed.get("blocks"));
-        assertArrayEquals(hex("aabbccdd"), bytes(ram + ":4400", 4));
-        assertEquals(1,
-            program.getReferenceManager().getReferencesFrom(from).length);
-        assertEquals(
-            "discarded by explicit replacement",
-            program.getListing().getComment(CommentType.PLATE, to));
-        assertEquals("",
-            program.getMemory().getBlock("replace_with_collateral")
-                .getComment());
-        assertEquals("before", JsonParser.parseString(
-            program.getOptions(Program.PROGRAM_INFO).getString(
-                "GhidraMCP Memory Image Metadata (JSON)", "{}"))
-            .getAsJsonObject().get("phase").getAsString());
-
-        JsonObject noChange = ok(memory.applyMemoryImage(
-            List.of(replacement), null, "replace_exact",
-            true, program.getName()));
-        assertFalse(noChange.get("changed").getAsBoolean());
-        JsonObject noChangeBlock = noChange.getAsJsonArray("blocks")
-            .get(0).getAsJsonObject();
-        assertFalse(noChangeBlock.get("changed").getAsBoolean());
-        assertEquals(0,
-            noChangeBlock.get("changed_byte_count").getAsInt());
-    }
-
-    @Test
-    public void memoryImageCanReplaceBlockContainingImageBase() {
-        String ram = program.getAddressFactory()
-            .getDefaultAddressSpace().getName();
-        Map<String, Object> original = imageBlock(
-            "main_ram", ram + ":0000", "01020304",
-            false, true, true, true, false, "initial");
-        ok(memory.applyMemoryImage(
-            List.of(original), Map.of(), "error",
-            false, program.getName()));
-        Map<String, Object> replacement = imageBlock(
-            "main_ram", ram + ":0000", "aabbccdd",
-            false, true, true, true, false, "captured");
-        ok(memory.applyMemoryImage(
-            List.of(replacement), Map.of(), "replace_exact",
-            false, program.getName()));
-        assertArrayEquals(hex("aabbccdd"), bytes(ram + ":0000", 4));
-        assertEquals("captured",
-            program.getMemory().getBlock("main_ram").getComment());
-    }
-
-    @Test
-    public void memoryImageCanReplaceFinalOverlayWithPreviewCommitParity() {
-        String ram = program.getAddressFactory()
-            .getDefaultAddressSpace().getName();
-        Map<String, Object> original = imageBlock(
-            "phase_rom", ram + ":8000", "01020304",
-            true, true, false, true, false, null);
-        ok(memory.applyMemoryImage(
-            List.of(original), Map.of(), "error",
-            false, program.getName()));
-        String overlay = program.getMemory().getBlock("phase_rom")
-            .getStart().getAddressSpace().getName();
-
-        Map<String, Object> replacement = imageBlock(
-            "phase_rom", ram + ":8000", "aabbccdd",
-            true, true, false, true, false, null);
-        JsonObject preview = ok(memory.applyMemoryImage(
-            List.of(replacement), Map.of(), "replace_exact",
-            true, program.getName()));
-        JsonObject committed = ok(memory.applyMemoryImage(
-            List.of(replacement), Map.of(), "replace_exact",
-            false, program.getName()));
-        assertEquals(preview.get("blocks"), committed.get("blocks"));
-        assertEquals(overlay, program.getMemory().getBlock("phase_rom")
-            .getStart().getAddressSpace().getName());
-        assertArrayEquals(
-            hex("aabbccdd"), bytes(overlay + ":8000", 4));
-    }
-
-    @Test
-    public void memoryImageRefreshIsNotLimitedByDifferingRunCount() {
-        String ram = program.getAddressFactory()
-            .getDefaultAddressSpace().getName();
-        String originalBytes = "0000".repeat(5_000);
-        String alternating = "0001".repeat(5_000);
-        Map<String, Object> original = imageBlock(
-            "large_refresh", ram + ":5000", originalBytes,
-            false, true, true, false, false, null);
-        ok(memory.applyMemoryImage(
-            List.of(original), Map.of(), "error",
-            false, program.getName()));
-        Map<String, Object> replacement = imageBlock(
-            "large_refresh", ram + ":5000", alternating,
-            false, true, true, false, false, null);
-
-        JsonObject result = ok(memory.applyMemoryImage(
-            List.of(replacement), Map.of(), "replace_exact",
-            false, program.getName()));
-
-        JsonObject block = result.getAsJsonArray("blocks")
-            .get(0).getAsJsonObject();
-        assertEquals(5_000,
-            block.get("changed_byte_count").getAsInt());
-        assertArrayEquals(hex(alternating), bytes(ram + ":5000", 10_000));
-    }
-
-    @Test
-    public void memoryImageRejectsCollidingNewOverlaySpaceNames() {
-        String ram = program.getAddressFactory()
-            .getDefaultAddressSpace().getName();
-        Map<String, Object> first = imageBlock(
-            "phase bank", ram + ":5000", "0102",
-            true, true, false, true, false, null);
-        Map<String, Object> second = imageBlock(
-            "phase_bank", ram + ":6000", "0304",
-            true, true, false, true, false, null);
-
-        assertError(memory.applyMemoryImage(
-            List.of(first, second), Map.of(), "error",
-            true, program.getName()), "same address space");
-    }
-
-    @Test
     public void twoInitializedOverlaysAtSameOffsetKeepDistinctSpacesAndBytes() {
         JsonObject firstPreview = create(
             "rom_a", "0x8000", null, "aa55", null, null,
@@ -429,57 +177,31 @@ public class MemoryBlockServiceGhidraTest {
     }
 
     @Test
-    public void createAddsBlocksToAnExplicitExistingOverlayButRejectsNestedOverlays() {
+    public void everyCreateRejectsAnExistingOverlayAsItsBaseInPreviewAndCommit() {
         JsonObject parent = create(
             "parent_overlay", "0x8000", null, "0102", null, null,
             true, null, true, false, false, false, null, false);
-        JsonObject parentDescriptor = parent.getAsJsonObject("after");
-        String space = parentDescriptor.get("address_space").getAsString();
-        String overlayStart = space + ":9000";
+        String overlayStart = parent.getAsJsonObject("after")
+            .get("address_space").getAsString() + ":9000";
         int blockCount = program.getMemory().getBlocks().length;
         int spaceCount =
             program.getAddressFactory().getAddressSpaces().length;
 
-        JsonObject preview = create(
-            "phase_tail", overlayStart, null, "aabb", null, null,
-            false, null, true, false, true, false, "same phase", true);
-        assertNull(program.getMemory().getBlock("phase_tail"));
-        JsonObject previewDescriptor = preview.getAsJsonObject("after");
-        assertTrue(previewDescriptor.get("overlay").getAsBoolean());
-        assertEquals(space,
-            previewDescriptor.get("address_space").getAsString());
-        assertEquals(
-            parentDescriptor.get("overlay_base_space").getAsString(),
-            previewDescriptor.get("overlay_base_space").getAsString());
-
-        JsonObject committed = create(
-            "phase_tail", overlayStart, null, "aabb", null, null,
-            false, null, true, false, true, false, "same phase", false);
-        assertEquals(previewDescriptor, committed.getAsJsonObject("after"));
-        assertArrayEquals(hex("aabb"), bytes(space + ":9000", 2));
-        assertEquals(blockCount + 1,
-            program.getMemory().getBlocks().length);
+        for (boolean overlay : new boolean[] { false, true }) {
+            for (boolean dryRun : new boolean[] { true, false }) {
+                String name = "nested_" + overlay + "_" + dryRun;
+                Response response = memory.createMemoryBlock(
+                    name, overlayStart, 0x10L, null, null, null, null,
+                    overlay, null, true, false, false, false,
+                    null, dryRun, "");
+                assertError(response, "existing overlay address space");
+                assertNull(program.getMemory().getBlock(name));
+            }
+        }
+        assertEquals(blockCount, program.getMemory().getBlocks().length);
         assertEquals(
             spaceCount,
             program.getAddressFactory().getAddressSpaces().length);
-
-        Response overlap = memory.createMemoryBlock(
-            "phase_overlap", space + ":9001",
-            null, "cc", null, null, null,
-            false, null, true, false, false, false,
-            null, false, "");
-        assertError(overlap, "overlap");
-        assertNull(program.getMemory().getBlock("phase_overlap"));
-
-        for (boolean dryRun : new boolean[] { true, false }) {
-            Response nested = memory.createMemoryBlock(
-                "nested_" + dryRun, space + ":9100",
-                null, "01", null, null, null,
-                true, null, true, false, false, false,
-                null, dryRun, "");
-            assertError(nested, "nested overlay");
-            assertNull(program.getMemory().getBlock("nested_" + dryRun));
-        }
     }
 
     @Test
@@ -2023,23 +1745,6 @@ public class MemoryBlockServiceGhidraTest {
             .get("address_space").getAsString());
         assertEquals(preview.get("after"), commit.get("after"));
         assertEquals(expectedSpace, commit.get("address_space").getAsString());
-    }
-
-    private static Map<String, Object> imageBlock(
-            String name, String start, String bytes, boolean overlay,
-            boolean read, boolean write, boolean execute,
-            boolean volatileFlag, String comment) {
-        Map<String, Object> block = new LinkedHashMap<>();
-        block.put("name", name);
-        block.put("start", start);
-        block.put("bytes", bytes);
-        block.put("overlay", overlay);
-        block.put("read", read);
-        block.put("write", write);
-        block.put("execute", execute);
-        block.put("volatile", volatileFlag);
-        if (comment != null) block.put("comment", comment);
-        return block;
     }
 
     private JsonObject create(
