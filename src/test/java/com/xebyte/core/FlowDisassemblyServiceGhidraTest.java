@@ -769,6 +769,63 @@ public class FlowDisassemblyServiceGhidraTest {
     }
 
     @Test
+    public void liveCommitContinuesPastStockDisassemblerPaddingStop()
+            throws Exception {
+        initializeGhidraOrSkip();
+        ProgramBuilder builder =
+            new ProgramBuilder("flow-padding-stop-6502",
+                "6502:LE:16:default", "default", this);
+        try {
+            ProgramDB liveProgram = builder.getProgram();
+            builder.createMemory(".ram", "0x1000", 0x20);
+            builder.setBytes(
+                "0x1000",
+                "ea ea ea ea ea ea ea ea ea ea ea ea ea ea ea ea ea ea c9 05 60");
+
+            FlowDisassemblyService service = liveService(liveProgram);
+            Response preview = service.disassembleFlow(
+                "[\"0x1000\"]",
+                "0x1000",
+                "0x1014",
+                true,
+                true,
+                true,
+                false,
+                false,
+                100,
+                "");
+            Response commit = service.disassembleFlow(
+                "[\"0x1000\"]",
+                "0x1000",
+                "0x1014",
+                false,
+                true,
+                true,
+                false,
+                false,
+                100,
+                "");
+
+            assertTrue(preview.toJson(), preview instanceof Response.Ok);
+            assertTrue(commit.toJson(), commit instanceof Response.Ok);
+            JsonObject previewJson =
+                JsonParser.parseString(preview.toJson()).getAsJsonObject();
+            JsonObject commitJson =
+                JsonParser.parseString(commit.toJson()).getAsJsonObject();
+            assertEquals(
+                previewJson.get("candidate_instruction_ranges"),
+                commitJson.get("created_instruction_ranges"));
+            assertTrue(liveProgram.getListing()
+                .getInstructionAt(builder.addr("0x1012")) != null);
+            assertTrue(liveProgram.getListing()
+                .getInstructionAt(builder.addr("0x1014")) != null);
+        }
+        finally {
+            builder.dispose();
+        }
+    }
+
+    @Test
     public void liveMultiByteDataClearsOnceAndPreservesInteriorAnnotations()
             throws Exception {
         initializeGhidraOrSkip();

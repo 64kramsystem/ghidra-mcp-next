@@ -9,6 +9,10 @@ Complete version history for the GhidraMCP-next project.
 
 - `tools/release` now refuses when HEAD is already tagged `v<version>`, instead of reporting nothing to release and exiting 0.
 
+### Fixed
+
+- `disassemble_flow` commits now continue through repeated-byte instruction runs exactly as preview does. Ghidra's stock repeat-pattern guard previously stopped after 16 identical instructions, causing valid plans to diverge and roll back.
+
 ## 0.100.0
 ### Removed
 
