@@ -135,6 +135,30 @@ public class CommentService {
         return setDisassemblyComment(addressStr, comment, null);
     }
 
+    @McpTool(path = "/set_repeatable_comment", method = "POST",
+             description = "Set or clear a repeatable comment at any valid program address. "
+                         + "On programs with multiple address spaces, qualify the address as "
+                         + "<space>:<hex>.",
+             category = "comment")
+    public Response setRepeatableComment(
+            @Param(value = "address", paramType = "address", source = ParamSource.BODY,
+                   description = "Address in the program. Accepts 0x<hex> (default space) or "
+                               + "<space>:<hex>; mutations reject ambiguous unqualified offsets.")
+                    String addressStr,
+            @Param(value = "comment", source = ParamSource.BODY,
+                   description = "Replacement text; pass an empty string to clear the comment.")
+                    String comment,
+            @Param(value = "program", description = "Target program name", defaultValue = "")
+                    String programName) {
+        return setExactComment(
+            addressStr,
+            comment,
+            CommentType.REPEATABLE,
+            "Set Repeatable Comment",
+            "Failed to set repeatable comment",
+            programName);
+    }
+
     /**
      * Get the plate (header) comment for a function.
      */
@@ -236,11 +260,27 @@ public class CommentService {
                                + "address is unambiguous.") String functionAddress,
             @Param(value = "comment", source = ParamSource.BODY) String comment,
             @Param(value = "program", description = "Target program name", defaultValue = "") String programName) {
+        return setExactComment(
+            functionAddress,
+            comment,
+            CommentType.PLATE,
+            "Set Plate Comment",
+            "Failed to set plate comment",
+            programName);
+    }
+
+    private Response setExactComment(
+            String address,
+            String comment,
+            CommentType type,
+            String transactionName,
+            String failureMessage,
+            String programName) {
         ServiceUtils.ProgramOrError pe = ServiceUtils.getProgramOrError(programProvider, programName);
         if (pe.hasError()) return pe.error();
         Program program = pe.program();
 
-        if (functionAddress == null || functionAddress.isEmpty()) {
+        if (address == null || address.isEmpty()) {
             return Response.err("Address is required");
         }
         if (comment == null) {
@@ -255,16 +295,16 @@ public class CommentService {
             AddressCommentCore.Plan plan =
                 threadingStrategy.executeWrite(
                     program,
-                    "Set Plate Comment",
+                    transactionName,
                     () -> {
                         AddressCommentCore.ResolvedAddress target =
                             addressCommentCore.resolveAddress(
-                                program, functionAddress);
+                                program, address);
                         AddressCommentCore.Plan prepared =
                             addressCommentCore.plan(
                                 program,
                                 target,
-                                CommentType.PLATE,
+                                type,
                                 comment,
                                 mode);
                         addressCommentCore.apply(program, prepared);
@@ -292,7 +332,7 @@ public class CommentService {
             return Response.err(
                 e.getMessage() != null
                     ? e.getMessage()
-                    : "Failed to set plate comment");
+                    : failureMessage);
         }
     }
 
