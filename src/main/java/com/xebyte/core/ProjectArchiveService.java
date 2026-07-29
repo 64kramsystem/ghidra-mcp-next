@@ -44,7 +44,7 @@ import java.util.jar.JarFile;
 public final class ProjectArchiveService {
 
     private static final String PROJECT_EXTENSION = ".gpr";
-    private static final String PROJECT_PROPERTIES = "project.prp";
+    private static final String PROJECT_PROPERTIES = "project";
     private static final String PROJECT_STATE = "projectState";
 
     @FunctionalInterface
@@ -221,7 +221,8 @@ public final class ProjectArchiveService {
             extractGar(archive, temporary);
             Files.move(temporary, projectDir);
             moved = true;
-            PropertyFile properties = new PropertyFile(projectDir.toFile(), "project");
+            PropertyFile properties =
+                new PropertyFile(projectDir.toFile(), PROJECT_PROPERTIES);
             properties.putString(DefaultProjectData.OWNER, SystemUtilities.getUserName());
             properties.writeState();
             Files.createFile(marker);
@@ -294,10 +295,6 @@ public final class ProjectArchiveService {
                 if (!target.startsWith(destination)) {
                     throw new IOException("unsafe archive entry: " + entry.getName());
                 }
-                if (entry.isDirectory()) {
-                    Files.createDirectories(target);
-                    continue;
-                }
                 Files.createDirectories(target.getParent());
                 try (var input = jar.getInputStream(entry)) {
                     Files.copy(input, target, StandardCopyOption.REPLACE_EXISTING);
@@ -313,7 +310,7 @@ public final class ProjectArchiveService {
         String root = relative.getName(0).toString();
         String filename = relative.getFileName().toString();
         return root.equalsIgnoreCase("JAR_FORMAT")
-            || root.equalsIgnoreCase(PROJECT_PROPERTIES)
+            || root.equalsIgnoreCase(PROJECT_PROPERTIES + PropertyFile.PROPERTY_EXT)
             || root.equalsIgnoreCase(PROJECT_STATE)
             || root.equalsIgnoreCase("save")
             || root.equalsIgnoreCase("groups")

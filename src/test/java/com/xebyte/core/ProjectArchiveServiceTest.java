@@ -167,7 +167,7 @@ public class ProjectArchiveServiceTest {
             jar.closeEntry();
         }
 
-        Response response = service(ProjectArchiveServiceTest::writeGar)
+        Response response = restoreService()
             .restoreProjectArchive(archive.toString(), parent.toString(), "Restored");
 
         assertTrue(response.toJson(), response instanceof Response.Ok);
@@ -197,7 +197,7 @@ public class ProjectArchiveServiceTest {
             assumeNoException(e);
         }
 
-        Response response = service(ProjectArchiveServiceTest::writeGar)
+        Response response = restoreService()
             .restoreProjectArchive(archive.toString(), parent.toString(), "Restored");
 
         assertErrorContains(response, "already exists");
@@ -206,9 +206,55 @@ public class ProjectArchiveServiceTest {
             LinkOption.NOFOLLOW_LINKS));
     }
 
+    @Test
+    public void invalidArchiveRollsBackTemporaryProject() throws Exception {
+        Path parent = temporaryFolder.newFolder("projects").toPath();
+        Path archive = temporaryFolder.getRoot().toPath().resolve("fixture.gar");
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(archive))) {
+            jar.putNextEntry(new JarEntry("idata/00/payload"));
+            jar.write("program".getBytes());
+            jar.closeEntry();
+        }
+
+        Response response = restoreService()
+            .restoreProjectArchive(archive.toString(), parent.toString(), "Restored");
+
+        assertErrorContains(response, "missing JAR_FORMAT");
+        assertNoRestoredProject(parent);
+    }
+
+    @Test
+    public void unsafeArchiveEntryRollsBackTemporaryProject() throws Exception {
+        Path parent = temporaryFolder.newFolder("projects").toPath();
+        Path archive = temporaryFolder.getRoot().toPath().resolve("fixture.gar");
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(archive))) {
+            jar.putNextEntry(new JarEntry("JAR_FORMAT"));
+            jar.closeEntry();
+            jar.putNextEntry(new JarEntry("idata/00/payload"));
+            jar.write("program".getBytes());
+            jar.closeEntry();
+            jar.putNextEntry(new JarEntry("../escape"));
+            jar.write("escape".getBytes());
+            jar.closeEntry();
+        }
+
+        Response response = restoreService()
+            .restoreProjectArchive(archive.toString(), parent.toString(), "Restored");
+
+        assertErrorContains(response, "unsafe archive entry");
+        assertNoRestoredProject(parent);
+        assertFalse(Files.exists(parent.getParent().resolve("escape")));
+    }
+
     private ProjectArchiveService service(ProjectArchiveService.ArchiveWriter writer) {
         return new ProjectArchiveService(
             () -> project, new DirectThreadingStrategy(), security, writer);
+    }
+
+    private ProjectArchiveService restoreService() {
+        return service((ignoredProject, ignoredDestination, ignoredMonitor) -> {
+            throw new AssertionError("restore must not invoke the archive writer");
+        });
     }
 
     private static void writeGar(Project project, File destination,
@@ -231,6 +277,17 @@ public class ProjectArchiveServiceTest {
         try (var files = Files.list(directory)) {
             assertFalse(files.anyMatch(path ->
                 path.getFileName().toString().contains(".tmp-")));
+        }
+    }
+
+    private static void assertNoRestoredProject(Path parent) throws Exception {
+        assertFalse(Files.exists(parent.resolve("Restored.gpr"),
+            LinkOption.NOFOLLOW_LINKS));
+        assertFalse(Files.exists(parent.resolve("Restored.rep"),
+            LinkOption.NOFOLLOW_LINKS));
+        try (var files = Files.list(parent)) {
+            assertFalse(files.anyMatch(path ->
+                path.getFileName().toString().contains("-restore-")));
         }
     }
 }
