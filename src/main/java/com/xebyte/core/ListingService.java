@@ -730,20 +730,6 @@ public class ListingService {
             }
         }
 
-        Address programEntry = program.getImageBase();
-        if (programEntry != null) {
-            Symbol entrySymbol = symbolTable.getPrimarySymbol(programEntry);
-            String entryInfo;
-            if (entrySymbol != null) {
-                entryInfo = formatEntryPoint(entrySymbol) + " [program entry]";
-            } else {
-                entryInfo = "entry @ " + programEntry + " [program entry] [FUNCTION]";
-            }
-            if (!containsAddress(entryPoints, programEntry)) {
-                entryPoints.add(entryInfo);
-            }
-        }
-
         if (entryPoints.isEmpty()) {
             String[] commonHexAddresses = {"0x401000", "0x400000", "0x1000", "0x10000"};
             for (String hexAddr : commonHexAddresses) {

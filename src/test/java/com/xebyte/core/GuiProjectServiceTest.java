@@ -41,6 +41,7 @@ import org.mockito.MockedStatic;
 
 import ghidra.framework.main.AppInfo;
 import ghidra.framework.model.Project;
+import ghidra.framework.model.ProjectData;
 import ghidra.framework.model.ProjectLocator;
 import ghidra.framework.model.ProjectManager;
 
@@ -211,7 +212,7 @@ public class GuiProjectServiceTest {
         when(created.getName()).thenReturn("NewProject");
 
         GuiProjectService service = new GuiProjectService(
-            () -> null, security, () -> manager, () -> controller);
+            security, () -> manager, () -> controller);
         Map<String, Object> result = parse(service.createProject(
             parent.toString(), "NewProject"));
 
@@ -238,7 +239,7 @@ public class GuiProjectServiceTest {
         when(created.getName()).thenReturn("NewProject");
         AtomicReference<Project> toolProject = new AtomicReference<>();
         GuiProjectService service = new GuiProjectService(
-            () -> null, security, () -> manager,
+            security, () -> manager,
             () -> activeProjectController(toolProject));
 
         Map<String, Object> result = parse(service.createProject(
@@ -301,7 +302,7 @@ public class GuiProjectServiceTest {
         when(opened.getName()).thenReturn("NewProject");
 
         GuiProjectService service = new GuiProjectService(
-            () -> null, security, () -> manager, () -> controller);
+            security, () -> manager, () -> controller);
         Map<String, Object> result = JsonHelper.parseJson(
             service.openProject(marker.toString(), true, null));
 
@@ -310,6 +311,36 @@ public class GuiProjectServiceTest {
         assertEquals(Boolean.TRUE, result.get("success"));
         assertSame(opened, AppInfo.getActiveProject());
         assertSame(opened, controller.getActiveProject());
+    }
+
+    @Test
+    public void alreadyOpenProjectLaunchUsesProjectManagersActiveProject()
+            throws Exception {
+        Path parent = newProjectsParent();
+        Path marker = Files.createFile(parent.resolve("NewProject.gpr"));
+        Files.createDirectory(parent.resolve("NewProject.rep"));
+        ProjectManager manager = mock(ProjectManager.class);
+        Project project = mock(Project.class);
+        ProjectData projectData = mock(ProjectData.class);
+        when(manager.getActiveProject()).thenReturn(project);
+        when(project.getProjectLocator()).thenReturn(
+            new ProjectLocator(parent.toString(), "NewProject"));
+        when(project.getProjectData()).thenReturn(projectData);
+        AtomicReference<Project> activeProject = new AtomicReference<>(project);
+
+        GuiProjectService service = new GuiProjectService(
+            security, () -> manager,
+            () -> activeProjectController(activeProject));
+        Map<String, Object> result = JsonHelper.parseJson(
+            service.openProject(marker.toString(), false, "/missing"));
+
+        assertEquals(result.toString(), Boolean.TRUE, result.get("success"));
+        assertEquals(Boolean.TRUE, result.get("already_open"));
+        assertTrue(result.get("program_launch_result").toString(),
+            result.get("program_launch_result").toString()
+                .contains("File not found in project"));
+        verify(manager, never()).openProject(
+            any(ProjectLocator.class), anyBoolean(), anyBoolean());
     }
 
     @Test
@@ -340,7 +371,7 @@ public class GuiProjectServiceTest {
         }).when(partiallyOpened).close();
 
         GuiProjectService service = new GuiProjectService(
-            () -> null, security, () -> manager,
+            security, () -> manager,
             () -> activeProjectController(toolProject));
         Map<String, Object> result = JsonHelper.parseJson(
             service.openProject(marker.toString(), true, null));
@@ -358,7 +389,7 @@ public class GuiProjectServiceTest {
         Path marker = parent.resolve("NewProject.gpr");
         ProjectManager manager = mock(ProjectManager.class);
 
-        GuiProjectService service = new GuiProjectService(() -> null, security, () -> {
+        GuiProjectService service = new GuiProjectService(security, () -> {
             try {
                 Files.createFile(marker);
             } catch (IOException e) {
@@ -381,7 +412,7 @@ public class GuiProjectServiceTest {
         Path projectDir = parent.resolve("NewProject.rep");
         ProjectManager manager = mock(ProjectManager.class);
 
-        GuiProjectService service = new GuiProjectService(() -> null, security, () -> {
+        GuiProjectService service = new GuiProjectService(security, () -> {
             createDanglingSymlink(projectDir, parent.resolve("missing-rep-target"));
             return manager;
         });
@@ -398,7 +429,7 @@ public class GuiProjectServiceTest {
         Path parent = newProjectsParent();
         ProjectManager manager = mock(ProjectManager.class);
 
-        GuiProjectService service = new GuiProjectService(() -> null, security, () -> {
+        GuiProjectService service = new GuiProjectService(security, () -> {
             try {
                 Files.delete(parent);
             } catch (IOException e) {
@@ -450,7 +481,7 @@ public class GuiProjectServiceTest {
             try (MockedStatic<AppInfo> appInfo = mockStatic(AppInfo.class)) {
                 appInfo.when(AppInfo::getActiveProject).thenReturn(null);
                 GuiProjectService service = new GuiProjectService(
-                    () -> null, security, () -> manager, () -> controller);
+                    security, () -> manager, () -> controller);
                 result.set(parse(service.createProject(parent.toString(), "NewProject")));
                 appInfo.verify(() -> AppInfo.setActiveProject(created));
                 appInfo.verify(() -> AppInfo.setActiveProject(null));
@@ -480,7 +511,7 @@ public class GuiProjectServiceTest {
             .thenThrow(new IOException("creation failed before artifacts"));
         AtomicReference<Project> toolProject = new AtomicReference<>(previous);
         GuiProjectService service = new GuiProjectService(
-            () -> null, security, () -> manager,
+            security, () -> manager,
             () -> activeProjectController(toolProject));
 
         Map<String, Object> result = parse(service.createProject(
@@ -533,7 +564,7 @@ public class GuiProjectServiceTest {
 
         AtomicReference<Project> toolProject = new AtomicReference<>(previous);
         GuiProjectService service = new GuiProjectService(
-            () -> null, security, () -> manager,
+            security, () -> manager,
             () -> activeProjectController(toolProject));
         Map<String, Object> result = parse(service.createProject(
             parent.toString(), "NewProject"));
@@ -560,7 +591,7 @@ public class GuiProjectServiceTest {
         when(created.getName()).thenReturn("NewProject");
         AtomicReference<Project> toolProject = new AtomicReference<>();
         GuiProjectService service = new GuiProjectService(
-            () -> null, security, () -> manager,
+            security, () -> manager,
             () -> activeProjectController(toolProject));
         EndpointDef endpoint = new AnnotationScanner(service).getEndpoints().stream()
             .filter(candidate -> "/create_project".equals(candidate.path()))

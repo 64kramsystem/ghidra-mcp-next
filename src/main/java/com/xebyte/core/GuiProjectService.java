@@ -36,7 +36,6 @@ public final class GuiProjectService {
         }
     }
 
-    private final Supplier<PluginTool> toolSupplier;
     private final SecurityConfig security;
     private final Supplier<ProjectManager> projectManagerSupplier;
     private final Supplier<ActiveProjectController> activeProjectControllerSupplier;
@@ -46,22 +45,21 @@ public final class GuiProjectService {
     }
 
     GuiProjectService(Supplier<PluginTool> toolSupplier, SecurityConfig security) {
-        this(toolSupplier, security, () -> {
+        this(security, () -> {
             PluginTool tool = toolSupplier.get();
             return tool != null ? tool.getProjectManager() : null;
         }, GuiProjectService::frontEndProjectController);
     }
 
-    GuiProjectService(Supplier<PluginTool> toolSupplier, SecurityConfig security,
+    GuiProjectService(SecurityConfig security,
             Supplier<ProjectManager> projectManagerSupplier) {
-        this(toolSupplier, security, projectManagerSupplier,
+        this(security, projectManagerSupplier,
             GuiProjectService::frontEndProjectController);
     }
 
-    GuiProjectService(Supplier<PluginTool> toolSupplier, SecurityConfig security,
+    GuiProjectService(SecurityConfig security,
             Supplier<ProjectManager> projectManagerSupplier,
             Supplier<ActiveProjectController> activeProjectControllerSupplier) {
-        this.toolSupplier = toolSupplier;
         this.security = security;
         this.projectManagerSupplier = projectManagerSupplier;
         this.activeProjectControllerSupplier = activeProjectControllerSupplier;
@@ -330,8 +328,8 @@ public final class GuiProjectService {
 
     /** Launch a CodeBrowser, optionally opening a project file. */
     public String launchCodeBrowser(String filePath) {
-        PluginTool tool = toolSupplier.get();
-        Project project = tool != null ? tool.getProject() : null;
+        ProjectManager manager = projectManagerSupplier.get();
+        Project project = manager != null ? manager.getActiveProject() : null;
         if (project == null) {
             return "{\"error\": \"No project open\"}";
         }

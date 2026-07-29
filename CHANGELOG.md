@@ -18,6 +18,8 @@ Complete version history for the GhidraMCP-next project.
 
 ### Fixed
 
+- `get_entry_points` no longer misreports the image base as a program entry.
+- `open_project` can launch a CodeBrowser from the project manager's active project when the serving front-end tool has no project of its own.
 - `create_memory_block` and symbol-profile memory-block application can now add a non-overlapping block to an explicitly qualified existing overlay when `overlay=false`, with identical preview/commit descriptors. `overlay=true` at an overlay address remains rejected as unsupported nested-overlay creation.
 - `disassemble_flow` commits now continue through repeated-byte instruction runs exactly as preview does. Ghidra's stock repeat-pattern guard previously stopped after 16 identical instructions, causing valid plans to diverge and roll back.
 
