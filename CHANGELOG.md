@@ -6,6 +6,8 @@ Complete version history for the GhidraMCP-next project.
 
 ## Unreleased
 
+## 0.101.1
+
 ### Fixed
 
 - The bridge exposes slash-delimited debugger endpoints with valid underscore tool names.
