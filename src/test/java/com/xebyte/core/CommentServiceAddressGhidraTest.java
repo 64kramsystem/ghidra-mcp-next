@@ -40,7 +40,7 @@ import ghidra.program.model.listing.CommentType;
 import ghidra.program.model.listing.Program;
 
 /**
- * ProgramBuilder-backed regression coverage for exact-address plate comments.
+ * ProgramBuilder-backed regression coverage for exact-address listing comments.
  */
 public class CommentServiceAddressGhidraTest {
 
@@ -169,6 +169,36 @@ public class CommentServiceAddressGhidraTest {
         assertTrue(removed.get("changed").getAsBoolean());
         assertNull(program.getListing().getComment(
             CommentType.PLATE, builder.addr("0x1020")));
+    }
+
+    @Test
+    public void repeatableCommentCreatesReplacesAndRemovesAtExactDataAddress() {
+        Address address = builder.addr("0x1010");
+        assertEquals(0, program.getFunctionManager().getFunctionCount());
+
+        JsonObject created = JsonParser.parseString(
+            comments.setRepeatableComment(
+                "0x1010", "first", "").toJson()).getAsJsonObject();
+        assertTrue(created.get("changed").getAsBoolean());
+        assertEquals("first", program.getListing().getComment(
+            CommentType.REPEATABLE, address));
+
+        JsonObject replaced = JsonParser.parseString(
+            comments.setRepeatableComment(
+                "0x1010", "second", "").toJson()).getAsJsonObject();
+        assertEquals("first", replaced.get("previous").getAsString());
+        assertEquals("second", replaced.get("resulting").getAsString());
+        assertEquals("second", program.getListing().getComment(
+            CommentType.REPEATABLE, address));
+
+        JsonObject removed = JsonParser.parseString(
+            comments.setRepeatableComment(
+                "0x1010", "", "").toJson()).getAsJsonObject();
+        assertEquals("second", removed.get("previous").getAsString());
+        assertTrue(removed.get("resulting").isJsonNull());
+        assertNull(program.getListing().getComment(
+            CommentType.REPEATABLE, address));
+        assertEquals(0, program.getFunctionManager().getFunctionCount());
     }
 
     @Test

@@ -307,6 +307,19 @@ public class MutationOverlayAmbiguityGhidraTest {
     }
 
     @Test
+    public void setRepeatableCommentRefusesAmbiguityAndHonoursQualifiedOverlay() {
+        assertRefused(
+            comments.setRepeatableComment(AMBIGUOUS, "wrong", ""));
+        assertOk(comments.setRepeatableComment(
+            OVERLAY_QUALIFIED, "overlay", ""));
+
+        assertNull(program.getListing().getComment(
+            CommentType.REPEATABLE, builder.addr("0x9762")));
+        assertEquals("overlay", program.getListing().getComment(
+            CommentType.REPEATABLE, builder.addr("SND_PLAYER::9762")));
+    }
+
+    @Test
     public void batchSetCommentsWritesNothingWhenOneItemIsAmbiguous() {
         Response response = comments.batchSetComments(
             UNIQUE,

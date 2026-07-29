@@ -39,6 +39,11 @@ public class CommentServiceValidationTest extends TestCase {
         assertNoProgram(comments.setDisassemblyComment("0x401000", "note"));
     }
 
+    public void testSetRepeatableCommentDegradesGracefully() {
+        assertNoProgram(
+            comments.setRepeatableComment("0x401000", "note", ""));
+    }
+
     public void testSetPlateCommentDegradesGracefully() {
         assertNoProgram(comments.setPlateComment("0x401000", "Summary of this function's behavior"));
     }
