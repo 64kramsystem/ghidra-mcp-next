@@ -41,6 +41,7 @@ public class ControlFlowServiceGhidraTest {
     private ProgramBuilder builder;
     private ProgramDB program;
     private ControlFlowService service;
+    private ListingService listing;
     private String targetSpaceName;
 
     @BeforeClass
@@ -106,6 +107,7 @@ public class ControlFlowServiceGhidraTest {
         provider.setCurrentProgram(program);
         service = new ControlFlowService(
             provider, new DirectThreadingStrategy());
+        listing = new ListingService(provider);
     }
 
     @After
@@ -117,6 +119,10 @@ public class ControlFlowServiceGhidraTest {
 
     @Test
     public void entryPointsAreAtomicIdempotentAndFunctionFree() {
+        assertEquals(
+            "No entry points found in program",
+            listing.getEntryPoints("").toJson());
+
         JsonObject preview = ok(service.updateEntryPoints(
             List.of("0x1000"), List.of(), true, ""));
         assertFalse(preview.get("committed").getAsBoolean());
@@ -127,6 +133,8 @@ public class ControlFlowServiceGhidraTest {
             List.of("0x1000"), List.of(), false, ""));
         assertTrue(program.getSymbolTable().isExternalEntryPoint(
             builder.addr("0x1000")));
+        assertTrue(listing.getEntryPoints("").toJson().contains(
+            "1000 [Label] [external entry]"));
         assertNull(program.getFunctionManager().getFunctionAt(
             builder.addr("0x1000")));
 
