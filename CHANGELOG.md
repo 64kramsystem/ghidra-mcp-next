@@ -6,6 +6,8 @@ Complete version history for the GhidraMCP-next project.
 
 ## Unreleased
 
+## 0.101.0
+
 ### Removed
 
 - **Breaking:** Removed headless mode, script execution and bundled scripts, MCP HTTP/SSE serving, bearer authentication, lazy tool profiles, symbol profiles, comparison/emulation products, heuristic composites, duplicate aliases, synthetic dry-run behavior, `open_project`, `/run_analysis` (use `/reanalyze`), and obsolete endpoint-specific workflows.
