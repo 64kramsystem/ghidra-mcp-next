@@ -407,13 +407,6 @@ public class EndpointRegistry {
                 bodyStr(b, "output_path"), bodyStr(b, "start"), bodyStr(b, "end"),
                 bodyBool(b, "overwrite", false),
                 bodyInt(b, "xref_wrap_column", 100), str(q, "program")));
-
-        post("/export_program_xml",
-            "Export native Ghidra program XML and its required .bytes sidecar",
-            params(bStr("output_path"), bBool("overwrite", false), pProg()),
-            (q, b) -> exportService.exportProgramXml(
-                bodyStr(b, "output_path"), bodyBool(b, "overwrite", false),
-                str(q, "program")));
     }
 
     // ======================================================================

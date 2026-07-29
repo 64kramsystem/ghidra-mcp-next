@@ -107,29 +107,6 @@ public class ExportServiceGhidraTest {
             runner.supportsAddressRestrictedExport());
     }
 
-    @Test
-    public void wholeProgramXmlContainsMemoryCodeAndSymbols() throws Exception {
-        Path destination = temporaryFolder.newFolder("xml").toPath().resolve("fixture.xml");
-        ExportService service = new ExportService(provider, security);
-
-        Response response =
-            service.exportProgramXml(destination.toString(), false, "");
-
-        assertTrue(response.toJson(), response instanceof Response.Ok);
-        String xml = Files.readString(destination);
-        assertTrue(xml, xml.contains("<PROGRAM"));
-        assertTrue(xml, xml.contains("<MEMORY_MAP>"));
-        assertTrue(xml, xml.contains("<CODE>"));
-        assertTrue(xml, xml.contains("<SYMBOL_TABLE>"));
-        Path sidecar = destination.resolveSibling("fixture.bytes");
-        assertTrue(Files.exists(sidecar));
-        assertTrue(Files.size(sidecar) > 0);
-        assertTrue(xml, xml.contains("FILE_NAME=\"fixture.bytes\""));
-        try (var files = Files.list(destination.getParent())) {
-            assertEquals(2, files.count());
-        }
-    }
-
     /**
      * A concurrent edit must fail the export rather than publish a listing stitched from two
      * different states of the program. The modification number is pinned before the walk and

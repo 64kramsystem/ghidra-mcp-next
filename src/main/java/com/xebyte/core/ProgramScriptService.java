@@ -202,60 +202,6 @@ public class ProgramScriptService {
         return Response.text(metadata.toString());
     }
 
-    /**
-     * Replace the executable/import path stored in Program Information.
-     *
-     * <p>The value is stored in Program Information and may be consumed by
-     * Ghidra launchers.  Ghidra's {@code unknown} sentinel clears the stored
-     * executable location.</p>
-     */
-    @McpTool(path = "/set_executable_path", method = "POST",
-        description = "Set the program executable/import path metadata used by "
-            + "Ghidra launchers",
-        category = "program")
-    public Response setExecutablePath(
-            @Param(value = "executable_path", source = ParamSource.BODY,
-                description = "Non-empty metadata value; use \"unknown\" to "
-                    + "clear Ghidra's stored executable location")
-                String executablePath,
-            @Param(value = "program",
-                description = "Target program name (omit to use the active "
-                    + "program — always specify when multiple programs are open)",
-                defaultValue = "") String programName) {
-        if (executablePath == null || executablePath.isEmpty()) {
-            return Response.err("non-empty executable_path parameter required");
-        }
-
-        ServiceUtils.ProgramOrError pe =
-            ServiceUtils.getProgramOrError(programProvider, programName);
-        if (pe.hasError()) return pe.error();
-        Program program = pe.program();
-
-        try {
-            Map<String, Object> result = threadingStrategy.executeWrite(
-                program, "Set executable path", () -> {
-                    String previous = program.getExecutablePath();
-                    boolean changed = !Objects.equals(previous, executablePath);
-                    if (changed) {
-                        program.setExecutablePath(executablePath);
-                    }
-                    String resulting = program.getExecutablePath();
-                    return JsonHelper.mapOf(
-                        "success", true,
-                        "program", program.getName(),
-                        "previous", previous,
-                        "resulting", resulting,
-                        "changed", changed
-                    );
-                });
-            return Response.ok(result);
-        } catch (Exception e) {
-            String message =
-                e.getMessage() != null ? e.getMessage() : e.toString();
-            return Response.err("Failed to set executable path: " + message);
-        }
-    }
-
     // ========================================================================
     // Program Management
     // ========================================================================
