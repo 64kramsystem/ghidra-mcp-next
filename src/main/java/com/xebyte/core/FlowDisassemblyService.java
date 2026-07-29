@@ -1390,6 +1390,8 @@ public final class FlowDisassemblyService {
         List<String> messages = new ArrayList<>();
         Disassembler disassembler = Disassembler.getDisassembler(
             program, false, false, false, TaskMonitor.DUMMY, messages::add);
+        // Preview follows repeated-byte sequences, so commit must use the same boundary.
+        disassembler.setRepeatPatternLimit(-1);
         return disassembler.disassemble(starts, restriction, followFlow);
     }
 
