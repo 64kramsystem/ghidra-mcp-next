@@ -64,8 +64,4 @@ public class RecordingThreadingStrategy implements ThreadingStrategy {
         return action.call();
     }
 
-    @Override
-    public boolean isHeadless() {
-        return true;
-    }
 }

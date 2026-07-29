@@ -2,17 +2,8 @@ package com.xebyte.core;
 
 import junit.framework.TestCase;
 
-/**
- * Unit tests for struct resize helpers and demangler placeholder detection.
- */
+/** Unit tests for struct resize rules. */
 public class DataTypeServiceStructResizeTest extends TestCase {
-
-    public void testIsDemanglerPlaceholderRequiresDemanglerPathAndSizeOne() {
-        assertTrue(DataTypeService.isDemanglerPlaceholder(1, "/Demangler/Foo"));
-        assertFalse(DataTypeService.isDemanglerPlaceholder(1, "/Types/Foo"));
-        assertFalse(DataTypeService.isDemanglerPlaceholder(4, "/Demangler/Foo"));
-        assertFalse(DataTypeService.isDemanglerPlaceholder(1, null));
-    }
 
     public void testValidateStructResizeAllowsGrow() {
         assertNull(DataTypeService.validateStructResize(120, "TestStruct", 240, false));
@@ -23,7 +14,6 @@ public class DataTypeServiceStructResizeTest extends TestCase {
         assertNotNull(err);
         assertTrue(err.contains("Cannot shrink"));
         assertTrue(err.contains("120"));
-        assertTrue(err.contains("recreate_struct"));
     }
 
     public void testValidateStructResizeAllowsShrinkWithForce() {

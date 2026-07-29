@@ -9,7 +9,7 @@ import java.lang.annotation.*;
  *
  * <p>Example:
  * <pre>{@code
- * @McpTool(path = "/list_methods", method = "GET",
+ * @McpTool(path = "/list_functions", method = "GET",
  *          description = "List all function names with pagination")
  * public Response getAllFunctionNames(
  *     @Param(value = "offset", defaultValue = "0") int offset,
@@ -24,7 +24,7 @@ import java.lang.annotation.*;
 @Documented
 public @interface McpTool {
 
-    /** HTTP path for this endpoint (e.g., "/list_methods"). */
+    /** HTTP path for this endpoint (e.g., "/list_functions"). */
     String path();
 
     /** HTTP method: "GET" or "POST". */
@@ -33,18 +33,4 @@ public @interface McpTool {
     /** Human-readable description of what this tool does. */
     String description() default "";
 
-    /** Tool category for grouping (e.g., "listing", "function", "analysis"). */
-    String category() default "";
-
-    /**
-     * Whether this endpoint supports dry-run/preview semantics, either through
-     * its own explicit parameter or the generic transaction wrapper.
-     */
-    boolean supportsDryRun() default true;
-
-    /**
-     * Whether transports may add the generic query-parameter dry run. Set
-     * false when the endpoint owns an explicit dry_run body parameter.
-     */
-    boolean supportsSyntheticDryRun() default true;
 }

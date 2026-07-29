@@ -88,7 +88,7 @@ public class ListingRangeServiceGhidraTest {
         assertEquals(0, program.getFunctionManager().getFunctionCount());
         long modificationBefore = program.getModificationNumber();
 
-        JsonObject page = query("0x0801", "0x080f", 100, 256, 100, null);
+        JsonObject page = query("0x0801", "0x080f", 100, 256, 100);
 
         assertEquals(modificationBefore, program.getModificationNumber());
         assertEquals(0, program.getFunctionManager().getFunctionCount());
@@ -114,7 +114,7 @@ public class ListingRangeServiceGhidraTest {
     @Test
     public void compact6502RangeRetainsVerificationAndRetrievalMetadata() {
         JsonObject page = queryMode(
-            "0x0801", "0x080f", 100, 256, 100, true, null);
+            "0x0801", "0x080f", 100, 256, 100, true);
         JsonArray units = page.getAsJsonArray("units");
 
         assertTrue(page.get("compact").getAsBoolean());
@@ -133,21 +133,21 @@ public class ListingRangeServiceGhidraTest {
 
     @Test
     public void unitPaginationCoversEffectiveRangeExactlyOnce() {
-        String cursor = null;
+        String start = "0x0801";
         int expected = 0x0800;
         int pages = 0;
         do {
-            JsonObject page = query("0x0801", "0x080f", 1, 256, 100, cursor);
+            JsonObject page = query(start, "0x080f", 1, 256, 100);
             JsonArray units = page.getAsJsonArray("units");
             assertEquals(1, units.size());
             JsonObject unit = units.get(0).getAsJsonObject();
             assertEquals(expected, Integer.parseInt(unit.get("start").getAsString(), 16));
             expected = Integer.parseInt(unit.get("end").getAsString(), 16) + 1;
-            cursor = page.get("complete").getAsBoolean()
-                ? null : page.get("next_cursor").getAsString();
+            start = page.get("complete").getAsBoolean()
+                ? null : page.get("next_start").getAsString();
             pages++;
         }
-        while (cursor != null);
+        while (start != null);
 
         assertEquals(0x0810, expected);
         assertTrue(pages >= 3);
@@ -156,16 +156,16 @@ public class ListingRangeServiceGhidraTest {
 
     private JsonObject query(
             String start, String end, int maxUnits, int maxBytes,
-            int maxIncoming, String cursor) {
+            int maxIncoming) {
         return queryMode(
-            start, end, maxUnits, maxBytes, maxIncoming, false, cursor);
+            start, end, maxUnits, maxBytes, maxIncoming, false);
     }
 
     private JsonObject queryMode(
             String start, String end, int maxUnits, int maxBytes,
-            int maxIncoming, boolean compact, String cursor) {
+            int maxIncoming, boolean compact) {
         Response response = service.getListingRange(
-            start, end, maxUnits, maxBytes, maxIncoming, compact, cursor, "");
+            start, end, maxUnits, maxBytes, maxIncoming, compact, "");
         assertFalse(response.toJson(), response instanceof Response.Err);
         return JsonParser.parseString(response.toJson()).getAsJsonObject();
     }

@@ -415,12 +415,6 @@ def resolve_mcp_url(repo_root: Path) -> str:
     return f"http://{bind}:{port}".rstrip("/")
 
 
-def _mcp_headers(repo_root: Path) -> dict[str, str]:
-    env_values = load_env_file(repo_root / ".env")
-    token = env_values.get("GHIDRA_MCP_AUTH_TOKEN", "").strip()
-    return {"Authorization": f"Bearer {token}"} if token else {}
-
-
 def _mcp_request(
     repo_root: Path,
     mcp_url: str,
@@ -432,7 +426,7 @@ def _mcp_request(
     timeout: int = 10,
 ) -> tuple[int, object]:
     body = None
-    headers = _mcp_headers(repo_root)
+    headers: dict[str, str] = {}
     if data is not None:
         body = json.dumps(data).encode("utf-8")
         headers["Content-Type"] = "application/json"

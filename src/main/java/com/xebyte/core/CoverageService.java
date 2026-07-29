@@ -46,8 +46,6 @@ import ghidra.program.model.symbol.SymbolUtilities;
  * {@code DAT_}/{@code LAB_} names, {@code TODO} markers). They are different kinds of
  * claim and must not read as one metric.</p>
  */
-@McpToolGroup(value = "analysis",
-    description = "Whole-program coverage and annotation audits")
 public final class CoverageService {
 
     private static final int MAX_LIMIT = 10_000;
@@ -96,8 +94,7 @@ public final class CoverageService {
             + "annotation_backlog, audits generic symbol names (DAT_, LAB_, ...) and "
             + "unknown markers (TODO labels and comments) — convention-based, and kept "
             + "apart from the byte facts on purpose. Statistics are always whole-program; "
-            + "undefined_runs and unknown_markers page independently.",
-        category = "analysis")
+            + "undefined_runs and unknown_markers page independently.")
     public Response analyzeCoverage(
             @Param(value = "min_run_length", defaultValue = "1",
                 description = "Undefined runs shorter than this are excluded from the page "
@@ -182,8 +179,7 @@ public final class CoverageService {
             + "their targets were given meaningful symbols. Scans every comment kind in "
             + "mapped memory and reports only resolvable names whose target has a "
             + "non-generated current symbol. Mentions of deleted labels are out of scope; "
-            + "deliberate historical uses of old names require human review.",
-        category = "analysis")
+            + "deliberate historical uses of old names require human review.")
     public Response auditStaleCommentNames(
             @Param(value = "limit", defaultValue = "100",
                 description = "Maximum stale mentions returned, 1..10000.") int limit,

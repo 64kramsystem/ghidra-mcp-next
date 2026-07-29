@@ -15,8 +15,6 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.UUID;
 
-import ghidra.app.util.exporter.AsciiExporter;
-import ghidra.app.util.exporter.ExporterException;
 import ghidra.framework.model.DomainObject;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressRange;
@@ -28,91 +26,16 @@ import ghidra.util.task.TaskMonitor;
 /**
  * Native file export operations.
  *
- * <p>The service delegates listing formatting to Ghidra's {@link AsciiExporter}.
- * It only owns request validation and safe filesystem publication.
+ * <p>The service owns request validation and safe filesystem publication.
  */
-@McpToolGroup(value = "export", description = "Native program and project export")
 public final class ExportService {
 
     private static final Gson OUTPUT_GSON = new Gson();
 
-    interface ExportRunner {
-        boolean supportsAddressRestrictedExport();
-
-        boolean export(File file, DomainObject object, AddressSetView selection,
-                TaskMonitor monitor) throws ExporterException, IOException;
-
-        String name();
-
-        default String diagnostic() {
-            return "";
-        }
-
-        /**
-         * Extra result fields describing what this runner emitted. Empty for runners that
-         * delegate to a Ghidra exporter, whose payload therefore stays unchanged.
-         */
-        default Map<String, Object> report() {
-            return Map.of();
-        }
-    }
-
-    @FunctionalInterface
-    interface AtomicReplace {
-        void move(Path source, Path target) throws IOException;
-    }
-
-    @FunctionalInterface
-    interface TempUnlink {
-        void deleteIfExists(Path path) throws IOException;
-    }
-
-    @FunctionalInterface
-    interface ResultFactory {
-        Response.Ok build(Program program, Path destination, String requestedStart,
-                String requestedEnd, AddressSetView selection, long bytesWritten,
-                String exporterName) throws IOException;
-    }
-
-    static final class AsciiExportRunner implements ExportRunner {
-        private final ThreadLocal<String> lastDiagnostic =
-            ThreadLocal.withInitial(() -> "");
-
-        @Override
-        public boolean supportsAddressRestrictedExport() {
-            return new AsciiExporter().supportsAddressRestrictedExport();
-        }
-
-        @Override
-        public boolean export(File file, DomainObject object, AddressSetView selection,
-                TaskMonitor monitor) throws ExporterException, IOException {
-            AsciiExporter exporter = new AsciiExporter();
-            try {
-                return exporter.export(file, object, selection, monitor);
-            }
-            finally {
-                lastDiagnostic.set(exporter.getMessageLog() == null
-                    ? ""
-                    : exporter.getMessageLog().toString());
-            }
-        }
-
-        @Override
-        public String name() {
-            return AsciiExporter.class.getName();
-        }
-
-        @Override
-        public String diagnostic() {
-            return lastDiagnostic.get();
-        }
-    }
-
     /**
-     * Writes a listing with no clip step and no ceilings, unlike {@link AsciiExporter}.
-     * See {@link CompleteListingWriter} for what that exporter loses and why.
+     * Writes a listing with no clip step or output ceilings.
      */
-    static final class CompleteListingRunner implements ExportRunner {
+    static final class CompleteListingRunner {
         private final int xrefWrapColumn;
         private final ThreadLocal<String> lastDiagnostic =
             ThreadLocal.withInitial(() -> "");
@@ -123,12 +46,6 @@ public final class ExportService {
             this.xrefWrapColumn = xrefWrapColumn;
         }
 
-        @Override
-        public boolean supportsAddressRestrictedExport() {
-            return true;
-        }
-
-        @Override
         public boolean export(File file, DomainObject object, AddressSetView selection,
                 TaskMonitor monitor) throws IOException {
             if (!(object instanceof Program program)) {
@@ -176,17 +93,10 @@ public final class ExportService {
             return true;
         }
 
-        @Override
-        public String name() {
-            return CompleteListingWriter.class.getName();
-        }
-
-        @Override
         public String diagnostic() {
             return lastDiagnostic.get();
         }
 
-        @Override
         public Map<String, Object> report() {
             return lastReport.get();
         }
@@ -194,73 +104,32 @@ public final class ExportService {
 
     private final ProgramProvider programProvider;
     private final SecurityConfig security;
-    private final ExportRunner runner;
-    private final ResultFactory resultFactory;
 
     public ExportService(ProgramProvider programProvider) {
         this(programProvider, SecurityConfig.getInstance());
     }
 
     ExportService(ProgramProvider programProvider, SecurityConfig security) {
-        this(programProvider, security, new AsciiExportRunner());
-    }
-
-    ExportService(ProgramProvider programProvider, SecurityConfig security,
-            ExportRunner runner) {
-        this(programProvider, security, runner, ExportService::buildExportResult);
-    }
-
-    ExportService(ProgramProvider programProvider, SecurityConfig security,
-            ExportRunner runner, ResultFactory resultFactory) {
         this.programProvider = programProvider;
         this.security = security;
-        this.runner = runner;
-        this.resultFactory = resultFactory;
-    }
-
-    @McpTool(path = "/export_ascii_listing", method = "POST",
-        description = "Export Ghidra AsciiExporter listing text without running a script",
-        category = "export", supportsDryRun = false)
-    public Response exportAsciiListing(
-            @Param(value = "output_path", source = ParamSource.BODY,
-                description = "Destination filesystem path") String outputPath,
-            @Param(value = "start", source = ParamSource.BODY, defaultValue = "",
-                paramType = "address",
-                description = "Inclusive start address; must be supplied with end") String start,
-            @Param(value = "end", source = ParamSource.BODY, defaultValue = "",
-                paramType = "address",
-                description = "Inclusive end address; must be supplied with start") String end,
-            @Param(value = "overwrite", source = ParamSource.BODY,
-                defaultValue = "false",
-                description = "Replace an existing destination after successful export")
-                boolean overwrite,
-            @Param(value = "program", defaultValue = "",
-                description = "Target program name (omit to use the active program)")
-                String programName) {
-        return export(runner, programName, outputPath, normalizeOptional(start),
-            normalizeOptional(end), overwrite);
     }
 
     @McpTool(path = "/export_full_listing", method = "POST",
-        description = "Export a complete listing that drops nothing. Unlike "
-            + "export_ascii_listing, which delegates to Ghidra's AsciiExporter, this clips no "
-            + "field, emits every line of every comment rather than the first six, and emits "
+        description = "Export a complete listing that clips no field, emits "
+            + "every line of every comment, and emits "
             + "every cross-reference rather than the first twenty-one. Columns are minimum "
             + "widths, so long operands push the comment column right instead of being "
             + "shortened, and authored newlines in comments are never re-flowed. Structures and "
             + "arrays are traversed, so field names, component types and values appear indented "
             + "under their parent. The export fails without publishing if it cannot emit "
             + "everything it collected: comment bodies and references are checked against the "
-            + "written file, and a program edit landing mid-export fails it too.",
-        category = "export", supportsDryRun = false)
+            + "written file, and a program edit landing mid-export fails it too.")
     public Response exportFullListing(
             @Param(value = "output_path", source = ParamSource.BODY,
                 description = "Destination filesystem path") String outputPath,
             @Param(value = "start", source = ParamSource.BODY, defaultValue = "",
-                paramType = "address",
                 description = "Inclusive start address; must be supplied with end") String start,
             @Param(value = "end", source = ParamSource.BODY, defaultValue = "",
-                paramType = "address",
                 description = "Inclusive end address; must be supplied with start") String end,
             @Param(value = "overwrite", source = ParamSource.BODY,
                 defaultValue = "false",
@@ -281,7 +150,7 @@ public final class ExportService {
             normalizeOptional(start), normalizeOptional(end), overwrite);
     }
 
-    private Response export(ExportRunner runner, String programName, String outputPath,
+    private Response export(CompleteListingRunner runner, String programName, String outputPath,
             String start, String end, boolean overwrite) {
         if (outputPath == null || outputPath.isBlank()) {
             return Response.err("output_path is required");
@@ -321,10 +190,6 @@ public final class ExportService {
                 return Response.err(
                     "bounded export range must be entirely contained in program memory");
             }
-            if (!runner.supportsAddressRestrictedExport()) {
-                return Response.err(runner.name()
-                    + " does not support address-restricted export");
-            }
             selection = boundedSelection;
         }
         else {
@@ -357,12 +222,13 @@ public final class ExportService {
                 TaskMonitor.DUMMY);
             if (!exported) {
                 return Response.err(exportFailureMessage(
-                    runner.name() + " returned false", runner.diagnostic()));
+                    CompleteListingWriter.class.getName() + " returned false",
+                    runner.diagnostic()));
             }
 
             long bytesWritten = Files.size(temporary);
-            Response.Ok result = resultFactory.build(program, destination, start, end,
-                selection, bytesWritten, runner.name());
+            Response.Ok result = buildExportResult(program, destination, start, end,
+                selection, bytesWritten, CompleteListingWriter.class.getName());
             mergeReport(result, runner.report());
             publish(temporary, destination, overwrite);
             published = true;
@@ -372,7 +238,7 @@ public final class ExportService {
             return Response.err("destination already exists; set overwrite=true to replace it: "
                 + destination);
         }
-        catch (ExporterException | IOException | RuntimeException e) {
+        catch (IOException | RuntimeException e) {
             String message = e.getMessage() != null ? e.getMessage() : e.toString();
             return Response.err(exportFailureMessage(message, runner.diagnostic()));
         }
@@ -404,20 +270,6 @@ public final class ExportService {
 
     static void publish(Path temporary, Path destination, boolean overwrite)
             throws IOException {
-        publish(temporary, destination, overwrite, (source, target) ->
-            Files.move(source, target, StandardCopyOption.ATOMIC_MOVE,
-                StandardCopyOption.REPLACE_EXISTING),
-            path -> Files.deleteIfExists(path));
-    }
-
-    static void publish(Path temporary, Path destination, boolean overwrite,
-            AtomicReplace atomicReplace) throws IOException {
-        publish(temporary, destination, overwrite, atomicReplace,
-            path -> Files.deleteIfExists(path));
-    }
-
-    static void publish(Path temporary, Path destination, boolean overwrite,
-            AtomicReplace atomicReplace, TempUnlink tempUnlink) throws IOException {
         if (!overwrite) {
             try {
                 // createLink is an atomic fail-if-present publication primitive:
@@ -430,11 +282,11 @@ public final class ExportService {
                     "safe no-overwrite publication is not supported by this filesystem", e);
             }
             try {
-                tempUnlink.deleteIfExists(temporary);
+                Files.deleteIfExists(temporary);
             }
             catch (IOException firstFailure) {
                 try {
-                    tempUnlink.deleteIfExists(temporary);
+                    Files.deleteIfExists(temporary);
                 }
                 catch (IOException ignored) {
                     // Destination already names the complete file. Cleanup is
@@ -444,7 +296,8 @@ public final class ExportService {
             return;
         }
 
-        atomicReplace.move(temporary, destination);
+        Files.move(temporary, destination, StandardCopyOption.ATOMIC_MOVE,
+            StandardCopyOption.REPLACE_EXISTING);
     }
 
     private static Response.Ok buildExportResult(Program program, Path destination,
@@ -472,8 +325,7 @@ public final class ExportService {
     }
 
     /**
-     * Adds a runner's own result fields to a built payload. Runners that delegate to a Ghidra
-     * exporter report nothing, so their payload is untouched.
+     * Adds the complete listing writer's audit fields to the result.
      */
     private static void mergeReport(Response.Ok result, Map<String, Object> report) {
         if (report.isEmpty() || !(result.data() instanceof JsonObject data)) {

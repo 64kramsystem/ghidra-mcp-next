@@ -10,7 +10,7 @@ import junit.framework.TestCase;
 
 public class GetCurrentSelectionEndpointTest extends TestCase {
 
-    public void testSelectionIsAGroupedGuiTool() {
+    public void testSelectionIsAParameterlessGetTool() {
         AnnotationScanner scanner = new AnnotationScanner(
             new GuiContextService(() -> null, ServiceFactory.stubProvider()));
         AnnotationScanner.ToolDescriptor selection = scanner.getDescriptors()
@@ -20,7 +20,6 @@ public class GetCurrentSelectionEndpointTest extends TestCase {
             .orElseThrow();
 
         assertEquals("GET", selection.method());
-        assertEquals("gui", selection.category());
         assertEquals(Set.of(), selection.params().stream()
             .map(AnnotationScanner.ParamDescriptor::name)
             .collect(Collectors.toSet()));

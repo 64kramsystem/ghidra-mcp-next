@@ -7,7 +7,6 @@ import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assume.assumeNoException;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
@@ -41,7 +40,6 @@ import org.mockito.MockedStatic;
 
 import ghidra.framework.main.AppInfo;
 import ghidra.framework.model.Project;
-import ghidra.framework.model.ProjectData;
 import ghidra.framework.model.ProjectLocator;
 import ghidra.framework.model.ProjectManager;
 
@@ -251,139 +249,6 @@ public class GuiProjectServiceTest {
     }
 
     @Test
-    public void openRunsLifecycleThroughFrontEndControllerOnEdt() throws Exception {
-        Path parent = newProjectsParent();
-        Path marker = Files.createFile(parent.resolve("NewProject.gpr"));
-        Files.createDirectory(parent.resolve("NewProject.rep"));
-        ProjectManager manager = mock(ProjectManager.class);
-        Project previous = mock(Project.class);
-        Project opened = mock(Project.class);
-        AtomicReference<Project> managerProject = new AtomicReference<>(previous);
-        AtomicReference<Project> toolProject = new AtomicReference<>(previous);
-        List<String> events = new ArrayList<>();
-        GuiProjectService.ActiveProjectController controller =
-            new GuiProjectService.ActiveProjectController() {
-                @Override
-                public Project getActiveProject() {
-                    return toolProject.get();
-                }
-
-                @Override
-                public void setActiveProject(Project project) {
-                    events.add("tool:" + (project == null ? "null" : "opened") + ":"
-                        + SwingUtilities.isEventDispatchThread());
-                    toolProject.set(project);
-                }
-
-                @Override
-                public void projectClosed(Project project) {
-                    events.add("notify-closed:" + SwingUtilities.isEventDispatchThread());
-                }
-            };
-
-        when(manager.getActiveProject()).thenAnswer(invocation -> managerProject.get());
-        doAnswer(invocation -> {
-            events.add("save:" + SwingUtilities.isEventDispatchThread());
-            return null;
-        }).when(previous).save();
-        doAnswer(invocation -> {
-            events.add("close:" + SwingUtilities.isEventDispatchThread());
-            managerProject.set(null);
-            AppInfo.setActiveProject(null);
-            return null;
-        }).when(previous).close();
-        when(manager.openProject(any(ProjectLocator.class), eq(true), eq(false)))
-            .thenAnswer(invocation -> {
-                events.add("open:" + SwingUtilities.isEventDispatchThread());
-                managerProject.set(opened);
-                AppInfo.setActiveProject(opened);
-                return opened;
-            });
-        when(opened.getName()).thenReturn("NewProject");
-
-        GuiProjectService service = new GuiProjectService(
-            security, () -> manager, () -> controller);
-        Map<String, Object> result = JsonHelper.parseJson(
-            service.openProject(marker.toString(), true, null));
-
-        assertEquals(List.of("save:true", "close:true", "notify-closed:true",
-            "tool:null:true", "open:true", "tool:opened:true"), events);
-        assertEquals(Boolean.TRUE, result.get("success"));
-        assertSame(opened, AppInfo.getActiveProject());
-        assertSame(opened, controller.getActiveProject());
-    }
-
-    @Test
-    public void alreadyOpenProjectLaunchUsesProjectManagersActiveProject()
-            throws Exception {
-        Path parent = newProjectsParent();
-        Path marker = Files.createFile(parent.resolve("NewProject.gpr"));
-        Files.createDirectory(parent.resolve("NewProject.rep"));
-        ProjectManager manager = mock(ProjectManager.class);
-        Project project = mock(Project.class);
-        ProjectData projectData = mock(ProjectData.class);
-        when(manager.getActiveProject()).thenReturn(project);
-        when(project.getProjectLocator()).thenReturn(
-            new ProjectLocator(parent.toString(), "NewProject"));
-        when(project.getProjectData()).thenReturn(projectData);
-        AtomicReference<Project> activeProject = new AtomicReference<>(project);
-
-        GuiProjectService service = new GuiProjectService(
-            security, () -> manager,
-            () -> activeProjectController(activeProject));
-        Map<String, Object> result = JsonHelper.parseJson(
-            service.openProject(marker.toString(), false, "/missing"));
-
-        assertEquals(result.toString(), Boolean.TRUE, result.get("success"));
-        assertEquals(Boolean.TRUE, result.get("already_open"));
-        assertTrue(result.get("program_launch_result").toString(),
-            result.get("program_launch_result").toString()
-                .contains("File not found in project"));
-        verify(manager, never()).openProject(
-            any(ProjectLocator.class), anyBoolean(), anyBoolean());
-    }
-
-    @Test
-    public void openCleansManagerProjectWhenRestoreFailsBeforeReturn() throws Exception {
-        Path parent = newProjectsParent();
-        Path marker = Files.createFile(parent.resolve("NewProject.gpr"));
-        Files.createDirectory(parent.resolve("NewProject.rep"));
-        ProjectManager manager = mock(ProjectManager.class);
-        Project partiallyOpened = mock(Project.class);
-        ProjectLocator locator = new ProjectLocator(parent.toString(), "NewProject");
-        AtomicReference<Project> managerProject = new AtomicReference<>();
-        AtomicReference<Project> toolProject = new AtomicReference<>();
-
-        when(manager.getActiveProject()).thenAnswer(invocation -> managerProject.get());
-        when(manager.openProject(any(ProjectLocator.class), eq(true), eq(false)))
-            .thenAnswer(invocation -> {
-                assertTrue(SwingUtilities.isEventDispatchThread());
-                managerProject.set(partiallyOpened);
-                AppInfo.setActiveProject(partiallyOpened);
-                throw new IOException("restore failed after activation");
-            });
-        when(partiallyOpened.getProjectLocator()).thenReturn(locator);
-        doAnswer(invocation -> {
-            assertTrue(SwingUtilities.isEventDispatchThread());
-            managerProject.set(null);
-            AppInfo.setActiveProject(null);
-            return null;
-        }).when(partiallyOpened).close();
-
-        GuiProjectService service = new GuiProjectService(
-            security, () -> manager,
-            () -> activeProjectController(toolProject));
-        Map<String, Object> result = JsonHelper.parseJson(
-            service.openProject(marker.toString(), true, null));
-
-        assertTrue(result.get("error").toString().contains("restore failed"));
-        verify(partiallyOpened).close();
-        assertNull(managerProject.get());
-        assertNull(toolProject.get());
-        assertNull(AppInfo.getActiveProject());
-    }
-
-    @Test
     public void createRechecksDestinationOnEdtBeforeClosingCurrentProject() throws Exception {
         Path parent = newProjectsParent();
         Path marker = parent.resolve("NewProject.gpr");
@@ -522,8 +387,6 @@ public class GuiProjectServiceTest {
         assertEquals(parent.resolve("NewProject").toString(), result.get("path"));
         verify(previous).save();
         verify(previous).close();
-        verify(manager, never()).openProject(
-            any(ProjectLocator.class), anyBoolean(), anyBoolean());
         assertNull(AppInfo.getActiveProject());
         assertNull(toolProject.get());
         assertFalse(Files.exists(parent.resolve("NewProject.gpr")));

@@ -18,7 +18,6 @@ import ghidra.program.model.listing.Program;
 /**
  * Precise, function-independent mutations of Ghidra's mixed listing.
  */
-@McpToolGroup(value = "listing", description = "Targeted mixed-listing mutations")
 public final class ListingMutationService {
 
     private static final Gson OUTPUT_JSON = new GsonBuilder()
@@ -142,12 +141,11 @@ public final class ListingMutationService {
     }
 
     @McpTool(path = "/undefine_range", method = "POST",
-        description = "Preview or atomically clear complete instructions and/or data units",
-        category = "listing")
+        description = "Preview or atomically clear complete instructions and/or data units")
     public Response undefineRange(
-            @Param(value = "start", source = ParamSource.BODY, paramType = "address",
+            @Param(value = "start", source = ParamSource.BODY,
                 description = "Inclusive start address") String start,
-            @Param(value = "end", source = ParamSource.BODY, paramType = "address",
+            @Param(value = "end", source = ParamSource.BODY,
                 description = "Inclusive end address") String end,
             @Param(value = "clear_instructions", source = ParamSource.BODY,
                 defaultValue = "true",

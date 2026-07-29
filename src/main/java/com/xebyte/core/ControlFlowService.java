@@ -21,9 +21,6 @@ import ghidra.program.model.symbol.RefTypeFactory;
 import ghidra.util.task.TaskMonitor;
 
 /** Manual function-free control-flow metadata and evidence. */
-@McpToolGroup(
-    value = "control_flow",
-    description = "Record manual entry, flow, dispatch, and mutation facts")
 public final class ControlFlowService {
     static final String ADDRESS_ARRAY_SCHEMA =
         "{\"type\":\"array\",\"maxItems\":10000,"
@@ -102,9 +99,7 @@ public final class ControlFlowService {
         method = "POST",
         description =
             "Preview or atomically add/remove external entry points "
-                + "without creating functions; dry_run defaults to true",
-        category = "control_flow",
-        supportsSyntheticDryRun = false)
+                + "without creating functions; dry_run defaults to true")
     public Response updateEntryPoints(
             @Param(
                 value = "add",
@@ -162,14 +157,11 @@ public final class ControlFlowService {
         method = "POST",
         description =
             "Preview or set an instruction flow override without "
-                + "redisassembly or analysis; dry_run defaults to true",
-        category = "control_flow",
-        supportsSyntheticDryRun = false)
+                + "redisassembly or analysis; dry_run defaults to true")
     public Response setInstructionFlowOverride(
             @Param(
                 value = "address",
-                source = ParamSource.BODY,
-                paramType = "address")
+                source = ParamSource.BODY)
                 String address,
             @Param(
                 value = "override",
@@ -218,9 +210,7 @@ public final class ControlFlowService {
         method = "POST",
         description =
             "Preview or atomically add/remove exact manual references; "
-                + "dry_run defaults to true",
-        category = "control_flow",
-        supportsSyntheticDryRun = false)
+                + "dry_run defaults to true")
     public Response batchUpdateReferences(
             @Param(
                 value = "add",
@@ -290,9 +280,7 @@ public final class ControlFlowService {
         method = "POST",
         description =
             "Preview or atomically type a bounded explicit pointer table "
-                + "and link dispatch instructions; dry_run defaults to true",
-        category = "control_flow",
-        supportsSyntheticDryRun = false)
+                + "and link dispatch instructions; dry_run defaults to true")
     public Response describeJumpTable(
             @Param(
                 value = "table",
@@ -356,14 +344,11 @@ public final class ControlFlowService {
         method = "POST",
         description =
             "Preview or atomically record writer-to-operand-byte evidence; "
-                + "dry_run defaults to true",
-        category = "control_flow",
-        supportsSyntheticDryRun = false)
+                + "dry_run defaults to true")
     public Response annotateSelfModifiedOperand(
             @Param(
                 value = "writer_address",
-                source = ParamSource.BODY,
-                paramType = "address")
+                source = ParamSource.BODY)
                 String writerAddress,
             @Param(
                 value = "writer_operand_index",
@@ -373,8 +358,7 @@ public final class ControlFlowService {
                 int writerOperandIndex,
             @Param(
                 value = "target_address",
-                source = ParamSource.BODY,
-                paramType = "address")
+                source = ParamSource.BODY)
                 String targetAddress,
             @Param(
                 value = "operand_byte_addresses",

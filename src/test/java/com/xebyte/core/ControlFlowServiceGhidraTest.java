@@ -120,7 +120,7 @@ public class ControlFlowServiceGhidraTest {
     @Test
     public void entryPointsAreAtomicIdempotentAndFunctionFree() {
         assertEquals(
-            "No entry points found in program",
+            "[]",
             listing.getEntryPoints("").toJson());
 
         JsonObject preview = ok(service.updateEntryPoints(
@@ -133,8 +133,10 @@ public class ControlFlowServiceGhidraTest {
             List.of("0x1000"), List.of(), false, ""));
         assertTrue(program.getSymbolTable().isExternalEntryPoint(
             builder.addr("0x1000")));
-        assertTrue(listing.getEntryPoints("").toJson().contains(
-            "1000 [Label] [external entry]"));
+        JsonObject entry = JsonParser.parseString(
+            listing.getEntryPoints("").toJson()).getAsJsonArray()
+            .get(0).getAsJsonObject();
+        assertEquals("1000", entry.get("address").getAsString());
         assertNull(program.getFunctionManager().getFunctionAt(
             builder.addr("0x1000")));
 

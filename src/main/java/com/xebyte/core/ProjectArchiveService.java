@@ -15,7 +15,7 @@
  */
 package com.xebyte.core;
 
-import ghidra.app.plugin.core.archive.HeadlessArchiveBridge;
+import ghidra.app.plugin.core.archive.ProjectArchiveBridge;
 import ghidra.framework.model.DomainFile;
 import ghidra.framework.model.Project;
 import ghidra.framework.model.ProjectLocator;
@@ -34,7 +34,6 @@ import java.util.function.Supplier;
 import java.util.jar.JarFile;
 
 /** Exports the active project with Ghidra's native GAR writer. */
-@McpToolGroup(value = "export", description = "Native program and project export")
 public final class ProjectArchiveService {
 
     @FunctionalInterface
@@ -50,7 +49,7 @@ public final class ProjectArchiveService {
     public ProjectArchiveService(Supplier<Project> projectSupplier,
             ThreadingStrategy threading) {
         this(projectSupplier, threading, SecurityConfig.getInstance(),
-            HeadlessArchiveBridge::archive);
+            ProjectArchiveBridge::archive);
     }
 
     ProjectArchiveService(Supplier<Project> projectSupplier,
@@ -63,8 +62,7 @@ public final class ProjectArchiveService {
     }
 
     @McpTool(path = "/export_project_archive", method = "POST",
-        description = "Save and export the active Ghidra project as a native GAR archive",
-        category = "export", supportsDryRun = false)
+        description = "Save and export the active Ghidra project as a native GAR archive")
     public Response exportProjectArchive(
             @Param(value = "output_path", source = ParamSource.BODY,
                 description = "Absolute destination path ending in .gar")
@@ -84,9 +82,9 @@ public final class ProjectArchiveService {
             return Response.err("output_path must be absolute");
         }
         if (!outputPath.toLowerCase(Locale.ROOT)
-                .endsWith(HeadlessArchiveBridge.ARCHIVE_EXTENSION)) {
+                .endsWith(ProjectArchiveBridge.ARCHIVE_EXTENSION)) {
             return Response.err("output_path must end in "
-                + HeadlessArchiveBridge.ARCHIVE_EXTENSION);
+                + ProjectArchiveBridge.ARCHIVE_EXTENSION);
         }
 
         Path destination = security.resolveWithinFileRoot(outputPath);

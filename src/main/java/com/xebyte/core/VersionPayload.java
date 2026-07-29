@@ -61,10 +61,7 @@ public final class VersionPayload {
         return appName + " " + version;
     }
 
-    public static Map<String, Object> asMap(String mode, int endpointCount) {
-        if (!"gui".equals(mode) && !"headless".equals(mode)) {
-            throw new IllegalArgumentException("mode must be gui or headless");
-        }
+    public static Map<String, Object> asMap(int endpointCount) {
         if (endpointCount < 0) {
             throw new IllegalArgumentException(
                 "endpointCount must be non-negative");
@@ -78,11 +75,10 @@ public final class VersionPayload {
         payload.put("ghidra_version", ghidraVersion);
         payload.put("java_version", System.getProperty("java.version", "unknown"));
         payload.put("endpoint_count", endpointCount);
-        payload.put("mode", mode);
         return payload;
     }
 
-    public static String toJson(String mode, int endpointCount) {
-        return JsonHelper.toJson(asMap(mode, endpointCount));
+    public static String toJson(int endpointCount) {
+        return JsonHelper.toJson(asMap(endpointCount));
     }
 }

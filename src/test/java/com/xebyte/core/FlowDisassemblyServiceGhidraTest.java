@@ -1400,10 +1400,6 @@ public class FlowDisassemblyServiceGhidraTest {
             return action.call();
         }
 
-        @Override
-        public boolean isHeadless() {
-            return true;
-        }
     }
 
     private static final class InterleavingThreadingStrategy
@@ -1434,10 +1430,6 @@ public class FlowDisassemblyServiceGhidraTest {
             return delegate.executeWrite(targetProgram, transactionName, action);
         }
 
-        @Override
-        public boolean isHeadless() {
-            return true;
-        }
     }
 
     private static final class RecordingStockDisassembler

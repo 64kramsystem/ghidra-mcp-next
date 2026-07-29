@@ -17,8 +17,7 @@ import ghidra.program.model.symbol.SourceType;
  * {@code RefList.getRefs}; {@code RefListV0} returns append order and
  * {@code BigRefListV0} iterates its monotonically increasing table keys. Thus a
  * fixed program modification has a stable stored order without an eager
- * collect-and-sort pass. Both listing truncation and {@code get_xrefs_to}
- * consume that same order so their address/offset handoff is lossless.</p>
+ * collect-and-sort pass. Listing truncation preserves that order.</p>
  */
 final class ReferenceOrdering {
 

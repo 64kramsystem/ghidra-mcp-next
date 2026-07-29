@@ -2,30 +2,25 @@ package com.xebyte.offline;
 
 import com.xebyte.core.AddressEncodingSearchService;
 import com.xebyte.core.AnalysisService;
-import com.xebyte.core.BinaryComparisonService;
 import com.xebyte.core.CommentService;
 import com.xebyte.core.ControlFlowService;
 import com.xebyte.core.CoverageService;
 import com.xebyte.core.DataTypeService;
 import com.xebyte.core.DataRegionService;
 import com.xebyte.core.DebuggerService;
+import com.xebyte.core.EquateService;
 import com.xebyte.core.FunctionService;
 import com.xebyte.core.FlowDisassemblyService;
 import com.xebyte.core.ListingService;
 import com.xebyte.core.ListingRangeService;
 import com.xebyte.core.ListingMutationService;
-import com.xebyte.core.MalwareSecurityService;
 import com.xebyte.core.MemoryBlockService;
 import com.xebyte.core.ProgramProvider;
-import com.xebyte.core.EmulationService;
 import com.xebyte.core.ExportService;
 import com.xebyte.core.ProgramScriptService;
 import com.xebyte.core.SymbolLabelService;
-import com.xebyte.core.SymbolProfileService;
 import com.xebyte.core.ThreadingStrategy;
 import com.xebyte.core.XrefCallGraphService;
-import com.xebyte.headless.HeadlessManagementService;
-import com.xebyte.headless.HeadlessProgramProvider;
 
 /**
  * Builds the full set of service instances that {@link com.xebyte.core.ServerManager}
@@ -48,13 +43,11 @@ public final class ServiceFactory {
         ListingService listingService = new ListingService(provider);
         CommentService commentService = new CommentService(provider, ts);
         SymbolLabelService symbolLabelService = new SymbolLabelService(provider, ts);
+        EquateService equateService = new EquateService(provider, ts);
         FunctionService functionService = new FunctionService(provider, ts);
         XrefCallGraphService xrefCallGraphService = new XrefCallGraphService(provider, ts);
         DataTypeService dataTypeService = new DataTypeService(provider, ts);
-        BinaryComparisonService binaryComparisonService =
-            new BinaryComparisonService(provider, ts);
-        AnalysisService analysisService = new AnalysisService(provider, ts, functionService);
-        MalwareSecurityService malwareSecurityService = new MalwareSecurityService(provider, ts);
+        AnalysisService analysisService = new AnalysisService(provider);
         ProgramScriptService programScriptService = new ProgramScriptService(provider, ts);
         MemoryBlockService memoryBlockService =
             new MemoryBlockService(provider, ts);
@@ -62,9 +55,6 @@ public final class ServiceFactory {
             new DataRegionService(provider, ts);
         ControlFlowService controlFlowService =
             new ControlFlowService(provider, ts);
-        SymbolProfileService symbolProfileService =
-            new SymbolProfileService(provider, ts);
-        EmulationService emulationService = new EmulationService(provider, ts);
         ExportService exportService = new ExportService(provider);
         FlowDisassemblyService flowDisassemblyService =
             new FlowDisassemblyService(provider, ts);
@@ -76,9 +66,6 @@ public final class ServiceFactory {
             new AddressEncodingSearchService(provider, ts);
         CoverageService coverageService = new CoverageService(provider, ts);
 
-        HeadlessManagementService headlessManagementService =
-            new HeadlessManagementService(new HeadlessProgramProvider());
-
         // DebuggerService uses PluginTool only at runtime; scanner only reflects on
         // method signatures, so a null tool is safe for offline scanning.
         DebuggerService debuggerService = new DebuggerService(provider, ts, null);
@@ -88,24 +75,20 @@ public final class ServiceFactory {
             functionService,
             commentService,
             symbolLabelService,
+            equateService,
             xrefCallGraphService,
             dataTypeService,
             analysisService,
-            binaryComparisonService,
-            malwareSecurityService,
             programScriptService,
             memoryBlockService,
             dataRegionService,
             controlFlowService,
-            symbolProfileService,
-            emulationService,
             exportService,
             flowDisassemblyService,
             listingRangeService,
             listingMutationService,
             addressEncodingSearchService,
             coverageService,
-            headlessManagementService,
             debuggerService,
         };
     }

@@ -84,8 +84,6 @@ jobs:
             -DgroupId=ghidra -DartifactId=Graph -Dversion=$GHIDRA_VERSION -Dpackaging=jar
         mvn -q install:install-file -Dfile="$GHIDRA_DIR/Ghidra/Framework/DB/lib/DB.jar" \
             -DgroupId=ghidra -DartifactId=DB -Dversion=$GHIDRA_VERSION -Dpackaging=jar
-        mvn -q install:install-file -Dfile="$GHIDRA_DIR/Ghidra/Framework/Emulation/lib/Emulation.jar" \
-            -DgroupId=ghidra -DartifactId=Emulation -Dversion=$GHIDRA_VERSION -Dpackaging=jar
         mvn -q install:install-file -Dfile="$GHIDRA_DIR/Ghidra/Framework/Help/lib/Help.jar" \
             -DgroupId=ghidra -DartifactId=Help -Dversion=$GHIDRA_VERSION -Dpackaging=jar
 
@@ -109,7 +107,7 @@ jobs:
         mvn -q install:install-file -Dfile="$GHIDRA_DIR/Ghidra/Features/FunctionID/lib/FunctionID.jar" \
             -DgroupId=ghidra -DartifactId=FunctionID -Dversion=$GHIDRA_VERSION -Dpackaging=jar
 
-        echo "✅ Installed 19 Ghidra JARs to Maven local repository"
+        echo "✅ Installed 18 Ghidra JARs to Maven local repository"
 
     - name: Build extension
       run: |
@@ -187,42 +185,16 @@ jobs:
         uv sync --locked --group test
         uv run --no-sync pytest tests/unit/ -v --tb=short
 
-  python-tests-windows:
-    # The bridge has real platform forks (no AF_UNIX in Windows CPython, the
-    # drive-letter socket sweep, and Windows transport behavior). The ubuntu matrix job
-    # only ever executes the POSIX half — this leg executes the Windows half
-    # so both sides of every `os.name == "nt"` branch run on each PR.
-    name: Python Tests (pytest, Windows)
-    runs-on: windows-latest
-
-    steps:
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      with:
-        fetch-depth: 0
-
-    - name: Install uv
-      uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9  # v9.0.0
-      with:
-        enable-cache: true
-        prune-cache: true
-        python-version: '3.12'
-
-    - name: Run Python unit tests
-      # Windows skips a handful of POSIX-only tests; this leg gates on pass/fail.
-      run: |
-        uv sync --locked --group test
-        uv run --no-sync pytest tests/unit/ -v --no-cov --tb=short
-
   build-status:
     name: Build Status
     runs-on: ubuntu-latest
-    needs: [ java-build, python-tests, python-tests-windows ]
+    needs: [ java-build, python-tests ]
     if: always()
 
     steps:
     - name: Report Status
       run: |
-        if [ "${{ needs.java-build.result }}" = "success" ] && [ "${{ needs.python-tests.result }}" = "success" ] && [ "${{ needs.python-tests-windows.result }}" = "success" ]; then
+        if [ "${{ needs.java-build.result }}" = "success" ] && [ "${{ needs.python-tests.result }}" = "success" ]; then
           echo "✅ All tests passed"
           exit 0
         else

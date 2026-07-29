@@ -226,9 +226,13 @@ public class MemoryBlockServiceGhidraTest {
         create("kernal_rom", "0xe000", null, "21222324", null, null,
             true, null, true, false, true, false, "KERNAL image", false);
 
-        JsonArray blocks = JsonParser.parseString(
-            listing.listSegments(0, 100, "").toJson()).getAsJsonArray();
+        JsonObject response = JsonParser.parseString(
+            listing.listSegments(0, 100, "").toJson()).getAsJsonObject();
+        JsonArray blocks = response.getAsJsonArray("segments");
         assertEquals(4, blocks.size());
+        assertEquals(4, response.get("total").getAsInt());
+        assertEquals(0, response.get("offset").getAsInt());
+        assertEquals(100, response.get("limit").getAsInt());
         assertEquals(3, blocks.asList().stream()
             .filter(element -> element.getAsJsonObject()
                 .get("overlay").getAsBoolean()).count());

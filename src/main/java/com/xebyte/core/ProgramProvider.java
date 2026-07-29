@@ -18,10 +18,7 @@ package com.xebyte.core;
 import ghidra.program.model.listing.Program;
 
 /**
- * Interface for providing access to Ghidra programs.
- *
- * This abstraction allows the MCP core to work in both GUI mode
- * (via ProgramManager) and headless mode (via direct program management).
+ * Access to programs open in Ghidra's GUI.
  */
 public interface ProgramProvider {
 
@@ -56,9 +53,6 @@ public interface ProgramProvider {
 
     /**
      * Close a program when the provider owns the program lifecycle.
-     *
-     * <p>GUI providers usually close through Ghidra's ProgramManager, so the
-     * default is a no-op. Headless providers should override this.
      *
      * @param program The program to close
      * @return true if the provider closed the program

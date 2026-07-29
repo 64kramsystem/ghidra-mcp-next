@@ -18,9 +18,6 @@ import ghidra.program.model.listing.Program;
 import ghidra.util.task.TaskMonitor;
 
 /** Atomic range data typing and generic pointer-table materialization. */
-@McpToolGroup(
-    value = "data",
-    description = "Define fixed data ranges and generic pointer tables")
 public final class DataRegionService {
     static final String REGION_ITEM_SCHEMA =
         "{\"oneOf\":["
@@ -105,9 +102,7 @@ public final class DataRegionService {
         path = "/apply_data_regions",
         method = "POST",
         description =
-            "Atomically define fixed data ranges and generic pointer tables",
-        category = "data",
-        supportsSyntheticDryRun = false)
+            "Atomically define fixed data ranges and generic pointer tables")
     public Response applyDataRegions(
             @Param(
                 value = "regions",

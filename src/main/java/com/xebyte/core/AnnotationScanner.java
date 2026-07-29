@@ -11,8 +11,6 @@ import java.util.logging.Logger;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonParser;
 
-import ghidra.program.model.listing.Program;
-
 /**
  * Discovers {@link McpTool}-annotated methods on service instances via reflection
  * and generates {@link EndpointDef} records for HTTP registration plus JSON schemas
@@ -41,7 +39,6 @@ public class AnnotationScanner {
 
     private final List<EndpointDef> endpoints = new ArrayList<>();
     private final List<ToolDescriptor> descriptors = new ArrayList<>();
-    private final ProgramProvider programProvider;
 
     /**
      * Scan the given service instances for {@link McpTool}-annotated methods.
@@ -49,17 +46,10 @@ public class AnnotationScanner {
      * @param services service objects to scan (e.g., ListingService, FunctionService, ...)
      */
     public AnnotationScanner(Object... services) {
-        this(null, services);
+        scanServices(services);
     }
 
-    /**
-     * Scan the given service instances for {@link McpTool}-annotated methods.
-     *
-     * @param programProvider provider for resolving programs (enables dry-run support)
-     * @param services        service objects to scan
-     */
-    public AnnotationScanner(ProgramProvider programProvider, Object... services) {
-        this.programProvider = programProvider;
+    private void scanServices(Object[] services) {
         for (Object service : services) {
             scanService(service);
         }
@@ -95,12 +85,6 @@ public class AnnotationScanner {
     // ==================================================================
 
     private void scanService(Object service) {
-        // Read @McpToolGroup for class-level category and description
-        McpToolGroup groupAnn = service.getClass().getAnnotation(McpToolGroup.class);
-        String groupCategory = groupAnn != null ? groupAnn.value()
-            : service.getClass().getSimpleName().toLowerCase().replaceAll("service$", "");
-        String groupDescription = groupAnn != null ? groupAnn.description() : "";
-
         for (Method method : service.getClass().getDeclaredMethods()) {
             McpTool tool = method.getAnnotation(McpTool.class);
             if (tool == null) continue;
@@ -114,10 +98,7 @@ public class AnnotationScanner {
                     tool.method(),
                     handler,
                     nativeByteLimits(bindings)));
-                // Use @McpTool.category if set, otherwise fall back to @McpToolGroup or class name
-                String category = (tool.category() != null && !tool.category().isEmpty())
-                    ? tool.category() : groupCategory;
-                descriptors.add(buildDescriptor(tool, method, bindings, category, groupDescription));
+                descriptors.add(buildDescriptor(tool, bindings));
                 LOG.fine("Registered annotated endpoint: " + tool.method() + " " + tool.path());
             } catch (Exception e) {
                 LOG.log(Level.WARNING, "Failed to register " + tool.path() + ": " + e.getMessage(), e);
@@ -171,39 +152,12 @@ public class AnnotationScanner {
 
     private EndpointDef.EndpointHandler createHandler(Object service, Method method,
             McpTool tool, ParamBinding[] bindings) {
-        boolean isWrite = "POST".equalsIgnoreCase(tool.method());
-        boolean supportsSyntheticDryRun =
-            tool.supportsDryRun() && tool.supportsSyntheticDryRun();
         return (query, body) -> {
             try {
-                if (isWrite && !supportsSyntheticDryRun
-                        && "true".equalsIgnoreCase(query.get("dry_run"))) {
-                    return Response.err(
-                        tool.path()
-                            + (tool.supportsDryRun()
-                                ? " does not support synthetic query dry_run"
-                                : " does not support dry_run"));
-                }
                 Object[] args = new Object[bindings.length];
                 for (int i = 0; i < bindings.length; i++) {
                     if (bindings[i] != null) {
                         args[i] = resolveParam(bindings[i], query, body);
-                    }
-                }
-
-                // Dry-run support: wrap POST endpoints in a transaction that always rolls back
-                if (isWrite && supportsSyntheticDryRun
-                        && "true".equalsIgnoreCase(query.get("dry_run"))
-                        && programProvider != null) {
-                    Program program = resolveProgramForDryRun(bindings, query);
-                    if (program != null) {
-                        int tx = program.startTransaction("[DRY RUN] " + tool.path());
-                        try {
-                            Response result = (Response) method.invoke(service, args);
-                            return wrapDryRunResponse(result);
-                        } finally {
-                            program.endTransaction(tx, false); // Always rollback
-                        }
                     }
                 }
 
@@ -220,36 +174,6 @@ public class AnnotationScanner {
         };
     }
 
-    /**
-     * Resolve the Program for dry-run wrapping by finding the "program" param binding.
-     */
-    private Program resolveProgramForDryRun(ParamBinding[] bindings, Map<String, String> query) {
-        // Look for a @Param(value = "program") binding
-        for (ParamBinding binding : bindings) {
-            if (binding != null && "program".equals(binding.param.value())) {
-                String programName = query.get("program");
-                if (programName != null && !programName.isEmpty()) {
-                    return programProvider.getProgram(programName);
-                }
-                break;
-            }
-        }
-        // Fall back to current program
-        return programProvider.getCurrentProgram();
-    }
-
-    /**
-     * Wrap a response to indicate it was a dry-run (no changes were committed).
-     */
-    private static Response wrapDryRunResponse(Response response) {
-        String json = response.toJson();
-        if (json.startsWith("{")) {
-            // Inject dry_run flag into the JSON object
-            return Response.text("{\"dry_run\":true," + json.substring(1));
-        }
-        return Response.text("{\"dry_run\":true,\"result\":" + json + "}");
-    }
-
     // ==================================================================
     // Parameter resolution
     // ==================================================================
@@ -264,14 +188,7 @@ public class AnnotationScanner {
     }
 
     private static Object resolveQueryParam(ParamBinding binding, Map<String, String> query) {
-        // Try canonical name first, then aliases
         String value = query.get(binding.param.value());
-        if (value == null && binding.aliases != null) {
-            for (String alias : binding.aliases) {
-                value = query.get(alias);
-                if (value != null) break;
-            }
-        }
         Class<?> type = binding.javaType;
         String def = binding.param.defaultValue();
         boolean hasDef = !NO_DEFAULT.equals(def);
@@ -321,14 +238,7 @@ public class AnnotationScanner {
 
     @SuppressWarnings("unchecked")
     private static Object resolveBodyParam(ParamBinding binding, Map<String, Object> body) {
-        // Try canonical name first, then aliases
         Object raw = body.get(binding.param.value());
-        if (raw == null && binding.aliases != null) {
-            for (String alias : binding.aliases) {
-                raw = body.get(alias);
-                if (raw != null) break;
-            }
-        }
         Class<?> type = binding.javaType;
         String def = binding.param.defaultValue();
         boolean hasDef = !NO_DEFAULT.equals(def);
@@ -571,8 +481,8 @@ public class AnnotationScanner {
     // Schema generation
     // ==================================================================
 
-    private ToolDescriptor buildDescriptor(McpTool tool, Method method, ParamBinding[] bindings,
-            String category, String categoryDescription) {
+    private ToolDescriptor buildDescriptor(
+            McpTool tool, ParamBinding[] bindings) {
         List<ParamDescriptor> params = new ArrayList<>();
         for (ParamBinding binding : bindings) {
             if (binding == null) continue;
@@ -589,12 +499,11 @@ public class AnnotationScanner {
                     || !NO_DEFAULT.equals(binding.param.defaultValue()),
                 NO_DEFAULT.equals(binding.param.defaultValue()) ? null : binding.param.defaultValue(),
                 binding.param.description(),
-                binding.param.paramType(),
                 schemaFragment
             ));
         }
-        return new ToolDescriptor(tool.path(), tool.method(), tool.description(),
-            category, categoryDescription, tool.supportsDryRun(), params);
+        return new ToolDescriptor(
+            tool.path(), tool.method(), tool.description(), params);
     }
 
     private static String validateSchemaFragment(Param param) {
@@ -638,7 +547,6 @@ public class AnnotationScanner {
 
     /** Describes an MCP tool for schema generation. */
     public record ToolDescriptor(String path, String method, String description,
-            String category, String categoryDescription, boolean supportsDryRun,
             List<ParamDescriptor> params) {
 
         /** Serialize to JSON. */
@@ -648,15 +556,6 @@ public class AnnotationScanner {
             sb.append(", \"method\": ").append(jsonStr(method));
             if (description != null && !description.isEmpty()) {
                 sb.append(", \"description\": ").append(jsonStr(description));
-            }
-            if (category != null && !category.isEmpty()) {
-                sb.append(", \"category\": ").append(jsonStr(category));
-            }
-            if (categoryDescription != null && !categoryDescription.isEmpty()) {
-                sb.append(", \"category_description\": ").append(jsonStr(categoryDescription));
-            }
-            if (!supportsDryRun) {
-                sb.append(", \"supports_dry_run\": false");
             }
             sb.append(", \"params\": [");
             for (int i = 0; i < params.size(); i++) {
@@ -671,14 +570,7 @@ public class AnnotationScanner {
     /** Describes a tool parameter for schema generation. */
     public record ParamDescriptor(String name, String type, String source,
             boolean optional, String defaultValue, String description,
-            String paramType, String schema) {
-        public ParamDescriptor(
-                String name, String type, String source,
-                boolean optional, String defaultValue, String description,
-                String paramType) {
-            this(name, type, source, optional, defaultValue, description,
-                paramType, "");
-        }
+            String schema) {
 
         /** Serialize to JSON. */
         public String toJson() {
@@ -695,9 +587,6 @@ public class AnnotationScanner {
             }
             if (description != null && !description.isEmpty()) {
                 sb.append(", \"description\": ").append(jsonStr(description));
-            }
-            if (paramType != null && !paramType.isEmpty()) {
-                sb.append(", \"param_type\": ").append(jsonStr(paramType));
             }
             if (schema != null && !schema.isBlank()) {
                 String trimmed = schema.trim();
@@ -760,9 +649,5 @@ public class AnnotationScanner {
     // Internal binding record
     // ==================================================================
 
-    private record ParamBinding(Param param, Class<?> javaType, String[] aliases) {
-        ParamBinding(Param param, Class<?> javaType) {
-            this(param, javaType, param.aliases());
-        }
-    }
+    private record ParamBinding(Param param, Class<?> javaType) {}
 }

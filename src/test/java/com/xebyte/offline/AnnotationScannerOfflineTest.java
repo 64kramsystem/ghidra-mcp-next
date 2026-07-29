@@ -39,7 +39,7 @@ public class AnnotationScannerOfflineTest extends TestCase {
     @Override
     protected void setUp() {
         ProgramProvider provider = ServiceFactory.stubProvider();
-        scanner = new AnnotationScanner(provider, ServiceFactory.buildAllServices());
+        scanner = new AnnotationScanner(ServiceFactory.buildAllServices());
     }
 
     /** Scanner must discover a meaningful number of endpoints — empty means a wiring regression. */
@@ -213,26 +213,6 @@ public class AnnotationScannerOfflineTest extends TestCase {
 
         assertTrue("Schema defaults have the wrong JSON type: " + broken,
             broken.isEmpty());
-
-        JsonObject search = tools.asList().stream()
-            .map(JsonElement::getAsJsonObject)
-            .filter(tool -> "/search_functions_enhanced".equals(
-                tool.get("path").getAsString()))
-            .findFirst().orElseThrow();
-        JsonObject minXrefs = search.getAsJsonArray("params").asList().stream()
-            .map(JsonElement::getAsJsonObject)
-            .filter(parameter -> "min_xrefs".equals(
-                parameter.get("name").getAsString()))
-            .findFirst().orElseThrow();
-        JsonObject sortBy = search.getAsJsonArray("params").asList().stream()
-            .map(JsonElement::getAsJsonObject)
-            .filter(parameter -> "sort_by".equals(
-                parameter.get("name").getAsString()))
-            .findFirst().orElseThrow();
-        assertFalse("nullable integer sentinel must not be a schema default",
-            minXrefs.has("default"));
-        assertTrue(sortBy.get("default").getAsJsonPrimitive().isString());
-        assertEquals("address", sortBy.get("default").getAsString());
     }
 
     /**

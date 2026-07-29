@@ -20,9 +20,6 @@ import ghidra.util.task.TaskMonitor;
 /**
  * Canonical initialized, uninitialized, and overlay memory-block API.
  */
-@McpToolGroup(
-    value = "memory",
-    description = "Create and transform initialized or overlay memory blocks")
 public final class MemoryBlockService {
 
     private final ProgramProvider programProvider;
@@ -140,16 +137,13 @@ public final class MemoryBlockService {
         path = "/create_memory_block",
         method = "POST",
         description =
-            "Create an initialized or uninitialized ordinary or overlay memory block",
-        category = "memory",
-        supportsSyntheticDryRun = false)
+            "Create an initialized or uninitialized ordinary or overlay memory block")
     public Response createMemoryBlock(
             @Param(value = "name", source = ParamSource.BODY)
                 String name,
             @Param(
                 value = "start",
-                source = ParamSource.BODY,
-                paramType = "address")
+                source = ParamSource.BODY)
                 String start,
             @Param(
                 value = "length",
@@ -161,7 +155,9 @@ public final class MemoryBlockService {
                 value = "bytes",
                 source = ParamSource.BODY,
                 optional = true,
-                nativeByteLimit = (int) MemoryBlockCore.MAX_SOURCE_BYTES)
+                nativeByteLimit = (int) MemoryBlockCore.MAX_SOURCE_BYTES,
+                description =
+                    "Hex string or JSON byte array; maximum 1048576 bytes")
                 Object bytes,
             @Param(
                 value = "file_path",
@@ -297,9 +293,7 @@ public final class MemoryBlockService {
         path = "/update_memory_block",
         method = "POST",
         description =
-            "Atomically rename or update memory-block metadata",
-        category = "memory",
-        supportsSyntheticDryRun = false)
+            "Atomically rename or update memory-block metadata")
     public Response updateMemoryBlock(
             @Param(value = "name", source = ParamSource.BODY)
                 String name,
@@ -391,16 +385,13 @@ public final class MemoryBlockService {
         path = "/split_memory_block",
         method = "POST",
         description =
-            "Split a memory block while preserving bytes and metadata",
-        category = "memory",
-        supportsSyntheticDryRun = false)
+            "Split a memory block while preserving bytes and metadata")
     public Response splitMemoryBlock(
             @Param(value = "name", source = ParamSource.BODY)
                 String name,
             @Param(
                 value = "split_address",
-                source = ParamSource.BODY,
-                paramType = "address")
+                source = ParamSource.BODY)
                 String splitAddress,
             @Param(
                 value = "dry_run",
@@ -452,16 +443,13 @@ public final class MemoryBlockService {
         path = "/move_memory_block",
         method = "POST",
         description =
-            "Move a non-overlay memory block after complete overlap validation",
-        category = "memory",
-        supportsSyntheticDryRun = false)
+            "Move a non-overlay memory block after complete overlap validation")
     public Response moveMemoryBlock(
             @Param(value = "name", source = ParamSource.BODY)
                 String name,
             @Param(
                 value = "new_start",
-                source = ParamSource.BODY,
-                paramType = "address")
+                source = ParamSource.BODY)
                 String newStart,
             @Param(
                 value = "dry_run",
@@ -512,19 +500,19 @@ public final class MemoryBlockService {
         description =
             "Atomically write bytes inside one initialized block; "
                 + "overwrite_bytes reports at most 4096 coalesced differing "
-                + "ranges, so split requests that exceed the limit",
-        category = "memory",
-        supportsSyntheticDryRun = false)
+                + "ranges, so split requests that exceed the limit")
     public Response writeMemoryBytes(
             @Param(
                 value = "start",
-                source = ParamSource.BODY,
-                paramType = "address")
+                source = ParamSource.BODY)
                 String start,
             @Param(
                 value = "bytes",
                 source = ParamSource.BODY,
-                nativeByteLimit = (int) MemoryBlockCore.MAX_SOURCE_BYTES)
+                nativeByteLimit = (int) MemoryBlockCore.MAX_SOURCE_BYTES,
+                description =
+                    "Nonempty hex string or JSON byte array; maximum "
+                        + "1048576 bytes")
                 Object bytes,
             @Param(
                 value = "conflict_policy",
@@ -584,9 +572,7 @@ public final class MemoryBlockService {
         method = "POST",
         description =
             "Preview and atomically delete one exact memory block with "
-                + "explicit inbound-reference handling",
-        category = "memory",
-        supportsSyntheticDryRun = false)
+                + "explicit inbound-reference handling")
     public Response deleteMemoryBlock(
             @Param(value = "name", source = ParamSource.BODY)
                 String name,
@@ -638,9 +624,7 @@ public final class MemoryBlockService {
         path = "/resize_memory_block",
         method = "POST",
         description =
-            "Preview and atomically shrink or grow one exact memory block",
-        category = "memory",
-        supportsSyntheticDryRun = false)
+            "Preview and atomically shrink or grow one exact memory block")
     public Response resizeMemoryBlock(
             @Param(
                 value = "name",
@@ -649,8 +633,7 @@ public final class MemoryBlockService {
             @Param(
                 value = "new_end",
                 source = ParamSource.BODY,
-                optional = true,
-                paramType = "address")
+                optional = true)
                 String newEnd,
             @Param(
                 value = "new_length",
@@ -676,7 +659,9 @@ public final class MemoryBlockService {
                 value = "bytes",
                 source = ParamSource.BODY,
                 optional = true,
-                nativeByteLimit = (int) MemoryBlockCore.MAX_SOURCE_BYTES)
+                nativeByteLimit = (int) MemoryBlockCore.MAX_SOURCE_BYTES,
+                description =
+                    "Hex string or JSON byte array; maximum 1048576 bytes")
                 Object bytes,
             @Param(
                 value = "file_path",
@@ -753,14 +738,11 @@ public final class MemoryBlockService {
         method = "POST",
         description =
             "Preview or atomically patch hexadecimal bytes in one initialized "
-                + "ordinary or overlay block while preserving annotations",
-        category = "memory",
-        supportsSyntheticDryRun = false)
+                + "ordinary or overlay block while preserving annotations")
     public Response patchBytes(
             @Param(
                 value = "address",
-                source = ParamSource.BODY,
-                paramType = "address")
+                source = ParamSource.BODY)
                 String address,
             @Param(
                 value = "bytes",

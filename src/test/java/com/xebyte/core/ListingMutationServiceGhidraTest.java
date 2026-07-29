@@ -1113,9 +1113,5 @@ public class ListingMutationServiceGhidraTest {
             }
         }
 
-        @Override
-        public boolean isHeadless() {
-            return true;
-        }
     }
 }
