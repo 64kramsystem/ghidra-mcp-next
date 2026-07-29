@@ -26,10 +26,10 @@ def parse(raw: dict) -> list[dict]:
             raise ValueError("Every schema tool must be an object.")
         endpoint = item.get("path")
         method = str(item.get("method", "GET")).upper()
-        name = item.get("name") or str(endpoint or "").lstrip("/")
+        name = str(endpoint or "").lstrip("/").replace("/", "_")
         if not endpoint or method not in {"GET", "POST"}:
             raise ValueError(f"Invalid endpoint for tool {name!r}.")
-        if not isinstance(name, str) or not TOOL_NAME.fullmatch(name):
+        if not TOOL_NAME.fullmatch(name):
             raise ValueError(f"Invalid MCP tool name {name!r}.")
         if name in names:
             raise ValueError(f"Duplicate MCP tool name {name!r}.")
