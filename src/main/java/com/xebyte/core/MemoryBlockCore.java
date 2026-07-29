@@ -416,17 +416,29 @@ final class MemoryBlockCore {
     }
 
     CreatePlan planCreate(Program program, CreateRequest request) {
+        return planCreate(program, request, null, null);
+    }
+
+    CreatePlan planCreate(
+            Program program,
+            CreateRequest request,
+            MemoryBlock ignoredBlock,
+            String predictedSpace) {
         Objects.requireNonNull(program, "program");
         Objects.requireNonNull(request, "request");
         validateName(request.name(), "name");
-        if (program.getMemory().getBlock(request.name()) != null) {
+        MemoryBlock named = program.getMemory().getBlock(request.name());
+        if (named != null && named != ignoredBlock) {
             throw new IllegalArgumentException(
                 "memory block name already exists: " + request.name());
         }
         Address start = parseAddress(program, request.start(), "start");
-        if (start.getAddressSpace().isOverlaySpace()) {
+        if (start.getAddressSpace().isOverlaySpace()
+                && request.overlay()) {
             throw new IllegalArgumentException(
-                "create start must not use an existing overlay address space");
+                "nested overlay creation is unsupported; use overlay=false "
+                    + "to add a block to the explicitly qualified existing "
+                    + "overlay address space");
         }
         long length = request.source().size();
         if (length <= 0) {
@@ -434,14 +446,14 @@ final class MemoryBlockCore {
         }
         Address end = checkedEnd(start, length);
         if (!request.overlay()) {
-            rejectOverlap(program.getMemory(), start, end, null);
+            rejectOverlap(program.getMemory(), start, end, ignoredBlock);
         }
         BlockDescriptor predicted = predictedCreate(
             request,
             start,
             end,
             length,
-            request.overlay()
+            predictedSpace != null ? predictedSpace : request.overlay()
                 ? predictOverlaySpaceName(program, request.name())
                 : start.getAddressSpace().getName());
         return new CreatePlan(request, start, length, predicted);
@@ -832,13 +844,24 @@ final class MemoryBlockCore {
             Address end,
             long length,
             String space) {
+        boolean overlay =
+            request.overlay() || start.getAddressSpace().isOverlaySpace();
+        String overlayBaseSpace = null;
+        if (request.overlay()) {
+            overlayBaseSpace = start.getAddressSpace().getName();
+        }
+        else if (start.getAddressSpace()
+                instanceof OverlayAddressSpace existingOverlay) {
+            overlayBaseSpace =
+                existingOverlay.getOverlayedSpace().getName();
+        }
         return new BlockDescriptor(
             request.name(),
             start.toString(false),
             end.toString(false),
             length,
             space,
-            request.overlay(),
+            overlay,
             request.source().initialized(),
             request.source().source(),
             request.read(),
@@ -852,9 +875,7 @@ final class MemoryBlockCore {
             false,
             start.getAddressSpace().isLoadedMemorySpace(),
             request.source().source(),
-            request.overlay()
-                ? start.getAddressSpace().getName()
-                : null,
+            overlayBaseSpace,
             List.of(new SourceInfoDescriptor(
                 start.toString(false),
                 end.toString(false),

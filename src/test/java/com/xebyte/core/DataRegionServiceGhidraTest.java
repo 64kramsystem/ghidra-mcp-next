@@ -160,6 +160,90 @@ public class DataRegionServiceGhidraTest {
     }
 
     @Test
+    public void splitPartnerDiscoveryFindsBothLayoutsAndReturnsApplicableRegions()
+            throws Exception {
+        builder.setBytes("0x2000", "00 10 20");
+        builder.setBytes("0x2040", "30 30 30");
+        Map<String, Object> lowHigh = responseMap(
+            service.findSplitPointerPartners(
+                defaultSpace() + ":2000", 3,
+                defaultSpace() + ":2040", defaultSpace() + ":2042",
+                defaultSpace() + ":3000", defaultSpace() + ":30ff",
+                100, 0, ""));
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> lowHighRows =
+            (List<Map<String, Object>>) lowHigh.get("proposals");
+        assertEquals(1, lowHighRows.size());
+        assertEquals("split_low_high", lowHighRows.get(0).get("layout"));
+        assertEquals(List.of(
+            defaultSpace() + ":3000",
+            defaultSpace() + ":3010",
+            defaultSpace() + ":3020"), lowHighRows.get(0).get("target_sample"));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> applicable =
+            (Map<String, Object>) lowHighRows.get(0).get("apply_data_regions");
+        JsonObject preview = response(
+            service.applyDataRegions(List.of(applicable), true, ""));
+        assertEquals("split_pointer_table",
+            preview.getAsJsonArray("regions").get(0).getAsJsonObject()
+                .get("kind").getAsString());
+
+        builder.setBytes("0x2100", "30 30 30");
+        builder.setBytes("0x2140", "00 10 20");
+        Map<String, Object> highLow = responseMap(
+            service.findSplitPointerPartners(
+                defaultSpace() + ":2100", 3,
+                defaultSpace() + ":2140", defaultSpace() + ":2142",
+                defaultSpace() + ":3000", defaultSpace() + ":30ff",
+                100, 0, ""));
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> highLowRows =
+            (List<Map<String, Object>>) highLow.get("proposals");
+        assertEquals(1, highLowRows.size());
+        assertEquals("split_high_low", highLowRows.get(0).get("layout"));
+        assertEquals(true, highLow.get("false_positives_possible"));
+    }
+
+    @Test
+    public void splitPartnerDiscoveryEnforcesQualificationAndFixedWorkCap() {
+        Response unqualified = service.findSplitPointerPartners(
+            "0x2000", 3,
+            defaultSpace() + ":2040", defaultSpace() + ":2042",
+            defaultSpace() + ":3000", defaultSpace() + ":30ff",
+            100, 0, "");
+        assertTrue(unqualified.toJson(), unqualified instanceof Response.Err);
+        assertTrue(unqualified.toJson().contains("explicitly qualified"));
+
+        Response excessive = service.findSplitPointerPartners(
+            defaultSpace() + ":1800", 1000,
+            defaultSpace() + ":2200", defaultSpace() + ":2dff",
+            defaultSpace() + ":3000", defaultSpace() + ":30ff",
+            100, 0, "");
+        assertTrue(excessive.toJson(), excessive instanceof Response.Err);
+        assertTrue(excessive.toJson().contains("fixed cap"));
+    }
+
+    @Test
+    public void splitPartnerDiscoveryPagesLargeHypothesisSetsExactly()
+            throws Exception {
+        builder.setBytes("0x2200", "10");
+        builder.setBytes("0x2240", "08 09 0a 0b 0c 0d 0e 0f");
+        Map<String, Object> result = responseMap(
+            service.findSplitPointerPartners(
+                defaultSpace() + ":2200", 1,
+                defaultSpace() + ":2240", defaultSpace() + ":2247",
+                defaultSpace() + ":0800", defaultSpace() + ":7fff",
+                3, 5, ""));
+        assertEquals(16L, result.get("total_matched"));
+        assertEquals(3, result.get("returned"));
+        assertEquals(true, result.get("has_more"));
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> rows =
+            (List<Map<String, Object>>) result.get("proposals");
+        assertEquals(3, rows.size());
+    }
+
+    @Test
     public void pristineSplitTableUsesBuiltinByte() throws Exception {
         ProgramBuilder pristineBuilder = new ProgramBuilder(
             "pristine-split-6502",
@@ -1595,6 +1679,14 @@ public class DataRegionServiceGhidraTest {
             throw new AssertionError(error.message());
         }
         return JsonParser.parseString(response.toJson()).getAsJsonObject();
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> responseMap(Response response) {
+        if (response instanceof Response.Err error) {
+            throw new AssertionError(error.message());
+        }
+        return (Map<String, Object>) ((Response.Ok) response).data();
     }
 
     private static final class TestBitFieldDataType
