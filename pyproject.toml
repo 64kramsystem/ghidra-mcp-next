@@ -70,3 +70,4 @@ testpaths = ["tests/unit"]
 
 [tool.uv]
 package = true
+cache-keys = [{ file = "pyproject.toml" }, { file = "pom.xml" }]
