@@ -62,6 +62,26 @@ public interface ProgramProvider {
     }
 
     /**
+     * Retain a program when no GUI ProgramManager owns its lifecycle.
+     *
+     * @param program The program to retain
+     * @return true if the provider owns the program after this call
+     */
+    default boolean retainProgram(Program program) {
+        return false;
+    }
+
+    /**
+     * Check whether this provider owns a program's lifecycle.
+     *
+     * @param program The program to check
+     * @return true if the provider owns the program
+     */
+    default boolean ownsProgram(Program program) {
+        return false;
+    }
+
+    /**
      * Check if any program is currently open.
      *
      * @return true if at least one program is open

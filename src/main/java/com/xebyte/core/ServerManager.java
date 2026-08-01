@@ -2,7 +2,6 @@ package com.xebyte.core;
 
 import com.sun.net.httpserver.HttpServer;
 
-import ghidra.app.services.ProgramManager;
 import ghidra.framework.model.Project;
 import ghidra.framework.plugintool.PluginTool;
 import ghidra.program.model.listing.Program;
@@ -76,14 +75,14 @@ public final class ServerManager {
             activeToolId.set(tools.keySet().stream().findFirst().orElse(null));
         }
         if (tools.isEmpty()) {
-            stop();
+            stop(true);
             instance = null;
             return;
         }
         if (toolId.equals(serviceOwner)) {
             String nextId = tools.keySet().iterator().next();
             PluginTool nextTool = tools.get(nextId);
-            stop();
+            stop(false);
             try {
                 start(nextId, nextTool);
             } catch (IOException error) {
@@ -106,7 +105,9 @@ public final class ServerManager {
 
     private void start(String owner, PluginTool tool) throws IOException {
         serviceOwner = owner;
-        programProvider = new MultiToolProgramProvider(tools, activeToolId);
+        if (programProvider == null) {
+            programProvider = new MultiToolProgramProvider(tools, activeToolId);
+        }
         ThreadingStrategy threading = new SwingThreadingStrategy();
 
         FunctionService functions = new FunctionService(programProvider, threading);
@@ -131,7 +132,8 @@ public final class ServerManager {
             new AddressEncodingSearchService(programProvider, threading),
             new CoverageService(programProvider, threading),
             new DebuggerService(programProvider, threading, tool),
-            new GuiProjectService(this::getActiveTool),
+            new GuiProjectService(
+                this::getActiveTool, programProvider::releaseOwnedPrograms),
             new GuiContextService(this::getActiveTool, programProvider));
 
         startUds();
@@ -296,12 +298,9 @@ public final class ServerManager {
         info.put("tcp_port", getBoundTcpPort());
 
         Set<String> names = new LinkedHashSet<>();
-        for (PluginTool candidate : tools.values()) {
-            ProgramManager manager = candidate.getService(ProgramManager.class);
-            if (manager == null) {
-                continue;
-            }
-            for (Program program : manager.getAllOpenPrograms()) {
+        MultiToolProgramProvider provider = programProvider;
+        if (provider != null) {
+            for (Program program : provider.getAllOpenPrograms()) {
                 names.add(program.getName());
             }
         }
@@ -313,7 +312,7 @@ public final class ServerManager {
         return info;
     }
 
-    private void stop() {
+    private void stop(boolean releasePrograms) {
         if (tcpServer != null) {
             tcpServer.stop(0);
             tcpServer = null;
@@ -326,8 +325,13 @@ public final class ServerManager {
             udsServer.stop();
             udsServer = null;
         }
+        if (releasePrograms && programProvider != null) {
+            programProvider.releaseOwnedPrograms();
+        }
         scanner = null;
-        programProvider = null;
+        if (releasePrograms) {
+            programProvider = null;
+        }
         serviceOwner = null;
     }
 

@@ -5,7 +5,6 @@ import ghidra.framework.plugintool.PluginTool;
 import ghidra.program.model.listing.Program;
 
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -19,6 +18,10 @@ public class MultiToolProgramProvider implements ProgramProvider {
 
     private final Map<String, PluginTool> tools;
     private final AtomicReference<String> activeToolId;
+    private final Object ownedLock = new Object();
+    private final Set<Program> ownedPrograms =
+        Collections.newSetFromMap(new IdentityHashMap<>());
+    private Program ownedCurrent;
 
     public MultiToolProgramProvider(Map<String, PluginTool> tools,
                                     AtomicReference<String> activeToolId) {
@@ -70,7 +73,10 @@ public class MultiToolProgramProvider implements ProgramProvider {
             Program p = pm.getCurrentProgram();
             if (p != null) return p;
         }
-        return null;
+        synchronized (ownedLock) {
+            pruneClosedOwnedPrograms();
+            return ownedCurrent;
+        }
     }
 
     @Override
@@ -80,46 +86,38 @@ public class MultiToolProgramProvider implements ProgramProvider {
         }
         String searchName = name.trim();
 
-        List<ProgramManager> managers = findAllProgramManagers();
+        Program[] programs = getAllOpenPrograms();
 
         // Exact project-path match (case-insensitive)
-        for (ProgramManager pm : managers) {
-            for (Program prog : pm.getAllOpenPrograms()) {
-                if (prog.getDomainFile() != null
-                        && prog.getDomainFile().getPathname().equalsIgnoreCase(searchName)) {
-                    return prog;
-                }
+        for (Program prog : programs) {
+            if (prog.getDomainFile() != null
+                    && prog.getDomainFile().getPathname().equalsIgnoreCase(searchName)) {
+                return prog;
             }
         }
 
         // Exact name match (case-insensitive)
-        for (ProgramManager pm : managers) {
-            for (Program prog : pm.getAllOpenPrograms()) {
-                if (prog.getName().equalsIgnoreCase(searchName)) {
-                    return prog;
-                }
+        for (Program prog : programs) {
+            if (prog.getName().equalsIgnoreCase(searchName)) {
+                return prog;
             }
         }
 
         // Partial match on path
-        for (ProgramManager pm : managers) {
-            for (Program prog : pm.getAllOpenPrograms()) {
-                if (prog.getDomainFile() != null
-                        && prog.getDomainFile().getPathname().toLowerCase().contains(searchName.toLowerCase())) {
-                    return prog;
-                }
+        for (Program prog : programs) {
+            if (prog.getDomainFile() != null
+                    && prog.getDomainFile().getPathname().toLowerCase().contains(searchName.toLowerCase())) {
+                return prog;
             }
         }
 
         // Match without extension
-        for (ProgramManager pm : managers) {
-            for (Program prog : pm.getAllOpenPrograms()) {
-                String pname = prog.getName();
-                String nameNoExt = pname.contains(".") ?
-                    pname.substring(0, pname.lastIndexOf('.')) : pname;
-                if (nameNoExt.equalsIgnoreCase(searchName)) {
-                    return prog;
-                }
+        for (Program prog : programs) {
+            String pname = prog.getName();
+            String nameNoExt = pname.contains(".") ?
+                pname.substring(0, pname.lastIndexOf('.')) : pname;
+            if (nameNoExt.equalsIgnoreCase(searchName)) {
+                return prog;
             }
         }
 
@@ -132,6 +130,7 @@ public class MultiToolProgramProvider implements ProgramProvider {
         for (ProgramManager pm : findAllProgramManagers()) {
             Collections.addAll(seen, pm.getAllOpenPrograms());
         }
+        Collections.addAll(seen, ownedSnapshot());
         return seen.toArray(new Program[0]);
     }
 
@@ -145,6 +144,86 @@ public class MultiToolProgramProvider implements ProgramProvider {
                 }
             }
         }
+        synchronized (ownedLock) {
+            pruneClosedOwnedPrograms();
+            if (ownedPrograms.contains(program)) {
+                ownedCurrent = program;
+            }
+        }
+    }
+
+    @Override
+    public boolean retainProgram(Program program) {
+        if (program == null || program.isClosed()) {
+            return false;
+        }
+        synchronized (ownedLock) {
+            pruneClosedOwnedPrograms();
+            if (ownedPrograms.contains(program)) {
+                ownedCurrent = program;
+                return true;
+            }
+            if (!program.addConsumer(this)) {
+                return false;
+            }
+            ownedPrograms.add(program);
+            ownedCurrent = program;
+            return true;
+        }
+    }
+
+    @Override
+    public boolean ownsProgram(Program program) {
+        synchronized (ownedLock) {
+            pruneClosedOwnedPrograms();
+            return ownedPrograms.contains(program);
+        }
+    }
+
+    @Override
+    public boolean closeProgram(Program program) {
+        boolean release;
+        synchronized (ownedLock) {
+            pruneClosedOwnedPrograms();
+            release = ownedPrograms.remove(program);
+            if (ownedCurrent == program) {
+                ownedCurrent = null;
+            }
+        }
+        if (release && !program.isClosed() && program.isUsedBy(this)) {
+            program.release(this);
+        }
+        return release;
+    }
+
+    /** Release every program retained without a GUI ProgramManager. */
+    public void releaseOwnedPrograms() {
+        Program[] programs;
+        synchronized (ownedLock) {
+            programs = ownedPrograms.toArray(new Program[0]);
+            ownedPrograms.clear();
+            ownedCurrent = null;
+        }
+        for (Program program : programs) {
+            if (!program.isClosed() && program.isUsedBy(this)) {
+                program.release(this);
+            }
+        }
+    }
+
+    private Program[] ownedSnapshot() {
+        synchronized (ownedLock) {
+            pruneClosedOwnedPrograms();
+            return ownedPrograms.toArray(new Program[0]);
+        }
+    }
+
+    /** Closed domain objects have already released every consumer. */
+    private void pruneClosedOwnedPrograms() {
+        ownedPrograms.removeIf(Program::isClosed);
+        if (ownedCurrent != null && ownedCurrent.isClosed()) {
+            ownedCurrent = null;
+        }
     }
 
     /**
@@ -153,26 +232,6 @@ public class MultiToolProgramProvider implements ProgramProvider {
     public ProgramManager findProgramManager() {
         List<ProgramManager> managers = findAllProgramManagers();
         return managers.isEmpty() ? null : managers.get(0);
-    }
-
-    /**
-     * Close every open instance of the program at the given project path.
-     */
-    public boolean closeProgramByPath(String path) {
-        boolean closed = false;
-        if (path == null || path.trim().isEmpty()) {
-            return false;
-        }
-        for (ProgramManager pm : findAllProgramManagers()) {
-            for (Program prog : pm.getAllOpenPrograms()) {
-                if (prog.getDomainFile() != null
-                        && prog.getDomainFile().getPathname().equalsIgnoreCase(path.trim())) {
-                    pm.closeProgram(prog, false);
-                    closed = true;
-                }
-            }
-        }
-        return closed;
     }
 
     /**

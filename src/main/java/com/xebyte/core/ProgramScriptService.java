@@ -18,7 +18,6 @@ import ghidra.util.task.ConsoleTaskMonitor;
 import javax.swing.SwingUtilities;
 import java.io.*;
 import java.util.*;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -235,7 +234,7 @@ public class ProgramScriptService {
     /**
      * List all currently open programs in Ghidra.
      */
-    @McpTool(path = "/list_open_programs", description = "List all open programs. If more than one program is listed, always pass the program name explicitly in subsequent tool calls — omitting it will silently target the active program, which may not be the intended one.")
+    @McpTool(path = "/list_open_programs", description = "List all open programs and whether each is held by a GUI tool or MCP. If more than one program is listed, always pass the program name explicitly in subsequent tool calls — omitting it will silently target the active program, which may not be the intended one.")
     public Response listOpenPrograms() {
         Program[] programs = programProvider.getAllOpenPrograms();
         if (programs == null || programs.length == 0) {
@@ -252,6 +251,7 @@ public class ProgramScriptService {
                 "name", prog.getName(),
                 "path", prog.getDomainFile().getPathname(),
                 "is_current", prog == currentProgram,
+                "held_by", programProvider.ownsProgram(prog) ? "mcp" : "tool",
                 "executable_path", prog.getExecutablePath() != null ? prog.getExecutablePath() : "",
                 "language", prog.getLanguageID().getIdAsString(),
                 "compiler", prog.getCompilerSpec().getCompilerSpecID().getIdAsString(),
@@ -275,7 +275,7 @@ public class ProgramScriptService {
     }
 
     @McpTool(path = "/close_program", method = "POST",
-             description = "Close an open program by project path or name")
+             description = "Close an open program by project path or name; refuses unsaved MCP-held changes")
     public Response closeProgram(
             @Param(value = "name", source = ParamSource.BODY,
                     description = "Program name or project path") String name) {
@@ -284,7 +284,17 @@ public class ProgramScriptService {
         }
 
         String search = name.trim();
-        AtomicInteger closedCount = new AtomicInteger(0);
+        Set<Program> matchingPrograms = Collections.newSetFromMap(new IdentityHashMap<>());
+        for (Program program : programProvider.getAllOpenPrograms()) {
+            if (programMatches(program, search)) {
+                if (programProvider.ownsProgram(program) && program.isChanged()) {
+                    return Response.err("Save modified MCP-held program before closing: "
+                        + program.getDomainFile().getPathname());
+                }
+                matchingPrograms.add(program);
+            }
+        }
+        Set<Program> closedPrograms = Collections.newSetFromMap(new IdentityHashMap<>());
         AtomicReference<String> error = new AtomicReference<>();
 
         try {
@@ -293,8 +303,9 @@ public class ProgramScriptService {
                     for (ProgramManager pm : findAllProgramManagers()) {
                         for (Program program : pm.getAllOpenPrograms()) {
                             if (programMatches(program, search)) {
-                                pm.closeProgram(program, false);
-                                closedCount.incrementAndGet();
+                                if (pm.closeProgram(program, false)) {
+                                    closedPrograms.add(program);
+                                }
                             }
                         }
                     }
@@ -307,11 +318,9 @@ public class ProgramScriptService {
                     (e.getMessage() != null ? e.getMessage() : e.toString()));
         }
 
-        if (closedCount.get() == 0) {
-            for (Program program : programProvider.getAllOpenPrograms()) {
-                if (programMatches(program, search) && programProvider.closeProgram(program)) {
-                    closedCount.incrementAndGet();
-                }
+        for (Program program : matchingPrograms) {
+            if (programProvider.closeProgram(program)) {
+                closedPrograms.add(program);
             }
         }
 
@@ -321,7 +330,7 @@ public class ProgramScriptService {
 
         return Response.ok(JsonHelper.mapOf(
             "success", true,
-            "closed_count", closedCount.get(),
+            "closed_count", closedPrograms.size(),
             "name", search
         ));
     }
@@ -545,7 +554,8 @@ public class ProgramScriptService {
     /**
      * Open a program from the current project by path.
      */
-    @McpTool(path = "/open_program", description = "Open a program from the current project")
+    @McpTool(path = "/open_program",
+            description = "Open a program from the current project without launching a GUI tool")
     public Response openProgramFromProject(
             @Param(value = "path", description = "Program path in project") String path,
             @Param(value = "auto_analyze", defaultValue = "false", description = "Run auto-analysis") boolean autoAnalyze) {
@@ -581,25 +591,25 @@ public class ProgramScriptService {
                     Msg.warn(this, "Failed to save analysis prompt flags: " + e.getMessage());
                 }
                 programProvider.setCurrentProgram(prog);
+                boolean isCurrent = programProvider.getCurrentProgram() == prog;
                 return Response.ok(JsonHelper.mapOf(
                     "success", true,
-                    "message", "Program already open, switched to it",
+                    "message", isCurrent
+                        ? "Program already open and current"
+                        : "Program already open; specify it explicitly while another GUI program is current",
                     "name", prog.getName(),
-                    "path", path
+                    "path", path,
+                    "held_by", programProvider.ownsProgram(prog) ? "mcp" : "tool",
+                    "is_current", isCurrent
                 ));
             }
         }
 
-        // Open the program
+        Program program = null;
         try {
-            // Find a ProgramManager from an existing CodeBrowser, or launch one
-            ProgramManager pm = findOrCreateProgramManager(tool);
-            if (pm == null) {
-                return Response.err("Could not find or create a CodeBrowser tool");
-            }
-
-            Program program = (Program) domainFile.getDomainObject(
-                tool, false, false, ghidra.util.task.TaskMonitor.DUMMY);
+            ProgramManager pm = findExistingProgramManager(tool);
+            program = (Program) domainFile.getDomainObject(
+                this, false, false, ghidra.util.task.TaskMonitor.DUMMY);
             if (program == null) {
                 return Response.err("Failed to open program: " + path);
             }
@@ -617,23 +627,40 @@ public class ProgramScriptService {
                 }
             }
 
-            // Open after the analysis flags are persisted so CodeBrowser does not prompt.
-            Program finalProgram = program;
-            SwingUtilities.invokeAndWait(() -> {
-                pm.openProgram(finalProgram);
-                pm.setCurrentProgram(finalProgram);
-            });
+            String heldBy;
+            if (pm != null) {
+                // Open after the analysis flags are persisted so CodeBrowser does not prompt.
+                Program finalProgram = program;
+                SwingUtilities.invokeAndWait(() -> {
+                    pm.openProgram(finalProgram);
+                    pm.setCurrentProgram(finalProgram);
+                });
+                heldBy = "tool";
+            } else {
+                if (!programProvider.retainProgram(program)) {
+                    return Response.err("Failed to retain program without a CodeBrowser: " + path);
+                }
+                heldBy = "mcp";
+            }
 
             return Response.ok(JsonHelper.mapOf(
                 "success", true,
                 "message", "Program opened successfully",
                 "name", program.getName(),
                 "path", path,
+                "held_by", heldBy,
+                "is_current", programProvider.getCurrentProgram() == program,
                 "auto_analyzed", analyzed,
                 "function_count", program.getFunctionManager().getFunctionCount()
             ));
+        } catch (ghidra.util.exception.VersionException e) {
+            return Response.err(versionError("open program", path, e));
         } catch (Exception e) {
             return Response.err("Failed to open program: " + e.getMessage());
+        } finally {
+            if (program != null && !program.isClosed() && program.isUsedBy(this)) {
+                program.release(this);
+            }
         }
     }
 
@@ -668,7 +695,7 @@ public class ProgramScriptService {
     }
 
     @McpTool(path = "/import_file", method = "POST",
-            description = "Import a binary file from disk into the current Ghidra project and open it. "
+            description = "Import a binary file into the current project without launching a GUI tool. "
                 + "For raw firmware binaries, specify language (e.g. 'ARM:LE:32:Cortex') and optionally compiler_spec (e.g. 'default').")
     public Response importFile(
             @Param(value = "file_path", source = ParamSource.BODY, description = "Absolute path to the binary file on disk") String filePath,
@@ -746,22 +773,29 @@ public class ProgramScriptService {
                 }
             }
 
-            // Open after the analysis flags are persisted so CodeBrowser does not prompt.
-            ProgramManager pm = findOrCreateProgramManager(tool);
-            if (pm == null) {
-                return Response.err("Could not find or create a CodeBrowser tool");
+            ProgramManager pm = findExistingProgramManager(tool);
+            String heldBy;
+            if (pm != null) {
+                // Open after the analysis flags are persisted so CodeBrowser does not prompt.
+                Program finalProgram = program;
+                SwingUtilities.invokeAndWait(() -> {
+                    pm.openProgram(finalProgram);
+                    pm.setCurrentProgram(finalProgram);
+                });
+                heldBy = "tool";
+            } else {
+                if (!programProvider.retainProgram(program)) {
+                    return Response.err("Could not retain imported program without a CodeBrowser");
+                }
+                heldBy = "mcp";
             }
-
-            Program finalProgram = program;
-            SwingUtilities.invokeAndWait(() -> {
-                pm.openProgram(finalProgram);
-                pm.setCurrentProgram(finalProgram);
-            });
 
             return Response.ok(JsonHelper.mapOf(
                 "success", true,
                 "name", program.getName(),
                 "path", program.getDomainFile().getPathname(),
+                "held_by", heldBy,
+                "is_current", programProvider.getCurrentProgram() == program,
                 "language", program.getLanguageID().getIdAsString(),
                 "analyzing", false,
                 "auto_analyzed", autoAnalyzed
@@ -901,45 +935,15 @@ public class ProgramScriptService {
         return null;
     }
 
-    /**
-     * Find an existing ProgramManager or launch a new CodeBrowser to get one.
-     *
-     * <p>Resolution order matters for window hygiene: when GhidraMCPPlugin lives
-     * in the FrontEnd tool, the FrontEnd has no ProgramManager and the
-     * MultiToolProgramProvider check is only relevant to that provider — never
-     * the case under FrontEndProgramProvider. Without scanning running tools
-     * first, every /open_program and /import_file call would fall through to
-     * ws.runTool and accumulate a fresh CodeBrowser per call. The scan reuses
-     * any existing CodeBrowser so additional programs open as tabs in it.
-     */
-    private ProgramManager findOrCreateProgramManager(PluginTool tool) {
-        ProgramManager pm = findExistingProgramManager(tool);
-        if (pm != null) return pm;
-
-        // No CodeBrowser is up — spawn one. This should be rare in practice;
-        // it covers sessions where no CodeBrowser is open.
-        ghidra.framework.model.Project project = tool.getProject();
-        try {
-            if (project != null) {
-                ghidra.framework.model.ToolManager tm = project.getToolManager();
-                if (tm != null) {
-                    ghidra.framework.model.ToolTemplate template =
-                        project.getLocalToolChest().getToolTemplate("CodeBrowser");
-                    if (template != null) {
-                        ghidra.framework.model.Workspace ws = tm.getActiveWorkspace();
-                        PluginTool newTool = ws.runTool(template);
-                        if (newTool != null) {
-                            pm = newTool.getService(ProgramManager.class);
-                            if (pm != null) return pm;
-                        }
-                    }
-                }
-            }
-        } catch (Exception e) {
-            Msg.warn(this, "Failed to launch CodeBrowser: " + e.getMessage());
+    private String versionError(String operation, String path,
+            ghidra.util.exception.VersionException error) {
+        String detail = error.getMessage();
+        if (detail == null || detail.isBlank()) {
+            detail = "incompatible stored program version";
         }
-
-        return null;
+        return "Cannot " + operation + " '" + path + "' noninteractively: " + detail
+            + " (upgradable=" + error.isUpgradable()
+            + ", version_indicator=" + error.getVersionIndicator() + ")";
     }
 
     // ========================================================================
