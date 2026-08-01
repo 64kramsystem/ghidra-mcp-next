@@ -10,6 +10,10 @@ Complete version history for the GhidraMCP-next project.
 
 - Added `delete_project_file`, which refuses unsaved program changes, closes the matching program, and deletes one exact absolute project file path.
 
+### Changed
+
+- `analyze_coverage` now defaults `generic_prefixes` to `BYTE_,DAT_,FUN_,LAB_,SUB_,UNK_,WORD_`. The previous default omitted `BYTE_` and `WORD_`, so a caller who accepted it could be told the generated-name backlog was empty while names under those two prefixes survived.
+
 ## 0.102.0
 
 ### Fixed

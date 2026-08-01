@@ -113,8 +113,11 @@ public final class CoverageService {
                 description = "Case-sensitive literal that marks an unresolved item in a "
                     + "label name or comment. Scanning for TODO is one project's "
                     + "convention, so it is a parameter.") String unknownMarkerPrefix,
-            @Param(value = "generic_prefixes", defaultValue = "DAT_,SUB_,LAB_,FUN_,UNK_",
-                description = "Comma-separated generated-name prefixes to tally.")
+            @Param(value = "generic_prefixes",
+                defaultValue = "BYTE_,DAT_,FUN_,LAB_,SUB_,UNK_,WORD_",
+                description = "Comma-separated generated-name prefixes to tally. The default "
+                    + "lists every prefix Ghidra generates; narrowing it can report an empty "
+                    + "backlog while generated names survive under the omitted prefixes.")
                 String genericPrefixes,
             @Param(value = "program", description = "Target program name (omit to use the active program — always specify when multiple programs are open)", defaultValue = "") String programName) {
         ServiceUtils.ProgramOrError pe =
