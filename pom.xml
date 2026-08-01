@@ -6,7 +6,7 @@
     <groupId>com.xebyte</groupId>
     <artifactId>GhidraMCP-next</artifactId>
     <packaging>jar</packaging>
-    <version>0.101.2</version>
+    <version>0.102.0</version>
     <name>GhidraMCP-next</name>
     <description>Local MCP access to Ghidra's GUI project and TraceRMI debugger.</description>
     <url>https://github.com/64kramsystem/ghidra-mcp-next</url>

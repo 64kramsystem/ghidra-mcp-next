@@ -6,6 +6,8 @@ Complete version history for the GhidraMCP-next project.
 
 ## Unreleased
 
+## 0.102.0
+
 ### Fixed
 
 - `create_memory_block` can add a non-overlapping block to an explicitly qualified existing overlay when `overlay=false`; nested overlays remain unsupported.
