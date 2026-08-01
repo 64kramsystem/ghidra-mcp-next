@@ -165,7 +165,7 @@ public class MemoryBlockServiceGhidraTest {
             a.get("address_space").getAsString() + ":9000",
             null, "01", null, null, null,
             true, null, true, false, false, false, null, false, ""),
-            "existing overlay");
+            "nested overlay");
 
         ok(memory.writeMemoryBytes(
             a.get("address_space").getAsString() + ":8000",
@@ -177,31 +177,57 @@ public class MemoryBlockServiceGhidraTest {
     }
 
     @Test
-    public void everyCreateRejectsAnExistingOverlayAsItsBaseInPreviewAndCommit() {
+    public void createAddsBlocksToAnExplicitExistingOverlayButRejectsNestedOverlays() {
         JsonObject parent = create(
             "parent_overlay", "0x8000", null, "0102", null, null,
             true, null, true, false, false, false, null, false);
-        String overlayStart = parent.getAsJsonObject("after")
-            .get("address_space").getAsString() + ":9000";
+        JsonObject parentDescriptor = parent.getAsJsonObject("after");
+        String space = parentDescriptor.get("address_space").getAsString();
+        String overlayStart = space + ":9000";
         int blockCount = program.getMemory().getBlocks().length;
         int spaceCount =
             program.getAddressFactory().getAddressSpaces().length;
 
-        for (boolean overlay : new boolean[] { false, true }) {
-            for (boolean dryRun : new boolean[] { true, false }) {
-                String name = "nested_" + overlay + "_" + dryRun;
-                Response response = memory.createMemoryBlock(
-                    name, overlayStart, 0x10L, null, null, null, null,
-                    overlay, null, true, false, false, false,
-                    null, dryRun, "");
-                assertError(response, "existing overlay address space");
-                assertNull(program.getMemory().getBlock(name));
-            }
-        }
-        assertEquals(blockCount, program.getMemory().getBlocks().length);
+        JsonObject preview = create(
+            "phase_tail", overlayStart, null, "aabb", null, null,
+            false, null, true, false, true, false, "same phase", true);
+        assertNull(program.getMemory().getBlock("phase_tail"));
+        JsonObject previewDescriptor = preview.getAsJsonObject("after");
+        assertTrue(previewDescriptor.get("overlay").getAsBoolean());
+        assertEquals(space,
+            previewDescriptor.get("address_space").getAsString());
+        assertEquals(
+            parentDescriptor.get("overlay_base_space").getAsString(),
+            previewDescriptor.get("overlay_base_space").getAsString());
+
+        JsonObject committed = create(
+            "phase_tail", overlayStart, null, "aabb", null, null,
+            false, null, true, false, true, false, "same phase", false);
+        assertEquals(previewDescriptor, committed.getAsJsonObject("after"));
+        assertArrayEquals(hex("aabb"), bytes(space + ":9000", 2));
+        assertEquals(blockCount + 1,
+            program.getMemory().getBlocks().length);
         assertEquals(
             spaceCount,
             program.getAddressFactory().getAddressSpaces().length);
+
+        Response overlap = memory.createMemoryBlock(
+            "phase_overlap", space + ":9001",
+            null, "cc", null, null, null,
+            false, null, true, false, false, false,
+            null, false, "");
+        assertError(overlap, "overlap");
+        assertNull(program.getMemory().getBlock("phase_overlap"));
+
+        for (boolean dryRun : new boolean[] { true, false }) {
+            Response nested = memory.createMemoryBlock(
+                "nested_" + dryRun, space + ":9100",
+                null, "01", null, null, null,
+                true, null, true, false, false, false,
+                null, dryRun, "");
+            assertError(nested, "nested overlay");
+            assertNull(program.getMemory().getBlock("nested_" + dryRun));
+        }
     }
 
     @Test
@@ -802,8 +828,7 @@ public class MemoryBlockServiceGhidraTest {
     }
 
     @Test
-    public void overlayLifecycleChecksBackingAndCleansTheFinalSpace()
-            throws Exception {
+    public void overlayLifecycleChecksBackingAndCleansTheFinalSpace() {
         create("backing", "0x5000", 0x20L, null, null, null,
             false, 0, true, true, false, false, null, false);
         JsonObject overlay = create(
@@ -820,22 +845,9 @@ public class MemoryBlockServiceGhidraTest {
         assertArrayEquals(
             hex("01020304ffff"),
             bytes(space + "::0x5000", 6));
-        int transaction = program.startTransaction("second overlay block");
-        try {
-            var overlaySpace =
-                (ghidra.program.model.address.OverlayAddressSpace)
-                    program.getAddressFactory().getAddressSpace(space);
-            program.getMemory().createInitializedBlock(
-                "bank_extra",
-                overlaySpace.getAddressInThisSpaceOnly(0x5010),
-                2,
-                (byte) 0,
-                ghidra.util.task.TaskMonitor.DUMMY,
-                false);
-        }
-        finally {
-            program.endTransaction(transaction, true);
-        }
+        create("bank_extra", space + ":5010", null, "0000",
+            null, null, false, null, true, false, false, false,
+            null, false);
         JsonObject deleted = ok(memory.deleteMemoryBlock(
             "bank", "error", false, ""));
         assertEquals("retained",
@@ -1165,6 +1177,12 @@ public class MemoryBlockServiceGhidraTest {
             true, null, true, true, false, false, null, false);
         String spaceName = overlay.getAsJsonObject("after")
             .get("address_space").getAsString();
+        create("policy_clear", spaceName + ":a010", null, "0000",
+            null, null, false, null, true, false, false, false,
+            null, false);
+        create("policy_final", spaceName + ":a020", null, "0000",
+            null, null, false, null, true, false, false, false,
+            null, false);
         var space =
             (ghidra.program.model.address.OverlayAddressSpace)
                 program.getAddressFactory().getAddressSpace(spaceName);
@@ -1174,16 +1192,6 @@ public class MemoryBlockServiceGhidraTest {
         int transaction = program.startTransaction(
             "overlay reference policies");
         try {
-            program.getMemory().createInitializedBlock(
-                "policy_clear", clearTarget, 2, (byte) 0,
-                ghidra.util.task.TaskMonitor.DUMMY, false);
-            program.getMemory().createInitializedBlock(
-                "policy_final",
-                space.getAddressInThisSpaceOnly(0xa020),
-                2,
-                (byte) 0,
-                ghidra.util.task.TaskMonitor.DUMMY,
-                false);
             var keepSymbol = program.getSymbolTable().createLabel(
                 keepTarget, "KEEP_TARGET", SourceType.USER_DEFINED);
             var clearSymbol = program.getSymbolTable().createLabel(

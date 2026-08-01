@@ -181,7 +181,11 @@ public final class MemoryBlockService {
                 value = "overlay",
                 source = ParamSource.BODY,
                 defaultValue = "false",
-                strictBoolean = true)
+                strictBoolean = true,
+                description =
+                    "true creates a new overlay over a physical start; "
+                        + "false with an explicitly qualified existing overlay "
+                        + "start adds a block to that overlay")
                 boolean overlay,
             @Param(
                 value = "fill",

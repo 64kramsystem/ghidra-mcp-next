@@ -6,6 +6,10 @@ Complete version history for the GhidraMCP-next project.
 
 ## Unreleased
 
+### Fixed
+
+- `create_memory_block` can add a non-overlapping block to an explicitly qualified existing overlay when `overlay=false`; nested overlays remain unsupported.
+
 ### Added
 
 - Added `restore_project_archive`, which restores one native GAR into a fresh local project for subsequent `open_project` use.
