@@ -3,6 +3,7 @@ package com.xebyte.core;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assume.assumeTrue;
 import static org.mockito.Mockito.mock;
@@ -146,6 +147,46 @@ public class ProgramOpenOwnershipGhidraTest {
 
         verify(project, never()).getLocalToolChest();
         verify(toolManager, never()).getActiveWorkspace();
+    }
+
+    @Test
+    public void deleteProjectFileRefusesUnsavedProgramThenClosesAndDeletesIt() throws Exception {
+        ProgramBuilder siblingBuilder = new ProgramBuilder(
+            "fixture_v2", "6502:LE:16:default", "default", null);
+        try {
+            projectData.getRootFolder().createFile(
+                "fixture_v2", siblingBuilder.getProgram(), TaskMonitor.DUMMY);
+        } finally {
+            siblingBuilder.dispose();
+        }
+        JsonObject opened = json(service.openProgramFromProject("/fixture", false));
+        assertEquals("/fixture", opened.get("path").getAsString());
+        Program program = provider.getProgram("/fixture");
+        assertNotNull(program);
+        service.openProgramFromProject("/fixture_v2", false);
+        Program sibling = provider.getProgram("/fixture_v2");
+        assertNotNull(sibling);
+
+        int transaction = program.startTransaction("unsaved delete fixture");
+        try {
+            program.getOptions("MCP test").setString("changed", "yes");
+        } finally {
+            program.endTransaction(transaction, true);
+        }
+        JsonObject refused = json(service.deleteProjectFile("/fixture"));
+        assertTrue(refused.get("error").getAsString().contains("Save modified"));
+        assertNotNull(projectData.getFile("/fixture"));
+
+        program.save("test", TaskMonitor.DUMMY);
+        JsonObject deleted = json(service.deleteProjectFile("/fixture"));
+        assertTrue(deleted.get("success").getAsBoolean());
+        assertTrue(program.isClosed());
+        assertNull(projectData.getFile("/fixture"));
+        assertFalse(sibling.isClosed());
+        assertNotNull(projectData.getFile("/fixture_v2"));
+
+        JsonObject repeated = json(service.deleteProjectFile("/fixture"));
+        assertTrue(repeated.get("error").getAsString().contains("not found"));
     }
 
     private static JsonObject json(Response response) {
