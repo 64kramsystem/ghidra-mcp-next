@@ -550,6 +550,87 @@ public class ProgramScriptService {
         }
     }
 
+    @McpTool(path = "/delete_project_file", method = "POST",
+            description = "Delete one exact absolute project file path after closing it; refuses unsaved program changes")
+    public Response deleteProjectFile(
+            @Param(value = "path", source = ParamSource.BODY,
+                    description = "Exact absolute project path beginning with '/'") String path) {
+        PluginTool tool = getToolFromProvider();
+        if (tool == null) {
+            return Response.err("Project file deletion requires GUI mode (PluginTool not available)");
+        }
+        ghidra.framework.model.Project project = tool.getProject();
+        if (project == null) {
+            return Response.err("No project is currently open");
+        }
+        if (path == null || path.trim().isEmpty() || !path.trim().startsWith("/")
+                || path.trim().equals("/") || path.trim().endsWith("/")) {
+            return Response.err("path must be an absolute project file path beginning with '/'");
+        }
+
+        String filePath = path.trim();
+        ghidra.framework.model.ProjectData projectData = project.getProjectData();
+        ghidra.framework.model.DomainFile file = projectData.getFile(filePath);
+        if (file == null) {
+            return Response.err("Project file not found: " + filePath);
+        }
+        if (file.isVersioned()) {
+            return Response.err("Versioned project files cannot be deleted: " + filePath);
+        }
+        for (Program program : programProvider.getAllOpenPrograms()) {
+            if (programPathEquals(program, filePath) && program.isChanged()) {
+                return Response.err("Save modified program before deleting: " + filePath);
+            }
+        }
+
+        AtomicReference<String> closeError = new AtomicReference<>();
+        try {
+            SwingUtilities.invokeAndWait(() -> {
+                try {
+                    for (ProgramManager pm : findAllProgramManagers()) {
+                        for (Program program : pm.getAllOpenPrograms()) {
+                            if (programPathEquals(program, filePath)
+                                    && !pm.closeProgram(program, false)) {
+                                closeError.set("Program could not be closed: " + filePath);
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    closeError.set(e.getMessage() != null ? e.getMessage() : e.toString());
+                }
+            });
+        } catch (Exception e) {
+            return Response.err("Failed to close program: " +
+                (e.getMessage() != null ? e.getMessage() : e.toString()));
+        }
+        if (closeError.get() != null) {
+            return Response.err(closeError.get());
+        }
+        for (Program program : programProvider.getAllOpenPrograms()) {
+            if (programPathEquals(program, filePath)) {
+                programProvider.closeProgram(program);
+            }
+        }
+        for (Program program : programProvider.getAllOpenPrograms()) {
+            if (programPathEquals(program, filePath)) {
+                return Response.err("Program remains open and cannot be deleted: " + filePath);
+            }
+        }
+
+        try {
+            file.delete();
+            return Response.ok(JsonHelper.mapOf(
+                "success", true, "path", filePath));
+        } catch (Exception e) {
+            return Response.err("Failed to delete project file: " + e.getMessage());
+        }
+    }
+
+    private static boolean programPathEquals(Program program, String path) {
+        return program != null && program.getDomainFile() != null
+            && program.getDomainFile().getPathname().equals(path);
+    }
+
 
     /**
      * Open a program from the current project by path.
