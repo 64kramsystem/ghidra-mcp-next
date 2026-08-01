@@ -39,30 +39,42 @@ public final class GuiProjectService {
     private final SecurityConfig security;
     private final Supplier<ProjectManager> projectManagerSupplier;
     private final Supplier<ActiveProjectController> activeProjectControllerSupplier;
+    private final Runnable beforeProjectClose;
 
-    public GuiProjectService(Supplier<PluginTool> toolSupplier) {
-        this(toolSupplier, SecurityConfig.getInstance());
+    GuiProjectService(Supplier<PluginTool> toolSupplier, Runnable beforeProjectClose) {
+        this(SecurityConfig.getInstance(), () -> {
+            PluginTool tool = toolSupplier.get();
+            return tool != null ? tool.getProjectManager() : null;
+        }, GuiProjectService::frontEndProjectController, beforeProjectClose);
     }
 
     GuiProjectService(Supplier<PluginTool> toolSupplier, SecurityConfig security) {
         this(security, () -> {
             PluginTool tool = toolSupplier.get();
             return tool != null ? tool.getProjectManager() : null;
-        }, GuiProjectService::frontEndProjectController);
+        }, GuiProjectService::frontEndProjectController, () -> {});
     }
 
     GuiProjectService(SecurityConfig security,
             Supplier<ProjectManager> projectManagerSupplier) {
         this(security, projectManagerSupplier,
-            GuiProjectService::frontEndProjectController);
+            GuiProjectService::frontEndProjectController, () -> {});
     }
 
     GuiProjectService(SecurityConfig security,
             Supplier<ProjectManager> projectManagerSupplier,
             Supplier<ActiveProjectController> activeProjectControllerSupplier) {
+        this(security, projectManagerSupplier, activeProjectControllerSupplier, () -> {});
+    }
+
+    GuiProjectService(SecurityConfig security,
+            Supplier<ProjectManager> projectManagerSupplier,
+            Supplier<ActiveProjectController> activeProjectControllerSupplier,
+            Runnable beforeProjectClose) {
         this.security = security;
         this.projectManagerSupplier = projectManagerSupplier;
         this.activeProjectControllerSupplier = activeProjectControllerSupplier;
+        this.beforeProjectClose = beforeProjectClose;
     }
 
     private static ActiveProjectController frontEndProjectController() {
@@ -107,7 +119,7 @@ public final class GuiProjectService {
     }
 
     @McpTool(path = "/create_project", method = "POST",
-        description = "Create and activate a new local Ghidra project")
+        description = "Create and activate a new local Ghidra project; refuses unsaved data or busy/unclosable tools before replacing the active project")
     public Response createProject(
             @Param(value = "parentDir", source = ParamSource.BODY,
                 description = "Existing local directory that will contain the project")
@@ -263,6 +275,7 @@ public final class GuiProjectService {
 
             Exception closeFailure = null;
             try {
+                beforeProjectClose.run();
                 current.close();
             } catch (Exception e) {
                 closeFailure = e;
@@ -292,7 +305,8 @@ public final class GuiProjectService {
             }
             if (closeFailure != null) {
                 return error("project_open_failed",
-                    "Failed to close current project: " + message(closeFailure));
+                    "Failed to close current project after MCP program-retention cleanup: "
+                        + message(closeFailure));
             }
         }
 
@@ -355,14 +369,14 @@ public final class GuiProjectService {
             for (DomainFile file : openData) {
                 if (file.isChanged()) {
                     return error("unsaved_changes",
-                        "Save modified project data before opening another project: "
+                        "Save modified project data before replacing the active project: "
                             + file.getPathname());
                 }
             }
         }
 
         if (project.getToolManager() != null && !project.saveSessionTools()) {
-            return error("project_open_failed",
+            return error("project_close_failed",
                 "Failed to save current project session tools");
         }
 
@@ -391,14 +405,16 @@ public final class GuiProjectService {
         Project created = null;
         boolean createdKnown = false;
         boolean clearOnFailure = false;
+        boolean previousProgramsReleased = false;
         try {
             Project current = manager.getActiveProject();
             if (current != null) {
-                try {
-                    current.save();
-                } catch (Exception ignored) {
-                    // Preserve the current project when possible.
+                Response preparationFailure = prepareToClose(current);
+                if (preparationFailure != null) {
+                    return preparationFailure;
                 }
+                beforeProjectClose.run();
+                previousProgramsReleased = true;
                 current.close();
                 activeProjects.projectClosed(current);
                 clearOnFailure = true;
@@ -430,6 +446,9 @@ public final class GuiProjectService {
                     manager, locator, created, activeProjects);
             }
             String detail = message(e);
+            if (previousProgramsReleased) {
+                detail += "; MCP-held program retention was already cleared";
+            }
             if (!cleaned) {
                 detail += "; cleanup failed and the partial project remains active";
             }

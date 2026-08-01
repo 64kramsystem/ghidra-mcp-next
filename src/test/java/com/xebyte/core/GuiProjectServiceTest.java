@@ -85,6 +85,31 @@ public class GuiProjectServiceTest {
     }
 
     @Test
+    public void createRefusesUnsavedDataBeforeReleasingRetainedPrograms() throws Exception {
+        Path parent = newProjectsParent();
+        ProjectManager manager = mock(ProjectManager.class);
+        Project current = mock(Project.class);
+        DomainFile changed = mock(DomainFile.class);
+        AtomicReference<Boolean> released = new AtomicReference<>(false);
+        when(manager.getActiveProject()).thenReturn(current);
+        when(changed.isChanged()).thenReturn(true);
+        when(changed.getPathname()).thenReturn("/changed");
+        when(current.getOpenData()).thenReturn(List.of(changed));
+        GuiProjectService service = new GuiProjectService(
+            security, () -> manager,
+            () -> activeProjectController(new AtomicReference<>(current)),
+            () -> released.set(true));
+
+        Map<String, Object> result = parse(service.createProject(
+            parent.toString(), "NewProject"));
+
+        assertError(result, "unsaved_changes");
+        assertFalse(released.get());
+        verify(current, never()).close();
+        verify(manager, never()).createProject(any(), any(), eq(true));
+    }
+
+    @Test
     public void createRejectsParentThatIsNotDirectory() throws Exception {
         Path file = temporaryFolder.newFile("parent-file").toPath();
         Map<String, Object> result = createWithNoTool(file, "NewProject");
@@ -471,7 +496,7 @@ public class GuiProjectServiceTest {
 
         Map<String, Object> result = parse(service.openProject(marker.toString()));
 
-        assertError(result, "project_open_failed");
+        assertError(result, "project_close_failed");
         assertTrue(result.get("message").toString().contains("session tools"));
         verify(current, never()).save();
         verify(current, never()).close();
@@ -486,10 +511,12 @@ public class GuiProjectServiceTest {
         Project current = mock(Project.class);
         Project opened = mock(Project.class);
         AtomicReference<Project> managerProject = new AtomicReference<>(current);
+        AtomicReference<Boolean> released = new AtomicReference<>(false);
         when(manager.getActiveProject()).thenAnswer(invocation -> managerProject.get());
         when(current.getProjectLocator()).thenReturn(
             new ProjectLocator(parent.toString(), "OldProject"));
         doAnswer(invocation -> {
+            assertTrue(released.get());
             managerProject.set(null);
             return null;
         }).when(current).close();
@@ -502,13 +529,14 @@ public class GuiProjectServiceTest {
         when(opened.getName()).thenReturn("NewProject");
         GuiProjectService service = new GuiProjectService(
             security, () -> manager, () -> activeProjectController(
-                new AtomicReference<>()));
+                new AtomicReference<>()), () -> released.set(true));
 
         Map<String, Object> result = parse(service.openProject(marker.toString()));
 
         assertEquals(Boolean.TRUE, result.get("success"));
         verify(current).save();
         verify(current).close();
+        assertTrue(released.get());
     }
 
     @Test

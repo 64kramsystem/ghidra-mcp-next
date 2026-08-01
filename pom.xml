@@ -315,6 +315,9 @@
                         <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-surefire-plugin</artifactId>
                         <configuration>
+                            <systemPropertyVariables>
+                                <class.searcher.search.all.jars>true</class.searcher.search.all.jars>
+                            </systemPropertyVariables>
                             <additionalClasspathElements>
                                 <!-- Application logging bootstrap. -->
                                 <additionalClasspathElement>${ghidra.test.install.dir}/Ghidra/Framework/Generic/lib/log4j-api-2.25.4.jar</additionalClasspathElement>

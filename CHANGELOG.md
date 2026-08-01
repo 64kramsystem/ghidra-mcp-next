@@ -9,6 +9,15 @@ Complete version history for the GhidraMCP-next project.
 ### Fixed
 
 - `create_memory_block` can add a non-overlapping block to an explicitly qualified existing overlay when `overlay=false`; nested overlays remain unsupported.
+- `open_program` and `import_file` no longer launch a CodeBrowser, so hidden Ghidra instances cannot block on launch-time dialogs; their new `held_by` and `is_current` fields report ownership and effective current-program state.
+- Instance metadata now includes programs discovered through running CodeBrowsers and programs retained by MCP.
+- MCP-held programs survive MCP service-owner handover and are released before project replacement or final shutdown.
+
+### Changed
+
+- `close_program` identity-deduplicates its count across tools and refuses to discard unsaved changes in MCP-held programs; `list_open_programs` now reports each program's `held_by` owner.
+- `create_project` now applies the same operation-neutral unsaved-data and tool-close preflight as `open_project` before replacing an active project.
+- `open_project` now reports session-tool close preparation failures as `project_close_failed`, with operation-neutral unsaved-data wording.
 
 ### Added
 
