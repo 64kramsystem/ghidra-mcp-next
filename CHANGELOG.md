@@ -6,6 +6,8 @@ Complete version history for the GhidraMCP-next project.
 
 ## Unreleased
 
+## 0.103.0
+
 ### Added
 
 - Added `delete_project_file`, which refuses unsaved program changes, closes the matching program, and deletes one exact absolute project file path.
