@@ -1,5 +1,6 @@
 import http.server
 import json
+import os
 import socket
 import socketserver
 import tempfile
@@ -83,10 +84,11 @@ def test_request_missing_socket_raises(tmp_path):
 
 def test_socket_dirs_cover_runtime_locations(monkeypatch):
     monkeypatch.setenv("USER", "tester")
-    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/custom/runtime")
     monkeypatch.setenv("TMPDIR", "/tmp/custom")
     paths = transport.socket_dirs()
-    assert Path("/run/user/1/ghidra-mcp") in paths
+    assert Path("/custom/runtime/ghidra-mcp") in paths
+    assert Path(f"/run/user/{os.getuid()}/ghidra-mcp") in paths
     assert Path("/tmp/custom/ghidra-mcp-tester") in paths
     assert Path("/tmp/ghidra-mcp-tester") in paths
 

@@ -6,6 +6,10 @@ Complete version history for the GhidraMCP-next project.
 
 ## Unreleased
 
+### Fixed
+
+- The bridge discovers Ghidra sockets in the current POSIX user's runtime directory even when its launcher omits `XDG_RUNTIME_DIR`.
+
 ## 0.103.0
 
 ### Added

@@ -31,6 +31,8 @@ def socket_dirs() -> list[Path]:
 
     if value := os.getenv("XDG_RUNTIME_DIR"):
         add(Path(value) / "ghidra-mcp")
+    if hasattr(os, "getuid"):
+        add(Path("/run/user") / str(os.getuid()) / "ghidra-mcp")
     if value := os.getenv("TMPDIR"):
         add(Path(value) / f"ghidra-mcp-{user}")
     for root in (Path("/var/folders"), Path("/private/var/folders")):
