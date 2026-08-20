@@ -650,6 +650,25 @@ public class CompleteListingWriterGhidraTest {
             missing != null && missing.contains("00001100"));
     }
 
+    /** Outgoing groups must name their destinations, not repeat the source instruction. */
+    @Test
+    public void outgoingReferenceNamesItsDestination() throws Exception {
+        int transaction = program.startTransaction("outgoing ref");
+        try {
+            program.getReferenceManager().addMemoryReference(
+                builder.addr("0x1000"), builder.addr("0x1100"),
+                RefType.READ, SourceType.USER_DEFINED, 0);
+        }
+        finally {
+            program.endTransaction(transaction, true);
+        }
+
+        String listing = exportWholeProgram();
+
+        assertTrue(listing, listing.contains("XREF to[1]: 00001100(R)"));
+        assertFalse(listing, listing.contains("XREF from"));
+    }
+
     /**
      * Ghidra represents an external entry point as a synthetic reference whose source address
      * is the named external location {@code Entry Point}. The space is part of the address

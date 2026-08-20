@@ -320,8 +320,8 @@
                             </systemPropertyVariables>
                             <additionalClasspathElements>
                                 <!-- Application logging bootstrap. -->
-                                <additionalClasspathElement>${ghidra.test.install.dir}/Ghidra/Framework/Generic/lib/log4j-api-2.25.4.jar</additionalClasspathElement>
-                                <additionalClasspathElement>${ghidra.test.install.dir}/Ghidra/Framework/Generic/lib/log4j-core-2.25.4.jar</additionalClasspathElement>
+                                <additionalClasspathElement>${ghidra.test.install.dir}/Ghidra/Framework/Generic/lib/log4j-api-2.26.1.jar</additionalClasspathElement>
+                                <additionalClasspathElement>${ghidra.test.install.dir}/Ghidra/Framework/Generic/lib/log4j-core-2.26.1.jar</additionalClasspathElement>
                                 <!-- Generic collections and XML support loaded by ProgramDB. -->
                                 <additionalClasspathElement>${ghidra.test.install.dir}/Ghidra/Framework/Generic/lib/commons-collections4-4.1.jar</additionalClasspathElement>
                                 <additionalClasspathElement>${ghidra.test.install.dir}/Ghidra/Framework/Generic/lib/commons-io-2.19.0.jar</additionalClasspathElement>

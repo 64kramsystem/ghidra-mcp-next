@@ -306,8 +306,8 @@ final class CompleteListingWriter {
                 offcut.add(reference);
             }
         }
-        writeReferenceGroup(out, "XREF", direct);
-        writeReferenceGroup(out, "XREF offcut", offcut);
+        writeReferenceGroup(out, "XREF", direct, false);
+        writeReferenceGroup(out, "XREF offcut", offcut, false);
         // Outgoing too: a listing that names only who points here still drops half the graph.
         // Already gathered by collectMetadata, so this costs nothing extra to emit.
         List<Reference> outgoing = new ArrayList<>(metadata.outgoing());
@@ -315,8 +315,8 @@ final class CompleteListingWriter {
             .comparing((Reference reference) -> reference.getFromAddress())
             .thenComparing(Reference::getToAddress));
         collectedReferences += outgoing.size();
-        expect(outgoing);
-        writeReferenceGroup(out, "XREF from", outgoing);
+        expect(outgoing, true);
+        writeReferenceGroup(out, "XREF to", outgoing, true);
     }
 
     /**
@@ -338,23 +338,24 @@ final class CompleteListingWriter {
             .comparing((Reference reference) -> reference.getToAddress())
             .thenComparing(Reference::getFromAddress));
         collectedReferences += collected.size();
-        expect(collected);
+        expect(collected, false);
         return collected;
     }
 
     /** Records the artifact tokens these references must produce. */
-    private void expect(List<Reference> group) {
+    private void expect(List<Reference> group, boolean outgoing) {
         for (Reference reference : group) {
-            expectedReferenceTokens.merge(referenceToken(reference), 1, Integer::sum);
+            expectedReferenceTokens.merge(referenceToken(reference, outgoing), 1, Integer::sum);
         }
     }
 
-    private String referenceToken(Reference reference) {
-        return reference.getFromAddress() + "(" + abbreviate(reference) + ")";
+    private String referenceToken(Reference reference, boolean outgoing) {
+        Address endpoint = outgoing ? reference.getToAddress() : reference.getFromAddress();
+        return endpoint + "(" + abbreviate(reference) + ")";
     }
 
     private void writeReferenceGroup(PrintWriter out, String heading,
-            List<Reference> group) {
+            List<Reference> group, boolean outgoing) {
         if (group.isEmpty()) {
             return;
         }
@@ -363,7 +364,7 @@ final class CompleteListingWriter {
         StringBuilder line = new StringBuilder(label);
         boolean first = true;
         for (Reference reference : group) {
-            String item = referenceToken(reference);
+            String item = referenceToken(reference, outgoing);
             if (!first && line.length() + item.length() + 2 > xrefWrapColumn) {
                 // Trailing comma before the break, so a wrapped list still reads as a list.
                 out.println(line.append(",").toString());

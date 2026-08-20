@@ -9,6 +9,8 @@ Complete version history for the GhidraMCP-next project.
 ### Fixed
 
 - The bridge discovers Ghidra sockets in the current POSIX user's runtime directory even when its launcher omits `XDG_RUNTIME_DIR`.
+- `export_full_listing` outgoing-reference groups now say `XREF to` and render each destination. They previously said `XREF from` and repeated the current source address, producing tautological and misleading listing lines.
+- The live-fixture test profile uses Ghidra 12.1.3's Log4j 2.26.1 runtime jars.
 
 ## 0.103.0
 
