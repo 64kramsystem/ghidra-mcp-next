@@ -6,6 +6,10 @@ Complete version history for the GhidraMCP-next project.
 
 ## Unreleased
 
+### Changed
+
+- **Breaking:** `export_full_listing` now requires `column_width` and hard-wraps every physical line without dropping content, splitting long tokens across `;>` continuation comments; this replaces the optional cross-reference-only `xref_wrap_column`.
+
 ## 0.103.1
 
 ### Fixed

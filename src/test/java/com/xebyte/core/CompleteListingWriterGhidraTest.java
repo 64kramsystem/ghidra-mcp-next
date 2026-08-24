@@ -134,6 +134,50 @@ public class CompleteListingWriterGhidraTest {
         assertTrue(listing.contains("TAIL_MARKER_PLATE"));
     }
 
+    /** The requested width applies to every physical line, not only reference groups. */
+    @Test
+    public void everyPhysicalLineRespectsTheRequiredWidth() throws Exception {
+        setComment("0x1000", CommentType.EOL,
+            "a deliberately long authored comment whose exact tail is CONTENT_TAIL");
+        setComment("0x1000", CommentType.PLATE, "a".repeat(21) + "😀TAIL");
+        builder.createLabel("0x1004",
+            "a_deliberately_long_label_that_exceeds_the_requested_physical_width");
+        int transaction = program.startTransaction("width-limited refs");
+        try {
+            for (int index = 0; index < 3; index++) {
+                program.getReferenceManager().addMemoryReference(
+                    builder.addr(0x1100 + index), builder.addr("0x1000"),
+                    RefType.READ, SourceType.USER_DEFINED, 0);
+            }
+        }
+        finally {
+            program.endTransaction(transaction, true);
+        }
+
+        String listing = Files.readString(exportTo("width-limited.asm", 40));
+
+        assertTrue("overflow must use marked assembly-comment continuations",
+            listing.contains("                ;> "));
+        assertTrue("the content audit must accept the complete wrapped body",
+            listing.contains("CONTENT_TAIL"));
+        assertTrue("a surrogate pair at a hard split must survive", listing.contains("😀"));
+        assertTrue("narrow xref groups must retain every token", listing.contains("00001102(R)"));
+        for (String line : listing.lines().toList()) {
+            assertTrue("line exceeds 40 columns: [" + line + "]", line.length() <= 40);
+        }
+
+        String widerListing = Files.readString(exportTo("width-limited-60.asm", 60));
+        for (String line : widerListing.lines().toList()) {
+            assertFalse("wrapped line has trailing whitespace: [" + line + "]",
+                line.endsWith(" ") || line.endsWith("\t"));
+        }
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void writerRejectsUnsupportedWidth() {
+        new CompleteListingWriter(program, 19);
+    }
+
     /** Empty authored comment lines must not make the exported artifact fail diff checks. */
     @Test
     public void blankPlateCommentLineHasNoTrailingWhitespace() throws Exception {
@@ -562,19 +606,19 @@ public class CompleteListingWriterGhidraTest {
 
     /**
      * Control characters occur in C64 comments — PETSCII $93 is clear-screen — and must survive
-     * verbatim. The content audit reads the artifact back, so anything that re-encodes or
-     * re-flows them would fail the export rather than corrupt the listing silently.
+     * hard wrapping. The content audit unfolds continuation lines before checking the body.
      */
     @Test
-    public void controlCharactersInACommentSurviveVerbatim() throws Exception {
+    public void controlCharactersInACommentSurviveHardWrapping() throws Exception {
         String comment = "PETSCII \u0093 clears the screen, \u0007 rings the bell, "
             + "\u001d moves the cursor right\u001d";
         setComment("0x1000", CommentType.EOL, comment);
 
         String listing = exportWholeProgram();
 
-        assertTrue("the control characters must be emitted as authored",
-            listing.contains(comment));
+        String unfolded = listing.replace(
+            System.lineSeparator() + "                ;> ", "");
+        assertTrue("the exact control sequence must survive", unfolded.contains(comment));
     }
 
     /**
@@ -797,10 +841,14 @@ public class CompleteListingWriterGhidraTest {
     }
 
     private Path exportTo(String name) throws Exception {
+        return exportTo(name, 100);
+    }
+
+    private Path exportTo(String name, int columnWidth) throws Exception {
         Path destination = temporaryFolder.getRoot().toPath().resolve(name);
         ExportService service = new ExportService(provider, security);
         Response response = service.exportFullListing(
-            destination.toString(), null, null, true, 100, "");
+            destination.toString(), null, null, true, columnWidth, "");
         assertTrue(response.toJson(), response instanceof Response.Ok);
         return destination.toFile().getCanonicalFile().toPath();
     }

@@ -43,10 +43,9 @@ import ghidra.app.util.template.TemplateSimplifier;
  * lines and dropped 7 of the 28 references to one address behind an {@code XREF[21]} header
  * that misreported the total.
  *
- * <p>This writer has no clip step and no ceilings. Columns are minimum widths: a long
- * operand pushes the comment column right rather than being shortened. Authored newlines in
- * comments are emitted as-is and never re-flowed, so aligned tables and diagrams survive.
- * Only the machine-generated cross-reference list wraps.
+ * <p>This writer has no clip step or content ceilings. Every physical line respects the
+ * requested column width; overflow continues on assembly-comment lines and the read-back
+ * audit unfolds those lines before checking the original content.
  *
  * <p>Annotation gathering is delegated to {@link RangeIndex}, which is driven from
  * {@code getCommentAddressIterator}, {@code getReferenceSourceIterator} and
@@ -69,9 +68,10 @@ final class CompleteListingWriter {
     private static final int INCOMING_BUDGET = 64;
 
     private static final String ADDRESS_INDENT = "                ";
+    private static final String WRAP_CONTINUATION = ADDRESS_INDENT + ";> ";
 
     private final Program program;
-    private final int xrefWrapColumn;
+    private final int columnWidth;
     private final CodeUnitFormat format;
     private final ReferenceManager references;
 
@@ -94,9 +94,12 @@ final class CompleteListingWriter {
     private int emittedReferences;
     private int codeUnits;
 
-    CompleteListingWriter(Program program, int xrefWrapColumn) {
+    CompleteListingWriter(Program program, int columnWidth) {
+        if (columnWidth < 40 || columnWidth > 500) {
+            throw new IllegalArgumentException("column width must be between 40 and 500");
+        }
         this.program = program;
-        this.xrefWrapColumn = xrefWrapColumn;
+        this.columnWidth = columnWidth;
         this.references = program.getReferenceManager();
         // The same options Ghidra's own exporter uses. ShowBlockName.NON_LOCAL is
         // load-bearing on programs with overlay spaces: an operand reaching into an overlay
@@ -115,12 +118,14 @@ final class CompleteListingWriter {
     }
 
     /** Renders every range of {@code selection}, in address order. */
-    void write(PrintWriter out, AddressSetView selection) {
+    void write(PrintWriter destination, AddressSetView selection) {
+        PrintWriter out = new WidthLimitedPrintWriter(destination, columnWidth);
         writeHeader(out, selection);
         for (AddressRange range : selection) {
             writeRange(out, range.getMinAddress(), range.getMaxAddress());
         }
         writeSymbolIndex(out, selection);
+        out.flush();
     }
 
     private void writeHeader(PrintWriter out, AddressSetView selection) {
@@ -365,7 +370,7 @@ final class CompleteListingWriter {
         boolean first = true;
         for (Reference reference : group) {
             String item = referenceToken(reference, outgoing);
-            if (!first && line.length() + item.length() + 2 > xrefWrapColumn) {
+            if (!first && line.length() + item.length() + 3 > columnWidth) {
                 // Trailing comma before the break, so a wrapped list still reads as a list.
                 out.println(line.append(",").toString());
                 line = new StringBuilder(continuation);
@@ -666,7 +671,27 @@ final class CompleteListingWriter {
                     + " stopped at " + (reached == null ? "nothing" : reached);
             }
         }
-        return missingContent(emittedLines);
+        List<String> logicalLines = new ArrayList<>();
+        int lineNumber = 0;
+        for (String line : emittedLines.toList()) {
+            lineNumber++;
+            if (line.length() > columnWidth) {
+                return "line " + lineNumber + " exceeds column width " + columnWidth
+                    + ": " + line.length();
+            }
+            if (line.startsWith(WRAP_CONTINUATION)) {
+                if (logicalLines.isEmpty()) {
+                    return "orphan wrapped continuation at line " + lineNumber;
+                }
+                int last = logicalLines.size() - 1;
+                logicalLines.set(last,
+                    logicalLines.get(last) + line.substring(WRAP_CONTINUATION.length()));
+            }
+            else {
+                logicalLines.add(line);
+            }
+        }
+        return missingContent(logicalLines.stream());
     }
 
     /**
@@ -788,5 +813,52 @@ final class CompleteListingWriter {
             end--;
         }
         return value.substring(0, end);
+    }
+
+    /** Enforces the physical line limit without dropping any logical-line characters. */
+    private static final class WidthLimitedPrintWriter extends PrintWriter {
+        private final int width;
+
+        WidthLimitedPrintWriter(PrintWriter destination, int width) {
+            super(destination);
+            this.width = width;
+        }
+
+        @Override
+        public void println(String value) {
+            if (value.length() <= width) {
+                super.println(value);
+                return;
+            }
+
+            String remaining = value;
+            String prefix = "";
+            while (prefix.length() + remaining.length() > width) {
+                int available = width - prefix.length();
+                int split = remaining.lastIndexOf(' ', available);
+                if (split <= 0) {
+                    split = available;
+                }
+                else {
+                    // Carry an entire space run to the continuation unless that would leave a
+                    // nearly empty line and a hard split can end on content instead.
+                    while (split > 0 && remaining.charAt(split - 1) == ' ') {
+                        split--;
+                    }
+                    if (split == 0 ||
+                            (split < available / 2 && remaining.charAt(available - 1) != ' ')) {
+                        split = available;
+                    }
+                }
+                // UTF-8 encoding would replace the two halves of a split surrogate pair.
+                if (Character.isHighSurrogate(remaining.charAt(split - 1))) {
+                    split--;
+                }
+                super.println(prefix + remaining.substring(0, split));
+                remaining = remaining.substring(split);
+                prefix = WRAP_CONTINUATION;
+            }
+            super.println(prefix + remaining);
+        }
     }
 }

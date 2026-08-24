@@ -36,14 +36,14 @@ public final class ExportService {
      * Writes a listing with no clip step or output ceilings.
      */
     static final class CompleteListingRunner {
-        private final int xrefWrapColumn;
+        private final int columnWidth;
         private final ThreadLocal<String> lastDiagnostic =
             ThreadLocal.withInitial(() -> "");
         private final ThreadLocal<Map<String, Object>> lastReport =
             ThreadLocal.withInitial(Map::of);
 
-        CompleteListingRunner(int xrefWrapColumn) {
-            this.xrefWrapColumn = xrefWrapColumn;
+        CompleteListingRunner(int columnWidth) {
+            this.columnWidth = columnWidth;
         }
 
         public boolean export(File file, DomainObject object, AddressSetView selection,
@@ -59,7 +59,7 @@ public final class ExportService {
             // because the records it never saw are also never counted.
             long modificationNumber = program.getModificationNumber();
             CompleteListingWriter writer =
-                new CompleteListingWriter(program, xrefWrapColumn);
+                new CompleteListingWriter(program, columnWidth);
             try (PrintWriter out = new PrintWriter(
                     Files.newBufferedWriter(file.toPath()))) {
                 writer.write(out, selection);
@@ -117,10 +117,10 @@ public final class ExportService {
     @McpTool(path = "/export_full_listing", method = "POST",
         description = "Export a complete listing that clips no field, emits "
             + "every line of every comment, and emits "
-            + "every cross-reference rather than the first twenty-one. Columns are minimum "
-            + "widths, so long operands push the comment column right instead of being "
-            + "shortened, and authored newlines in comments are never re-flowed. Structures and "
-            + "arrays are traversed, so field names, component types and values appear indented "
+            + "every cross-reference rather than the first twenty-one. Every physical line "
+            + "respects column_width; overflow, including split tokens, continues on marked "
+            + ";> assembly-comment lines. Structures and arrays are traversed, so field names, "
+            + "component types and values appear indented "
             + "under their parent. The export fails without publishing if it cannot emit "
             + "everything it collected: comment bodies and references are checked against the "
             + "written file, and a program edit landing mid-export fails it too.")
@@ -135,18 +135,17 @@ public final class ExportService {
                 defaultValue = "false",
                 description = "Replace an existing destination after successful export")
                 boolean overwrite,
-            @Param(value = "xref_wrap_column", source = ParamSource.BODY,
-                defaultValue = "100",
-                description = "Column at which the cross-reference list wraps (40..500). "
-                    + "Wrapping never drops a reference")
-                int xrefWrapColumn,
+            @Param(value = "column_width", source = ParamSource.BODY,
+                description = "Required hard line-width limit (40..500); wrapping never drops "
+                    + "content")
+                int columnWidth,
             @Param(value = "program", defaultValue = "",
                 description = "Target program name (omit to use the active program)")
                 String programName) {
-        if (xrefWrapColumn < 40 || xrefWrapColumn > 500) {
-            return Response.err("xref_wrap_column must be between 40 and 500");
+        if (columnWidth < 40 || columnWidth > 500) {
+            return Response.err("column_width must be between 40 and 500");
         }
-        return export(new CompleteListingRunner(xrefWrapColumn), programName, outputPath,
+        return export(new CompleteListingRunner(columnWidth), programName, outputPath,
             normalizeOptional(start), normalizeOptional(end), overwrite);
     }
 
