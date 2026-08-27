@@ -30,6 +30,7 @@ import ghidra.program.model.listing.Variable;
 import ghidra.program.model.mem.MemoryBlock;
 import ghidra.program.model.symbol.Reference;
 import ghidra.program.model.symbol.ReferenceManager;
+import ghidra.program.model.symbol.SourceType;
 import ghidra.program.model.symbol.Symbol;
 import ghidra.app.util.template.TemplateSimplifier;
 
@@ -57,6 +58,7 @@ final class CompleteListingWriter {
 
     /** Bytes per emitted undefined-data line. */
     private static final int UNDEFINED_RUN_LIMIT = 16;
+    private static final int NUMERIC_ADDRESS_CANDIDATE_LIMIT = 100;
 
     /**
      * Per-unit incoming-reference budget handed to {@link RangeIndex#collectMetadata}, which
@@ -87,6 +89,8 @@ final class CompleteListingWriter {
     private final Map<String, Integer> expectedCommentLines = new java.util.LinkedHashMap<>();
     /** Reference tokens that must appear in the artifact, with their multiplicity. */
     private final Map<String, Integer> expectedReferenceTokens = new java.util.LinkedHashMap<>();
+    private final List<Map<String, Object>> numericAddressCandidates = new ArrayList<>();
+    private int numericAddressCandidateCount;
 
     private int collectedLabels;
     private int emittedLabels;
@@ -486,7 +490,8 @@ final class CompleteListingWriter {
      */
     private static boolean restatesTheParent(Data parent, Data component) {
         return parent.getDataType() instanceof ghidra.program.model.data.Array
-            && component.getNumComponents() == 0;
+            && component.getNumComponents() == 0
+            && !(component.getValue() instanceof Address);
     }
 
     /**
@@ -496,6 +501,9 @@ final class CompleteListingWriter {
      * back for the units the format renders as nothing, such as a structure itself.
      */
     private String valueText(Data data) {
+        if (data.getValue() instanceof Address target) {
+            recordUnreferencedSymbol(data, 0, new Object[] { target });
+        }
         String rendered = format.getOperandRepresentationString(data, 0);
         return rendered == null || rendered.isBlank()
             ? data.getDefaultValueRepresentation() : rendered;
@@ -579,12 +587,61 @@ final class CompleteListingWriter {
     private String operandText(Instruction instruction) {
         StringBuilder operands = new StringBuilder();
         for (int index = 0; index < instruction.getNumOperands(); index++) {
+            recordUnreferencedSymbol(instruction, index, instruction.getOpObjects(index));
             if (index > 0) {
                 operands.append(",");
             }
             operands.append(format.getOperandRepresentationString(instruction, index));
         }
         return operands.toString();
+    }
+
+    /** Finds exact named targets that Ghidra would otherwise render numerically. */
+    private void recordUnreferencedSymbol(CodeUnit unit, int operandIndex,
+            Object[] operands) {
+        if (operands == null) {
+            return;
+        }
+        Reference primary = unit.getPrimaryReference(operandIndex);
+        for (Object element : operands) {
+            if (element instanceof Address target && target.isMemoryAddress()) {
+                Symbol symbol = namedSymbol(target);
+                boolean rendered = unit instanceof Data ? primary != null : matches(primary, target);
+                if (!rendered && symbol != null) {
+                    numericAddressCandidateCount++;
+                    if (numericAddressCandidates.size() < NUMERIC_ADDRESS_CANDIDATE_LIMIT) {
+                        Map<String, Object> candidate = new java.util.LinkedHashMap<>();
+                        candidate.put("kind", unit instanceof Data
+                            ? "data_value" : "instruction_operand");
+                        candidate.put("address", unit.getMinAddress().toString());
+                        if (!(unit instanceof Data)) {
+                            candidate.put("operand_index", operandIndex);
+                        }
+                        candidate.put("target", target.toString());
+                        candidate.put("symbol", symbol.getName());
+                        numericAddressCandidates.add(candidate);
+                    }
+                }
+            }
+        }
+    }
+
+    private static boolean matches(Reference reference, Address target) {
+        return reference != null && reference.isMemoryReference() && target != null
+            && reference.getToAddress().getPhysicalAddress().equals(target.getPhysicalAddress());
+    }
+
+    private Symbol namedSymbol(Address target) {
+        Symbol primary = program.getSymbolTable().getPrimarySymbol(target);
+        if (primary != null && primary.getSource() != SourceType.DEFAULT) {
+            return primary;
+        }
+        for (Symbol symbol : program.getSymbolTable().getSymbols(target)) {
+            if (symbol.getSource() != SourceType.DEFAULT) {
+                return symbol;
+            }
+        }
+        return null;
     }
 
     private void writeSymbolIndex(PrintWriter out, AddressSetView selection) {
@@ -781,11 +838,17 @@ final class CompleteListingWriter {
             comments.put(type.name().toLowerCase(),
                 emittedComments.getOrDefault(type, 0));
         }
-        return Map.of(
-            "code_units", codeUnits,
-            "labels", emittedLabels,
-            "references", emittedReferences,
-            "comments", comments);
+        Map<String, Object> report = new java.util.LinkedHashMap<>();
+        report.put("code_units", codeUnits);
+        report.put("labels", emittedLabels);
+        report.put("references", emittedReferences);
+        report.put("comments", comments);
+        report.put("numeric_address_candidates", Map.of(
+            "count", numericAddressCandidateCount,
+            "returned", numericAddressCandidates.size(),
+            "truncated", numericAddressCandidateCount > numericAddressCandidates.size(),
+            "items", numericAddressCandidates));
+        return report;
     }
 
     private Address next(Address address) {

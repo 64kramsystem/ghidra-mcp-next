@@ -8,6 +8,8 @@ Complete version history for the GhidraMCP-next project.
 
 ### Changed
 
+- `export_full_listing` now reports numeric address operands and emitted pointer values that target non-default symbols, capped at 100 candidates with the total retained. Pointer-array elements are emitted instead of being mistaken for redundant scalar elements; numeric scalars remain unchanged.
+
 - **Breaking:** `export_full_listing` now requires `column_width` and hard-wraps every physical line without dropping content, splitting long tokens across `;>` continuation comments; this replaces the optional cross-reference-only `xref_wrap_column`.
 
 ## 0.103.1

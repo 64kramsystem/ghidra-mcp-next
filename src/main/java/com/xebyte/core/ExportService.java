@@ -122,8 +122,10 @@ public final class ExportService {
             + ";> assembly-comment lines. Structures and arrays are traversed, so field names, "
             + "component types and values appear indented "
             + "under their parent. The export fails without publishing if it cannot emit "
-            + "everything it collected: comment bodies and references are checked against the "
-            + "written file, and a program edit landing mid-export fails it too.")
+            + "everything it collected. The response reports numeric address operands and "
+            + "emitted pointer values targeting named symbols. Comment bodies and references "
+            + "are checked against the written file, and a program edit landing mid-export "
+            + "fails it too.")
     public Response exportFullListing(
             @Param(value = "output_path", source = ParamSource.BODY,
                 description = "Destination filesystem path") String outputPath,

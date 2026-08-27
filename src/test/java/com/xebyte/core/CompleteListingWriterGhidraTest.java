@@ -31,6 +31,7 @@ import ghidra.program.database.ProgramBuilder;
 import ghidra.program.database.ProgramDB;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.data.ByteDataType;
+import ghidra.program.model.data.PointerDataType;
 import ghidra.program.model.listing.CommentType;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.Variable;
@@ -407,6 +408,22 @@ public class CompleteListingWriterGhidraTest {
             listing.contains("from_room") && listing.contains("to_room"));
     }
 
+    /** Pointer elements carry symbolic meaning that their array's raw byte line does not. */
+    @Test
+    public void pointerArrayElementsAreEmitted() throws Exception {
+        builder.setBytes("0x10a0",
+            "80 10 00 00 00 00 00 00 90 10 00 00 00 00 00 00");
+        builder.applyDataType("0x10a0", new ghidra.program.model.data.ArrayDataType(
+            new PointerDataType(), 2, 8), 1);
+
+        String listing = exportWholeProgram();
+
+        assertTrue("the first pointer element must be emitted",
+            listing.contains("|_000010a0"));
+        assertTrue("the second pointer element must be emitted",
+            listing.contains("|_000010a8"));
+    }
+
     /** Offcut annotations: WORK_PTR on the real program reports 60 offcut references. */
     @Test
     public void offcutCommentIsEmitted() throws Exception {
@@ -473,6 +490,129 @@ public class CompleteListingWriterGhidraTest {
 
         assertTrue("the operand must resolve to the function symbol, not a bare address",
             listing.contains("JMP") && listing.contains("FUN_00001000"));
+    }
+
+    /** Numeric address operands with exact named targets are reported together. */
+    @Test
+    public void unreferencedAddressOperandsTargetingSymbolsAreReported() throws Exception {
+        // Two absolute loads with analyzer-created references removed, each retaining an exact
+        // named target. One response must report both so correction takes one pass.
+        builder.setBytes("0x1010", "8b 04 25 80 10 00 00");
+        builder.disassemble("0x1010", 7);
+        builder.createLabel("0x1080", "resolved_data");
+        builder.setBytes("0x1020", "8b 04 25 90 10 00 00");
+        builder.disassemble("0x1020", 7);
+        builder.createLabel("0x1090", "other_resolved_data");
+        int transaction = program.startTransaction("remove operand reference");
+        try {
+            program.getReferenceManager().removeAllReferencesFrom(builder.addr("0x1010"));
+            program.getReferenceManager().removeAllReferencesFrom(builder.addr("0x1020"));
+        }
+        finally {
+            program.endTransaction(transaction, true);
+        }
+
+        Path destination = temporaryFolder.getRoot().toPath().resolve("unreferenced.asm");
+        Response response = new ExportService(provider, security).exportFullListing(
+            destination.toString(), null, null, true, 100, "");
+
+        assertTrue(response.toJson(), response instanceof Response.Ok);
+        assertTrue(response.toJson(), response.toJson().contains("resolved_data"));
+        assertTrue(response.toJson(), response.toJson().contains("other_resolved_data"));
+        assertTrue(response.toJson(), response.toJson().contains("\"count\":2"));
+        assertTrue("the diagnostic must not block publication", Files.exists(destination));
+    }
+
+    /** A primary reference to another address must not hide the encoded named target. */
+    @Test
+    public void mismatchedPrimaryReferenceStillReportsEncodedTarget() throws Exception {
+        builder.setBytes("0x1010", "8b 04 25 80 10 00 00");
+        builder.disassemble("0x1010", 7);
+        builder.createLabel("0x1080", "actual_target");
+        int transaction = program.startTransaction("replace operand reference");
+        try {
+            program.getReferenceManager().removeAllReferencesFrom(builder.addr("0x1010"));
+            var reference = program.getReferenceManager().addMemoryReference(
+                builder.addr("0x1010"), builder.addr("0x1090"), RefType.READ,
+                SourceType.USER_DEFINED, 1);
+            program.getReferenceManager().setPrimary(reference, true);
+        }
+        finally {
+            program.endTransaction(transaction, true);
+        }
+
+        Path destination = temporaryFolder.getRoot().toPath().resolve("mismatched.asm");
+        Response response = new ExportService(provider, security).exportFullListing(
+            destination.toString(), null, null, true, 100, "");
+
+        assertTrue(response.toJson(), response instanceof Response.Ok);
+        assertTrue(response.toJson(), response.toJson().contains("actual_target"));
+        assertTrue("the diagnostic must not block publication", Files.exists(destination));
+    }
+
+    /** Address-valued data is reported without a reference and symbolized with one. */
+    @Test
+    public void addressValuedDataReportsMissingReferenceAndUsesPresentReference() throws Exception {
+        builder.setBytes("0x1040", "80 10 00 00 00 00 00 00");
+        builder.applyDataType("0x1040", new PointerDataType());
+        builder.createLabel("0x1080", "pointed_to_data");
+        int transaction = program.startTransaction("remove data reference");
+        try {
+            program.getReferenceManager().removeAllReferencesFrom(builder.addr("0x1040"));
+        }
+        finally {
+            program.endTransaction(transaction, true);
+        }
+
+        Path destination = temporaryFolder.getRoot().toPath().resolve("data.asm");
+        Response response = new ExportService(provider, security).exportFullListing(
+            destination.toString(), null, null, true, 100, "");
+
+        assertTrue(response.toJson(), response instanceof Response.Ok);
+        assertTrue(response.toJson(), response.toJson().contains("pointed_to_data"));
+        assertTrue(response.toJson(), response.toJson().contains("\"count\":1"));
+
+        transaction = program.startTransaction("restore data reference");
+        try {
+            var reference = program.getReferenceManager().addMemoryReference(
+                builder.addr("0x1040"), builder.addr("0x1080"), RefType.DATA,
+                SourceType.USER_DEFINED, 0);
+            program.getReferenceManager().setPrimary(reference, true);
+        }
+        finally {
+            program.endTransaction(transaction, true);
+        }
+        Path referenced = temporaryFolder.getRoot().toPath().resolve("referenced-data.asm");
+        Response referencedResponse = new ExportService(provider, security).exportFullListing(
+            referenced.toString(), null, null, true, 100, "");
+
+        assertTrue(referencedResponse.toJson(), referencedResponse instanceof Response.Ok);
+        assertTrue(referencedResponse.toJson(), referencedResponse.toJson().contains("\"count\":0"));
+        assertTrue(Files.readString(referenced).contains("pointed_to_data"));
+    }
+
+    /** A scalar equal to a symbol address is not enough evidence to treat it as an address. */
+    @Test
+    public void scalarMatchingSymbolAddressStillExports() throws Exception {
+        builder.setBytes("0x1010", "b8 80 10 00 00");
+        builder.disassemble("0x1010", 5);
+        builder.createLabel("0x1080", "coincidental_symbol");
+        int transaction = program.startTransaction("remove scalar reference");
+        try {
+            program.getReferenceManager().removeAllReferencesFrom(builder.addr("0x1010"));
+        }
+        finally {
+            program.endTransaction(transaction, true);
+        }
+
+        String listing = exportWholeProgram();
+
+        String instruction = listing.lines()
+            .filter(line -> line.startsWith("00001010"))
+            .findFirst()
+            .orElseThrow();
+        assertTrue(instruction, instruction.contains("MOV") && instruction.contains("1080"));
+        assertFalse(instruction, instruction.contains("coincidental_symbol"));
     }
 
     /** The provenance header identifies which binary the artifact describes. */
