@@ -6,6 +6,8 @@ Complete version history for the GhidraMCP-next project.
 
 ## Unreleased
 
+## 0.103.3
+
 ### Changed
 
 - `export_full_listing` defines each Ghidra equate used by an exported operand once, in stable order.
