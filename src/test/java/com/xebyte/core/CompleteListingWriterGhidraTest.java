@@ -179,6 +179,55 @@ public class CompleteListingWriterGhidraTest {
         new CompleteListingWriter(program, 19);
     }
 
+    @Test
+    public void usedEquatesAreDefinedOnceInStableOrder() throws Exception {
+        builder.setBytes("0x1010", "b8 02 00 00 00");
+        builder.disassemble("0x1010", 5);
+        builder.setBytes("0x1020", "b8 01 00 00 00");
+        builder.disassemble("0x1020", 5);
+        builder.setBytes("0x1030", "03");
+        builder.applyDataType("0x1030", ByteDataType.dataType, 1);
+        int transaction = program.startTransaction("equates");
+        try {
+            ghidra.program.model.symbol.Equate zed =
+                program.getEquateTable().createEquate("ZED", 1);
+            zed.addReference(builder.addr("0x1004"), 1);
+            zed.addReference(builder.addr("0x1020"), 1);
+            ghidra.program.model.symbol.Equate alpha =
+                program.getEquateTable().createEquate("ALPHA", 2);
+            alpha.addReference(builder.addr("0x1010"), 1);
+            ghidra.program.model.symbol.Equate dataValue =
+                program.getEquateTable().createEquate("DATA_VALUE", 3);
+            dataValue.addReference(builder.addr("0x1030"), 0);
+            program.getEquateTable().createEquate("UNUSED", 3);
+        }
+        finally {
+            program.endTransaction(transaction, true);
+        }
+
+        String listing = exportWholeProgram();
+
+        int alpha = listing.indexOf("ALPHA equ 0x2");
+        int zed = listing.indexOf("ZED equ 0x1");
+        assertTrue(listing, alpha >= 0 && alpha < zed);
+        assertEquals(1L, listing.lines().filter(line -> line.equals("ZED equ 0x1")).count());
+        assertFalse(listing, listing.contains("UNUSED"));
+        assertTrue(listing, listing.contains("MOV       EAX,ZED"));
+        assertTrue(listing, listing.contains("MOV       EAX,ALPHA"));
+        assertTrue(listing, listing.contains("DATA_VALUE equ 0x3"));
+        assertTrue(listing, listing.contains("byte      DATA_VALUE"));
+
+        CompleteListingWriter writer = new CompleteListingWriter(program, 100);
+        StringBuilder sink = new StringBuilder();
+        try (PrintWriter out = new PrintWriter(new CollectingWriter(sink))) {
+            writer.write(out, program.getMemory());
+        }
+        assertNull(writer.shortfall(sink.toString().lines()));
+        String missing = writer.shortfall(
+            sink.toString().lines().filter(line -> !line.equals("ALPHA equ 0x2")));
+        assertTrue(missing, missing.contains("equate definition did not reach the output"));
+    }
+
     /** Empty authored comment lines must not make the exported artifact fail diff checks. */
     @Test
     public void blankPlateCommentLineHasNoTrailingWhitespace() throws Exception {
@@ -460,15 +509,25 @@ public class CompleteListingWriterGhidraTest {
     public void rangeStartingInsideAnInstructionRendersTheContainingUnit() throws Exception {
         Path destination = temporaryFolder.getRoot().toPath().resolve("bounded.asm");
         ExportService service = new ExportService(provider, security);
+        int transaction = program.startTransaction("bounded equate");
+        try {
+            ghidra.program.model.symbol.Equate equate =
+                program.getEquateTable().createEquate("BOUNDED_VALUE", 1);
+            equate.addReference(builder.addr("0x1004"), 1);
+        }
+        finally {
+            program.endTransaction(transaction, true);
+        }
 
-        // 0x1001 begins a 3-byte MOV, so 0x1002 is interior to it.
+        // 0x1004 begins a 5-byte MOV, so 0x1005 is interior to it.
         Response response = service.exportFullListing(
-            destination.toString(), "0x1002", "0x1003", true, 100, "");
+            destination.toString(), "0x1005", "0x1007", true, 100, "");
         assertTrue(response.toJson(), response instanceof Response.Ok);
 
         String listing = Files.readString(destination.toFile().getCanonicalFile().toPath());
         assertTrue("the containing instruction must be rendered",
-            listing.contains("MOV") && listing.contains("RBP,RSP"));
+            listing.contains("MOV") && listing.contains("EAX,BOUNDED_VALUE"));
+        assertTrue("its equate must be defined", listing.contains("BOUNDED_VALUE equ 0x1"));
         assertFalse("its bytes must not be reported as undefined",
             listing.contains("undefined"));
     }

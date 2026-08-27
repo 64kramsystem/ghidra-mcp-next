@@ -117,7 +117,8 @@ public final class ExportService {
     @McpTool(path = "/export_full_listing", method = "POST",
         description = "Export a complete listing that clips no field, emits "
             + "every line of every comment, and emits "
-            + "every cross-reference rather than the first twenty-one. Every physical line "
+            + "every cross-reference rather than the first twenty-one, plus each used Ghidra "
+            + "equate definition once. Every physical line "
             + "respects column_width; overflow, including split tokens, continues on marked "
             + ";> assembly-comment lines. Structures and arrays are traversed, so field names, "
             + "component types and values appear indented "

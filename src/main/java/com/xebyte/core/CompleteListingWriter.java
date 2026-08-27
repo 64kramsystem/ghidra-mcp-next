@@ -16,6 +16,7 @@ import com.xebyte.core.ListingRangeService.UnitMetadata;
 
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressRange;
+import ghidra.program.model.address.AddressSet;
 import ghidra.program.model.address.AddressSetView;
 import ghidra.program.model.data.DataType;
 import ghidra.program.model.listing.CodeUnit;
@@ -28,6 +29,7 @@ import ghidra.program.model.listing.Instruction;
 import ghidra.program.model.listing.Program;
 import ghidra.program.model.listing.Variable;
 import ghidra.program.model.mem.MemoryBlock;
+import ghidra.program.model.symbol.Equate;
 import ghidra.program.model.symbol.Reference;
 import ghidra.program.model.symbol.ReferenceManager;
 import ghidra.program.model.symbol.SourceType;
@@ -89,6 +91,7 @@ final class CompleteListingWriter {
     private final Map<String, Integer> expectedCommentLines = new java.util.LinkedHashMap<>();
     /** Reference tokens that must appear in the artifact, with their multiplicity. */
     private final Map<String, Integer> expectedReferenceTokens = new java.util.LinkedHashMap<>();
+    private final Set<String> expectedEquateDefinitions = new LinkedHashSet<>();
     private final List<Map<String, Object>> numericAddressCandidates = new ArrayList<>();
     private int numericAddressCandidateCount;
 
@@ -124,8 +127,10 @@ final class CompleteListingWriter {
     /** Renders every range of {@code selection}, in address order. */
     void write(PrintWriter destination, AddressSetView selection) {
         PrintWriter out = new WidthLimitedPrintWriter(destination, columnWidth);
+        AddressSet rendered = snapped(selection);
         writeHeader(out, selection);
-        for (AddressRange range : selection) {
+        writeEquates(out, rendered);
+        for (AddressRange range : rendered) {
             writeRange(out, range.getMinAddress(), range.getMaxAddress());
         }
         writeSymbolIndex(out, selection);
@@ -169,13 +174,53 @@ final class CompleteListingWriter {
         out.println();
     }
 
-    private void writeRange(PrintWriter out, Address requestedStart, Address requestedEnd) {
-        // Snap to whole code units. A requested bound landing inside a multi-byte instruction
-        // would otherwise make codeUnitAt return null for an address that is really part of a
-        // decoded instruction, and the walk would emit "undefined" over its bytes. A listing
-        // view shows the containing unit, so this does too.
-        Address rangeStart = containingBound(requestedStart, true);
-        Address rangeEnd = containingBound(requestedEnd, false);
+    private AddressSet snapped(AddressSetView selection) {
+        AddressSet rendered = new AddressSet();
+        for (AddressRange range : selection) {
+            rendered.add(
+                containingBound(range.getMinAddress(), true),
+                containingBound(range.getMaxAddress(), false));
+        }
+        return rendered;
+    }
+
+    private void writeEquates(PrintWriter out, AddressSetView rendered) {
+        Map<String, Equate> used = new java.util.TreeMap<>();
+        ghidra.program.model.address.AddressIterator addresses =
+            program.getEquateTable().getEquateAddresses(rendered);
+        while (addresses.hasNext()) {
+            Address address = addresses.next();
+            for (Equate equate : program.getEquateTable().getEquates(address)) {
+                boolean operandReference = equate.getReferences(address).stream()
+                    .anyMatch(reference -> reference.getOpIndex() >= 0);
+                if (!operandReference) {
+                    continue;
+                }
+                if (!equate.isValidUUID()) {
+                    throw new IncompleteListingException(
+                        "invalid enum equate at " + address + ": " + equate.getName());
+                }
+                String name = equate.getDisplayName();
+                Equate previous = used.putIfAbsent(name, equate);
+                if (previous != null && previous.getValue() != equate.getValue()) {
+                    throw new IncompleteListingException(
+                        "equate display name " + name + " has conflicting values");
+                }
+            }
+        }
+        if (used.isEmpty()) {
+            return;
+        }
+        out.println("; equates");
+        for (Equate equate : used.values()) {
+            String definition = equate.getDisplayName() + " equ " + equate.getDisplayValue();
+            expectedEquateDefinitions.add(definition);
+            out.println(definition);
+        }
+        out.println();
+    }
+
+    private void writeRange(PrintWriter out, Address rangeStart, Address rangeEnd) {
         requiredCoverage.put(rangeStart, rangeEnd);
         RangeIndex index = RangeIndex.build(program, rangeStart, rangeEnd);
         Address current = rangeStart;
@@ -827,6 +872,13 @@ final class CompleteListingWriter {
             if (found < expected.getValue()) {
                 return "reference " + expected.getKey() + " reached the output "
                     + found + " of " + expected.getValue() + " times";
+            }
+        }
+        for (String expected : expectedEquateDefinitions) {
+            if (byLastCharacter.getOrDefault(
+                    expected.charAt(expected.length() - 1), List.of()).stream()
+                    .noneMatch(expected::equals)) {
+                return "equate definition did not reach the output: \"" + expected + "\"";
             }
         }
         return null;
