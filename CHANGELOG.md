@@ -6,6 +6,8 @@ Complete version history for the GhidraMCP-next project.
 
 ## Unreleased
 
+## 0.104.0
+
 ### Changed
 
 - **Breaking:** `export_full_listing` now reflows overflow across the full available width and emits presentation-only ordinary assembly-comment continuations instead of machine-identifiable `;>` markers.
