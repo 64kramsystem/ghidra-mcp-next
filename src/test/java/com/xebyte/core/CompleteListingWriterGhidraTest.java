@@ -158,12 +158,47 @@ public class CompleteListingWriterGhidraTest {
         assertTrue(listing.contains("TAIL_MARKER_PLATE"));
     }
 
+    /** Plate text and borders share column one, with the full width available to each line. */
+    @Test
+    public void plateCommentsStartAtColumnOneAndUseTheConfiguredWidth() throws Exception {
+        setComment("0x1000", CommentType.PLATE,
+            "Bootstrap-phase residue or stored host bytes at normalized offsets016Fh..017Ch. "
+                + "Their initial-load positions are PSP:028Fh..029Ch; executed startup streams "
+                + "are mapped in first_decode and explicit patched overlays. The36-byte "
+                + "transition ciphertext at0298h has a separate plaintext view.");
+
+        String listing = Files.readString(exportTo("plate-width-120.asm", 120));
+
+        assertConsecutiveLines(listing,
+            ";" + "*".repeat(70),
+            "; Bootstrap-phase residue or stored host bytes at normalized offsets016Fh..017Ch."
+                + " Their initial-load positions are",
+            "; PSP:028Fh..029Ch; executed startup streams are mapped in first_decode and explicit"
+                + " patched overlays. The36-byte",
+            "; transition ciphertext at0298h has a separate plaintext view.",
+            ";" + "*".repeat(70));
+        assertFalse(listing.contains("                ;" + "*".repeat(70)));
+    }
+
+    /** Decorative borders fit narrow widths without generating extra continuation lines. */
+    @Test
+    public void plateBordersFitNarrowWidths() throws Exception {
+        setComment("0x1000", CommentType.PLATE, "Short plate comment.");
+
+        String listing = Files.readString(exportTo("plate-width-40.asm", 40));
+
+        assertConsecutiveLines(listing,
+            ";" + "*".repeat(39),
+            "; Short plate comment.",
+            ";" + "*".repeat(39));
+    }
+
     /** The requested width applies to every physical line, not only reference groups. */
     @Test
     public void everyPhysicalLineRespectsTheRequiredWidth() throws Exception {
         setComment("0x1000", CommentType.EOL,
             "a deliberately long authored comment whose exact tail is CONTENT_TAIL");
-        setComment("0x1000", CommentType.PLATE, "a".repeat(21) + "😀TAIL");
+        setComment("0x1000", CommentType.PLATE, "a".repeat(37) + "😀TAIL");
         builder.createLabel("0x1004",
             "a_deliberately_long_label_that_exceeds_the_requested_physical_width");
         int transaction = program.startTransaction("width-limited refs");
@@ -260,9 +295,9 @@ public class CompleteListingWriterGhidraTest {
         String listing = exportWholeProgram();
 
         assertConsecutiveLines(listing,
-            "                ; first line",
-            "                ;",
-            "                ; last line");
+            "; first line",
+            ";",
+            "; last line");
     }
 
     /** A blank offcut line retains its location marker without a separator at the end. */
@@ -289,9 +324,9 @@ public class CompleteListingWriterGhidraTest {
         String listing = exportWholeProgram();
 
         assertConsecutiveLines(listing,
-            "                ; first line",
-            "                ;",
-            "                ; last line");
+            "; first line",
+            ";",
+            "; last line");
     }
 
     /** Function-variable comment lines stay comments and cannot retain trailing whitespace. */

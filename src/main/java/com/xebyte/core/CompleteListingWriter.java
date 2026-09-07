@@ -282,6 +282,8 @@ final class CompleteListingWriter {
 
     private void writeComments(WidthLimitedWriter out, UnitMetadata metadata, CommentType type,
             boolean boxed, Address unitStart) {
+        String indent = boxed ? "" : ADDRESS_INDENT;
+        String border = ";" + "*".repeat(Math.min(70, columnWidth - 1));
         for (CommentRecord comment : metadata.comments()) {
             if (comment.type() != type) {
                 continue;
@@ -290,15 +292,15 @@ final class CompleteListingWriter {
             // whose only comment sits at an interior address is still offcut.
             boolean offcut = !comment.address().equals(unitStart);
             if (boxed) {
-                out.println(ADDRESS_INDENT + ";" + "*".repeat(70));
+                out.println(border);
             }
             for (String line : bodyLines(comment.text())) {
                 String body =
                     (offcut ? "[offcut " + comment.address() + "] " : "") + line;
-                out.println(rstrip(ADDRESS_INDENT + "; " + body));
+                out.println(rstrip(indent + "; " + body));
             }
             if (boxed) {
-                out.println(ADDRESS_INDENT + ";" + "*".repeat(70));
+                out.println(border);
             }
             emittedComments.merge(type, 1, Integer::sum);
         }
