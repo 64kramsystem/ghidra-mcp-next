@@ -123,6 +123,29 @@ public class CompleteListingWriterGhidraTest {
         assertFalse("no clip marker may be emitted", listing.contains("..."));
     }
 
+    /** Wrapped EOL text must be reflowed against each physical line's actual capacity. */
+    @Test
+    public void wrappedEolCommentUsesTheWholeContinuationLine() throws Exception {
+        String firstFragment = "Rebuild bytes";
+        String remainder =
+            "1-2 of the dormant COM mask; 0248 is patched to * below, yielding *.COM.";
+        String bareListing = exportWholeProgram();
+        String code = lineContaining(bareListing, "00001001");
+        int commentPrefixLength = Math.max(code.length() + 2, 58) + 2;
+        int width = Math.max(commentPrefixLength + firstFragment.length(),
+            "; ".length() + remainder.length());
+        setComment("0x1001", CommentType.EOL, firstFragment + " " + remainder);
+
+        String listing = Files.readString(exportTo("reflowed-eol.asm", width));
+
+        assertTrue(lineContaining(listing, firstFragment),
+            lineContaining(listing, firstFragment).endsWith("; " + firstFragment));
+        assertConsecutiveLines(listing,
+            lineContaining(listing, firstFragment),
+            "; " + remainder);
+        assertFalse("wrapping must not expose bookkeeping markers", listing.contains(";>"));
+    }
+
     /** Mechanism 1: AsciiExporter clips plate comments too. */
     @Test
     public void longPlateCommentIsNotClipped() throws Exception {
@@ -157,8 +180,9 @@ public class CompleteListingWriterGhidraTest {
 
         String listing = Files.readString(exportTo("width-limited.asm", 40));
 
-        assertTrue("overflow must use marked assembly-comment continuations",
-            listing.contains("                ;> "));
+        assertTrue("the wrapped comment tail must be an ordinary continuation",
+            lineContaining(listing, "CONTENT_TAIL").startsWith("; "));
+        assertFalse("wrapping must not expose bookkeeping markers", listing.contains(";>"));
         assertTrue("the content audit must accept the complete wrapped body",
             listing.contains("CONTENT_TAIL"));
         assertTrue("a surrogate pair at a hard split must survive", listing.contains("😀"));
@@ -224,7 +248,7 @@ public class CompleteListingWriterGhidraTest {
         }
         assertNull(writer.shortfall(sink.toString().lines()));
         String missing = writer.shortfall(
-            sink.toString().lines().filter(line -> !line.equals("ALPHA equ 0x2")));
+            sink.toString().lines().map(line -> line.equals("ALPHA equ 0x2") ? "" : line));
         assertTrue(missing, missing.contains("equate definition did not reach the output"));
     }
 
@@ -808,16 +832,15 @@ public class CompleteListingWriterGhidraTest {
      * hard wrapping. The content audit unfolds continuation lines before checking the body.
      */
     @Test
-    public void controlCharactersInACommentSurviveHardWrapping() throws Exception {
+    public void controlCharactersInACommentSurviveWordWrapping() throws Exception {
         String comment = "PETSCII \u0093 clears the screen, \u0007 rings the bell, "
             + "\u001d moves the cursor right\u001d";
         setComment("0x1000", CommentType.EOL, comment);
 
         String listing = exportWholeProgram();
 
-        String unfolded = listing.replace(
-            System.lineSeparator() + "                ;> ", "");
-        assertTrue("the exact control sequence must survive", unfolded.contains(comment));
+        assertTrue("the exact control sequence must survive",
+            unfoldWordWrappedEolParagraph(listing, "PETSCII").endsWith(comment));
     }
 
     /**
@@ -840,7 +863,7 @@ public class CompleteListingWriterGhidraTest {
         assertNull("a complete artifact must not be reported as short",
             writer.shortfall(sink.toString().lines()));
         String missing = writer.shortfall(
-            sink.toString().lines().filter(line -> !line.contains("SWALLOWED")));
+            sink.toString().lines().map(line -> line.contains("SWALLOWED") ? "" : line));
         assertTrue("the lost plate body must be reported, not counted as emitted: " + missing,
             missing != null && missing.contains("SWALLOWED plate line"));
     }
@@ -858,7 +881,7 @@ public class CompleteListingWriterGhidraTest {
         assertNull("a complete artifact must not be reported as short",
             writer.shortfall(sink.toString().lines()));
         String missing = writer.shortfall(
-            sink.toString().lines().filter(line -> !line.contains("\u001d")));
+            sink.toString().lines().map(line -> line.contains("\u001d") ? "" : line));
         assertTrue("the lost control-only line must be reported: " + missing,
             missing != null && missing.contains("\u001d"));
     }
@@ -888,7 +911,7 @@ public class CompleteListingWriterGhidraTest {
         assertNull("a complete artifact must not be reported as short",
             writer.shortfall(sink.toString().lines()));
         String missing = writer.shortfall(
-            sink.toString().lines().filter(line -> !line.contains("XREF")));
+            sink.toString().lines().map(line -> line.contains("XREF") ? "" : line));
         assertTrue("the lost reference must be reported: " + missing,
             missing != null && missing.contains("00001100"));
     }
@@ -1016,6 +1039,23 @@ public class CompleteListingWriterGhidraTest {
             .filter(line -> line.contains(text))
             .findFirst()
             .orElseThrow(() -> new AssertionError("listing has no line containing: " + text));
+    }
+
+    private static String unfoldWordWrappedEolParagraph(String listing, String startText) {
+        java.util.List<String> lines = listing.lines().toList();
+        int start = 0;
+        while (start < lines.size() && !lines.get(start).contains(startText)) {
+            start++;
+        }
+        if (start == lines.size()) {
+            throw new AssertionError("listing has no EOL paragraph containing: " + startText);
+        }
+        StringBuilder unfolded = new StringBuilder(lines.get(start));
+        for (int index = start + 1;
+                index < lines.size() && lines.get(index).startsWith("; "); index++) {
+            unfolded.append(lines.get(index).substring(1));
+        }
+        return unfolded.toString();
     }
 
     private void setLocalComment(String text) throws Exception {

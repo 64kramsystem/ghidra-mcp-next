@@ -2,6 +2,7 @@ package com.xebyte.core;
 
 import java.io.PrintWriter;
 import java.util.ArrayList;
+import java.util.BitSet;
 import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.LinkedHashSet;
@@ -47,8 +48,8 @@ import ghidra.app.util.template.TemplateSimplifier;
  * that misreported the total.
  *
  * <p>This writer has no clip step or content ceilings. Every physical line respects the
- * requested column width; overflow continues on assembly-comment lines and the read-back
- * audit unfolds those lines before checking the original content.
+ * requested column width; overflow continues on ordinary assembly-comment lines and the
+ * read-back audit unfolds those lines before checking the original content.
  *
  * <p>Annotation gathering is delegated to {@link RangeIndex}, which is driven from
  * {@code getCommentAddressIterator}, {@code getReferenceSourceIterator} and
@@ -72,7 +73,7 @@ final class CompleteListingWriter {
     private static final int INCOMING_BUDGET = 64;
 
     private static final String ADDRESS_INDENT = "                ";
-    private static final String WRAP_CONTINUATION = ADDRESS_INDENT + ";> ";
+    private static final String WRAP_CONTINUATION = "; ";
 
     private final Program program;
     private final int columnWidth;
@@ -94,6 +95,10 @@ final class CompleteListingWriter {
     private final Set<String> expectedEquateDefinitions = new LinkedHashSet<>();
     private final List<Map<String, Object>> numericAddressCandidates = new ArrayList<>();
     private int numericAddressCandidateCount;
+
+    private BitSet wrappedContinuationLines = new BitSet();
+    private BitSet wordWrapContinuationLines = new BitSet();
+    private int physicalLineCount;
 
     private int collectedLabels;
     private int emittedLabels;
@@ -126,7 +131,7 @@ final class CompleteListingWriter {
 
     /** Renders every range of {@code selection}, in address order. */
     void write(PrintWriter destination, AddressSetView selection) {
-        PrintWriter out = new WidthLimitedPrintWriter(destination, columnWidth);
+        WidthLimitedWriter out = new WidthLimitedWriter(destination, columnWidth);
         AddressSet rendered = snapped(selection);
         writeHeader(out, selection);
         writeEquates(out, rendered);
@@ -135,9 +140,12 @@ final class CompleteListingWriter {
         }
         writeSymbolIndex(out, selection);
         out.flush();
+        wrappedContinuationLines = out.wrappedContinuationLines();
+        wordWrapContinuationLines = out.wordWrapContinuationLines();
+        physicalLineCount = out.physicalLineCount();
     }
 
-    private void writeHeader(PrintWriter out, AddressSetView selection) {
+    private void writeHeader(WidthLimitedWriter out, AddressSetView selection) {
         out.println(";" + "=".repeat(78));
         out.println("; " + program.getName());
         out.println(";" + "-".repeat(78));
@@ -184,7 +192,7 @@ final class CompleteListingWriter {
         return rendered;
     }
 
-    private void writeEquates(PrintWriter out, AddressSetView rendered) {
+    private void writeEquates(WidthLimitedWriter out, AddressSetView rendered) {
         Map<String, Equate> used = new java.util.TreeMap<>();
         ghidra.program.model.address.AddressIterator addresses =
             program.getEquateTable().getEquateAddresses(rendered);
@@ -220,7 +228,7 @@ final class CompleteListingWriter {
         out.println();
     }
 
-    private void writeRange(PrintWriter out, Address rangeStart, Address rangeEnd) {
+    private void writeRange(WidthLimitedWriter out, Address rangeStart, Address rangeEnd) {
         requiredCoverage.put(rangeStart, rangeEnd);
         RangeIndex index = RangeIndex.build(program, rangeStart, rangeEnd);
         Address current = rangeStart;
@@ -254,7 +262,7 @@ final class CompleteListingWriter {
         return start ? containing.getMinAddress() : containing.getMaxAddress();
     }
 
-    private void writeUnit(PrintWriter out, CodeUnit existing, Address start, Address end,
+    private void writeUnit(WidthLimitedWriter out, CodeUnit existing, Address start, Address end,
             UnitMetadata metadata, RangeIndex index) {
         tally(metadata);
 
@@ -272,7 +280,7 @@ final class CompleteListingWriter {
         writeComments(out, metadata, CommentType.REPEATABLE, false, start);
     }
 
-    private void writeComments(PrintWriter out, UnitMetadata metadata, CommentType type,
+    private void writeComments(WidthLimitedWriter out, UnitMetadata metadata, CommentType type,
             boolean boxed, Address unitStart) {
         for (CommentRecord comment : metadata.comments()) {
             if (comment.type() != type) {
@@ -296,7 +304,7 @@ final class CompleteListingWriter {
         }
     }
 
-    private void writeLabelsAndFunction(PrintWriter out, UnitMetadata metadata,
+    private void writeLabelsAndFunction(WidthLimitedWriter out, UnitMetadata metadata,
             Address start) {
         for (LabelRecord label : metadata.labels()) {
             String qualified = "Global".equals(label.namespace())
@@ -322,7 +330,7 @@ final class CompleteListingWriter {
         }
     }
 
-    private void writeVariable(PrintWriter out, String role, Variable variable) {
+    private void writeVariable(WidthLimitedWriter out, String role, Variable variable) {
         String definition = ADDRESS_INDENT + ";   " + role + "  " + variableText(variable);
         String comment = variable.getComment();
         if (comment == null || rstrip(comment).isEmpty()) {
@@ -348,7 +356,7 @@ final class CompleteListingWriter {
             + " @ " + variable.getVariableStorage();
     }
 
-    private void writeCrossReferences(PrintWriter out, Address start, Address end,
+    private void writeCrossReferences(WidthLimitedWriter out, Address start, Address end,
             UnitMetadata metadata) {
         List<Reference> direct = new ArrayList<>();
         List<Reference> offcut = new ArrayList<>();
@@ -408,7 +416,7 @@ final class CompleteListingWriter {
         return endpoint + "(" + abbreviate(reference) + ")";
     }
 
-    private void writeReferenceGroup(PrintWriter out, String heading,
+    private void writeReferenceGroup(WidthLimitedWriter out, String heading,
             List<Reference> group, boolean outgoing) {
         if (group.isEmpty()) {
             return;
@@ -457,7 +465,8 @@ final class CompleteListingWriter {
         return "*";
     }
 
-    private void writeCodeLine(PrintWriter out, CodeUnit existing, Address start, Address end,
+    private void writeCodeLine(WidthLimitedWriter out, CodeUnit existing, Address start,
+            Address end,
             RangeIndex index, UnitMetadata metadata) {
         StringBuilder line = new StringBuilder();
         line.append(pad(start.toString(), 16));
@@ -483,9 +492,8 @@ final class CompleteListingWriter {
         }
         int commentColumn = Math.max(line.length() + 2, 58);
         out.println(rstrip(pad(line.toString(), commentColumn) + "; " + eol.get(0)));
-        String continuation = " ".repeat(commentColumn) + "; ";
         for (int index2 = 1; index2 < eol.size(); index2++) {
-            out.println(rstrip(continuation + eol.get(index2)));
+            out.println(rstrip("; " + eol.get(index2)));
         }
     }
 
@@ -498,7 +506,7 @@ final class CompleteListingWriter {
      * including its {@code |_} prefix and three-space indent per level, so a reader used to
      * Ghidra's export recognises the shape.
      */
-    private void writeDataComponents(PrintWriter out, Data data, int depth) {
+    private void writeDataComponents(WidthLimitedWriter out, Data data, int depth) {
         int components = data.getNumComponents();
         for (int index = 0; index < components; index++) {
             Data component = data.getComponent(index);
@@ -689,7 +697,7 @@ final class CompleteListingWriter {
         return null;
     }
 
-    private void writeSymbolIndex(PrintWriter out, AddressSetView selection) {
+    private void writeSymbolIndex(WidthLimitedWriter out, AddressSetView selection) {
         Set<String> entries = new LinkedHashSet<>();
         List<Symbol> symbols = new ArrayList<>();
         for (Symbol symbol : program.getSymbolTable().getAllSymbols(true)) {
@@ -773,21 +781,31 @@ final class CompleteListingWriter {
                     + " stopped at " + (reached == null ? "nothing" : reached);
             }
         }
+        List<String> physicalLines = emittedLines.toList();
+        if (physicalLines.size() != physicalLineCount) {
+            return "artifact has " + physicalLines.size()
+                + " lines; expected " + physicalLineCount;
+        }
         List<String> logicalLines = new ArrayList<>();
         int lineNumber = 0;
-        for (String line : emittedLines.toList()) {
+        for (String line : physicalLines) {
             lineNumber++;
             if (line.length() > columnWidth) {
                 return "line " + lineNumber + " exceeds column width " + columnWidth
                     + ": " + line.length();
             }
-            if (line.startsWith(WRAP_CONTINUATION)) {
+            int lineIndex = lineNumber - 1;
+            if (wrappedContinuationLines.get(lineIndex)) {
                 if (logicalLines.isEmpty()) {
                     return "orphan wrapped continuation at line " + lineNumber;
                 }
+                if (!line.startsWith(WRAP_CONTINUATION)) {
+                    return "wrapped continuation marker missing at line " + lineNumber;
+                }
                 int last = logicalLines.size() - 1;
+                int prefixLength = wordWrapContinuationLines.get(lineIndex) ? 1 : 2;
                 logicalLines.set(last,
-                    logicalLines.get(last) + line.substring(WRAP_CONTINUATION.length()));
+                    logicalLines.get(last) + line.substring(prefixLength));
             }
             else {
                 logicalLines.add(line);
@@ -931,26 +949,35 @@ final class CompleteListingWriter {
     }
 
     /** Enforces the physical line limit without dropping any logical-line characters. */
-    private static final class WidthLimitedPrintWriter extends PrintWriter {
+    private static final class WidthLimitedWriter {
+        private final PrintWriter destination;
         private final int width;
+        private final BitSet wrappedContinuationLines = new BitSet();
+        private final BitSet wordWrapContinuationLines = new BitSet();
+        private int physicalLineCount;
 
-        WidthLimitedPrintWriter(PrintWriter destination, int width) {
-            super(destination);
+        WidthLimitedWriter(PrintWriter destination, int width) {
+            this.destination = destination;
             this.width = width;
         }
 
-        @Override
-        public void println(String value) {
+        void println(String value) {
+            if (value.indexOf('\n') >= 0 || value.indexOf('\r') >= 0) {
+                throw new IllegalArgumentException("logical listing line contains a newline");
+            }
             if (value.length() <= width) {
-                super.println(value);
+                emit(value, false, false);
                 return;
             }
 
             String remaining = value;
             String prefix = "";
+            boolean continuation = false;
+            boolean wordWrapContinuation = false;
             while (prefix.length() + remaining.length() > width) {
                 int available = width - prefix.length();
                 int split = remaining.lastIndexOf(' ', available);
+                boolean whitespaceSplit = split > 0;
                 if (split <= 0) {
                     split = available;
                 }
@@ -963,17 +990,53 @@ final class CompleteListingWriter {
                     if (split == 0 ||
                             (split < available / 2 && remaining.charAt(available - 1) != ' ')) {
                         split = available;
+                        whitespaceSplit = false;
                     }
                 }
                 // UTF-8 encoding would replace the two halves of a split surrogate pair.
                 if (Character.isHighSurrogate(remaining.charAt(split - 1))) {
                     split--;
+                    whitespaceSplit = false;
                 }
-                super.println(prefix + remaining.substring(0, split));
+                emit(prefix + remaining.substring(0, split), continuation,
+                    wordWrapContinuation);
                 remaining = remaining.substring(split);
-                prefix = WRAP_CONTINUATION;
+                prefix = whitespaceSplit ? ";" : WRAP_CONTINUATION;
+                continuation = true;
+                wordWrapContinuation = whitespaceSplit;
             }
-            super.println(prefix + remaining);
+            emit(prefix + remaining, continuation, wordWrapContinuation);
+        }
+
+        void println() {
+            emit("", false, false);
+        }
+
+        void flush() {
+            destination.flush();
+        }
+
+        private void emit(String value, boolean continuation, boolean wordWrap) {
+            if (continuation) {
+                wrappedContinuationLines.set(physicalLineCount);
+            }
+            if (wordWrap) {
+                wordWrapContinuationLines.set(physicalLineCount);
+            }
+            physicalLineCount++;
+            destination.println(value);
+        }
+
+        BitSet wrappedContinuationLines() {
+            return (BitSet) wrappedContinuationLines.clone();
+        }
+
+        BitSet wordWrapContinuationLines() {
+            return (BitSet) wordWrapContinuationLines.clone();
+        }
+
+        int physicalLineCount() {
+            return physicalLineCount;
         }
     }
 }
