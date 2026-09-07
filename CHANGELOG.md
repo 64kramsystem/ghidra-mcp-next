@@ -6,6 +6,8 @@ Complete version history for the GhidraMCP-next project.
 
 ## Unreleased
 
+## 0.104.1
+
 ### Fixed
 
 - `export_full_listing` starts plate comments and their decorative borders at column 1, wrapping text at `column_width` and shortening borders to fit narrow widths.
