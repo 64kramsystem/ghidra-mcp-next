@@ -38,7 +38,7 @@ import ghidra.program.model.symbol.Symbol;
 import ghidra.app.util.template.TemplateSimplifier;
 
 /**
- * Renders a listing that never discards content.
+ * Renders typed data values and complete annotations, summarizing explicitly opaque data.
  *
  * <p>Ghidra's {@code AsciiExporter} loses material four ways: {@code clip()} on
  * width-constrained fields, a hardcoded six-line ceiling on EOL comments, a hardcoded
@@ -47,9 +47,10 @@ import ghidra.app.util.template.TemplateSimplifier;
  * lines and dropped 7 of the 28 references to one address behind an {@code XREF[21]} header
  * that misreported the total.
  *
- * <p>This writer has no clip step or content ceilings. Every physical line respects the
- * requested column width; overflow continues on ordinary assembly-comment lines and the
- * read-back audit unfolds those lines before checking the original content.
+ * <p>Annotations are never clipped. Data marked opaque has an explicit byte-count summary;
+ * other arrays retain their typed values. Uninitialized space is grouped at meaningful boundaries.
+ * Every physical line respects the requested column width; overflow continues on ordinary
+ * assembly-comment lines and the read-back audit unfolds those lines before checking content.
  *
  * <p>Annotation gathering is delegated to {@link RangeIndex}, which is driven from
  * {@code getCommentAddressIterator}, {@code getReferenceSourceIterator} and
@@ -59,8 +60,9 @@ import ghidra.app.util.template.TemplateSimplifier;
  */
 final class CompleteListingWriter {
 
-    /** Bytes per emitted undefined-data line. */
+    /** Initialized bytes without a defined code or data unit remain visible. */
     private static final int UNDEFINED_RUN_LIMIT = 16;
+    static final String OPAQUE_DATA_PROPERTY = "listing.opaque";
     private static final int NUMERIC_ADDRESS_CANDIDATE_LIMIT = 100;
 
     /**
@@ -234,14 +236,30 @@ final class CompleteListingWriter {
         Address current = rangeStart;
         while (current != null && current.compareTo(rangeEnd) <= 0) {
             CodeUnit existing = index.codeUnitAt(current);
-            Address unitEnd = existing != null
-                ? existing.getMaxAddress()
-                : index.undefinedEnd(current, UNDEFINED_RUN_LIMIT);
-            if (unitEnd.compareTo(rangeEnd) > 0) {
-                unitEnd = rangeEnd;
+            Address unitEnd;
+            UnitMetadata metadata;
+            if (existing != null) {
+                unitEnd = existing.getMaxAddress();
+                if (unitEnd.compareTo(rangeEnd) > 0) {
+                    unitEnd = rangeEnd;
+                }
+                metadata = index.collectMetadata(current, unitEnd, INCOMING_BUDGET);
             }
-            UnitMetadata metadata =
-                index.collectMetadata(current, unitEnd, INCOMING_BUDGET);
+            else {
+                // Advance the annotation streams past this address before looking for the
+                // next boundary, as ListingRangeService does for undefined units.
+                metadata = index.collectMetadata(current, current, INCOMING_BUDGET);
+                if (index.initialized(current)) {
+                    unitEnd = index.undefinedEnd(current, UNDEFINED_RUN_LIMIT);
+                }
+                else {
+                    unitEnd = index.undefinedEnd(current);
+                    Address blockEnd = index.memory().getBlock(current).getEnd();
+                    if (blockEnd.compareTo(unitEnd) < 0) {
+                        unitEnd = blockEnd;
+                    }
+                }
+            }
             writeUnit(out, existing, current, unitEnd, metadata, index);
             codeUnits++;
             coverageReached.put(rangeStart, unitEnd);
@@ -500,7 +518,8 @@ final class CompleteListingWriter {
     }
 
     /**
-     * Emits one line per component of a structure or array, recursing into nested ones.
+     * Emits structure fields and pointer-array entries, recursing into nested objects.
+     * Scalar arrays are already rendered as values on their parent's row; opaque data is summarized.
      *
      * <p>A structure's own {@code getDefaultValueRepresentation()} is empty, so without this
      * the unit contributes a type name and no content at all: field names, component types and
@@ -509,44 +528,39 @@ final class CompleteListingWriter {
      * Ghidra's export recognises the shape.
      */
     private void writeDataComponents(WidthLimitedWriter out, Data data, int depth) {
+        if (data.hasProperty(OPAQUE_DATA_PROPERTY) || isScalarArray(data)) {
+            return;
+        }
         int components = data.getNumComponents();
         for (int index = 0; index < components; index++) {
-            Data component = data.getComponent(index);
-            if (component == null) {
-                // Ghidra's exporter returns quietly here; the component count changed under
-                // it. Dropping the remaining fields is exactly the silent loss this writer
-                // exists to prevent, so fail the export instead.
-                throw new IncompleteListingException("component " + index + " of "
-                    + components + " at " + data.getMinAddress()
-                    + " disappeared while rendering; the program changed mid-export");
-            }
-            if (!restatesTheParent(data, component)) {
-                StringBuilder line = new StringBuilder();
-                line.append(pad(" ".repeat(depth * 3) + "|_" + component.getMinAddress(), 16));
-                line.append(pad(component.getFieldName(), 26));
-                line.append(pad(component.getDataType().getDisplayName(), 10));
-                line.append(valueText(component));
-                out.println(rstrip(line.toString()));
-            }
+            Data component = component(data, index);
+            StringBuilder line = new StringBuilder();
+            line.append(pad(" ".repeat(depth * 3) + "|_" + component.getMinAddress(), 16));
+            line.append(pad(component.getFieldName(), 26));
+            line.append(pad(component.getDataType().getDisplayName(), 10));
+            line.append(valueText(component));
+            out.println(rstrip(line.toString()));
 
             writeDataComponents(out, component, depth + 1);
         }
     }
 
-    /**
-     * True when a component's line would carry nothing its parent's line does not already show.
-     *
-     * <p>An element of a scalar array is exactly that: its name is its index, and its value is a
-     * byte the parent already prints in a byte column that is never clipped. On the real program
-     * those were 13,800 of 16,928 component lines — over half the artifact restating bytes. A
-     * named structure field is never redundant, because the name appears nowhere else, and an
-     * element that is itself structured still needs its line as the header for the fields
-     * underneath it.
-     */
-    private static boolean restatesTheParent(Data parent, Data component) {
-        return parent.getDataType() instanceof ghidra.program.model.data.Array
-            && component.getNumComponents() == 0
-            && !(component.getValue() instanceof Address);
+    private static boolean isScalarArray(Data data) {
+        if (!data.isArray() || data.getNumComponents() == 0) {
+            return false;
+        }
+        Data element = component(data, 0);
+        return element.getNumComponents() == 0 && !element.isPointer();
+    }
+
+    private static Data component(Data data, int index) {
+        Data component = data.getComponent(index);
+        if (component == null) {
+            throw new IncompleteListingException("component " + index + " of "
+                + data.getNumComponents() + " at " + data.getMinAddress()
+                + " disappeared while rendering; the program changed mid-export");
+        }
+        return component;
     }
 
     /**
@@ -556,6 +570,16 @@ final class CompleteListingWriter {
      * back for the units the format renders as nothing, such as a structure itself.
      */
     private String valueText(Data data) {
+        if (data.hasProperty(OPAQUE_DATA_PROPERTY)) {
+            return "opaque (" + data.getLength() + " bytes)";
+        }
+        if (!data.hasStringValue() && isScalarArray(data)) {
+            List<String> values = new ArrayList<>(data.getNumComponents());
+            for (int index = 0; index < data.getNumComponents(); index++) {
+                values.add(valueText(component(data, index)));
+            }
+            return "{" + String.join(", ", values) + "}";
+        }
         if (data.getValue() instanceof Address target) {
             recordUnreferencedSymbol(data, 0, new Object[] { target });
         }
@@ -592,6 +616,9 @@ final class CompleteListingWriter {
         if (!index.initialized(start, end)) {
             return "";
         }
+        if (existing instanceof Data data && data.hasProperty(OPAQUE_DATA_PROPERTY)) {
+            return "";
+        }
         int length = (int) (end.subtract(start) + 1);
         byte[] bytes = new byte[length];
         int read;
@@ -611,12 +638,14 @@ final class CompleteListingWriter {
             throw new IncompleteListingException("short read at " + start + ": got "
                 + read + " of " + length + " bytes");
         }
+        // Structure fields need not cover alignment padding, including inside arrays.
+        if (existing instanceof Data data && (data.hasStringValue() || isScalarArray(data))) {
+            return "";
+        }
         StringBuilder hex = new StringBuilder(length * 2);
         for (byte value : bytes) {
             hex.append(String.format("%02x", value));
         }
-        // No clipping: a 32-byte data unit renders all 64 characters. AsciiExporter cuts
-        // this column at 12.
         return hex.toString();
     }
 
@@ -634,7 +663,8 @@ final class CompleteListingWriter {
 
     private String undefinedText(Address start, Address end, RangeIndex index) {
         if (!index.initialized(start, end)) {
-            return "?? uninitialized";
+            long length = end.subtract(start) + 1;
+            return "uninitialized (" + length + (length == 1 ? " byte)" : " bytes)");
         }
         return "undefined";
     }

@@ -820,10 +820,13 @@ public final class ListingRangeService {
         }
 
         Address undefinedEnd(Address start, int maxLength) {
+            return cappedEnd(start, maxLength, undefinedEnd(start));
+        }
+
+        Address undefinedEnd(Address start) {
             Address nextBoundary = nextBoundary(start);
-            Address boundaryEnd = nextBoundary == null
+            return nextBoundary == null
                 ? effectiveEnd : nextBoundary.previous();
-            return cappedEnd(start, maxLength, boundaryEnd);
         }
 
         UnitMetadata collectMetadata(Address start, Address end, int incomingCap) {

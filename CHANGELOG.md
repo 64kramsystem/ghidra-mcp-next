@@ -6,6 +6,10 @@ Complete version history for the GhidraMCP-next project.
 
 ## Unreleased
 
+### Changed
+
+- **Breaking:** `export_full_listing` renders scalar arrays as compact typed values, preserving enum names and resolved targets, and omits duplicate raw hex for scalar arrays and strings. Only data objects explicitly marked with the native Ghidra property `listing.opaque` are summarized by type and byte count. Undefined uninitialized space is grouped at annotation, code, data and memory boundaries as `uninitialized (N bytes)` instead of emitting 16-byte rows; initialized undefined rows also stop at annotations.
+
 ## 0.104.1
 
 ### Fixed

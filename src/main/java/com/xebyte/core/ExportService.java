@@ -33,7 +33,7 @@ public final class ExportService {
     private static final Gson OUTPUT_GSON = new Gson();
 
     /**
-     * Writes a listing with no clip step or output ceilings.
+     * Writes typed data values and complete annotations, summarizing explicitly opaque data.
      */
     static final class CompleteListingRunner {
         private final int columnWidth;
@@ -115,15 +115,20 @@ public final class ExportService {
     }
 
     @McpTool(path = "/export_full_listing", method = "POST",
-        description = "Export a complete listing that clips no field, emits "
+        description = "Export a complete listing that emits "
             + "every line of every comment, and emits "
             + "every cross-reference rather than the first twenty-one, plus each used Ghidra "
             + "equate definition once. Every physical line "
             + "respects column_width; overflow, including split tokens, continues on ordinary "
             + "assembly-comment lines whose wrap boundaries are presentation-only. Structures "
-            + "and arrays are traversed, so field names, "
-            + "component types and values appear indented "
-            + "under their parent. The export fails without publishing if it cannot emit "
+            + "and pointer arrays show fields and targets; scalar arrays show all typed "
+            + "values in compact rows. Scalar arrays and strings omit duplicate raw hex. "
+            + "Only data explicitly marked with the native Ghidra "
+            + "property listing.opaque is summarized by type and byte count; mark a whole "
+            + "data object with data.setProperty(\"listing.opaque\") in a Ghidra script. "
+            + "Undefined uninitialized space is grouped up to the next annotation, code, "
+            + "data, memory-block or initialization boundary, with its byte count. "
+            + "The export fails without publishing if it cannot emit "
             + "everything it collected. The response reports numeric address operands and "
             + "emitted pointer values targeting named symbols. Comment bodies and references "
             + "are checked against the written file, and a program edit landing mid-export "

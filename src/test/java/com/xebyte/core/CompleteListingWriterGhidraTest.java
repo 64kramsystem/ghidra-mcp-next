@@ -434,29 +434,174 @@ public class CompleteListingWriterGhidraTest {
         }
     }
 
-    /**
-     * Mechanism 1: the bytes column clips at 12 characters, so a wide data unit loses most
-     * of its bytes. Measured on the real program: 285 occurrences, e.g. {@code 000000010...}
-     * for a db[32].
-     *
-     * <p>The array must be a single 32-byte code unit. Applying ByteDataType with length 32
-     * instead produces 32 one-byte units, and then an assertion on a short substring passes
-     * for the wrong reason.
-     */
     @Test
-    public void bytesOfWideDataUnitAreNotClipped() throws Exception {
+    public void byteTableRetainsEveryValueInCompactRows() throws Exception {
         builder.setBytes("0x1080",
-            "00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f "
-                + "10 11 12 13 14 15 16 17 18 19 1a 1b 1c 1d 1e 1f");
+            "1a 1e 22 26 2e 32 3c 40 4c 5c 64 6c 76 aa de f2 14 1a 20 2c 3a 4e 64 "
+                + "96 ad c4 fc 20 42 76 9f f0 28 4a 80 b7 df 15 1f 25 2b 31 61 66 a8 fe "
+                + "30 86 b3 dd 02 07 07");
         builder.applyDataType("0x1080", new ghidra.program.model.data.ArrayDataType(
-            ghidra.program.model.data.ByteDataType.dataType, 32, 1), 1);
+            ByteDataType.dataType, 53, 1), 1);
+
+        String listing = Files.readString(exportTo("byte-table.asm", 500));
+
+        assertTrue(listing, listing.contains("byte[53]  {1Ah, 1Eh, 22h, 26h, 2Eh, 32h, 3Ch, "
+            + "40h, 4Ch, 5Ch, 64h, 6Ch, 76h, AAh, DEh, F2h, 14h, 1Ah, 20h, 2Ch, 3Ah, "
+            + "4Eh, 64h, 96h, ADh, C4h, FCh, 20h, 42h, 76h, 9Fh, F0h, 28h, 4Ah, 80h, "
+            + "B7h, DFh, 15h, 1Fh, 25h, 2Bh, 31h, 61h, 66h, A8h, FEh, 30h, 86h, B3h, "
+            + "DDh, 2h, 7h, 7h}"));
+        assertFalse(listing.contains("|_00001081"));
+        assertFalse(listing.contains("1a1e22262e"));
+        assertFalse(listing.contains("opaque"));
+
+        listing = Files.readString(exportTo("byte-table-wrapped.asm", 129));
+        String first = "00001080                                  byte[53]  "
+            + "{1Ah, 1Eh, 22h, 26h, 2Eh, 32h, 3Ch, 40h, 4Ch, 5Ch, 64h, 6Ch, 76h, AAh, DEh,";
+        String second = "; F2h, 14h, 1Ah, 20h, 2Ch, 3Ah, 4Eh, 64h, 96h, ADh, C4h, FCh, "
+            + "20h, 42h, 76h, 9Fh, F0h, 28h, 4Ah, 80h, B7h, DFh, 15h, 1Fh, 25h,";
+        String third = "; 2Bh, 31h, 61h, 66h, A8h, FEh, 30h, 86h, B3h, DDh, 2h, 7h, 7h}";
+        assertConsecutiveLines(listing, first, second, third);
+        assertTrue(first.length() <= 129 && first.length() + " F2h,".length() > 129);
+        assertTrue(second.length() <= 129 && second.length() + " 2Bh,".length() > 129);
+        assertTrue(third.length() <= 129);
+    }
+
+    @Test
+    public void wordDispatchTablePreservesAllValuesAndResolvedTargets() throws Exception {
+        builder.setBytes("0x1080",
+            "3f 0e 94 0e b0 0e 02 0f 8b 0f b5 0f bf 0f c9 0f 01 10 08 10 7e 10 "
+                + "25 11 29 11 99 0f a8 0f 8f 11 2d 11 61 11 89 11 8c 11 dd 0f 68 11 "
+                + "6e 11 3d 11 8d 0e 74 11 7a 11 a6 0e ab 0e 33 0e 25 0e f1 0f cc 0f");
+        builder.applyDataType("0x1080", new ghidra.program.model.data.ArrayDataType(
+            ghidra.program.model.data.WordDataType.dataType, 33, 2), 1);
+        builder.createLabel("0x1001", "action_move");
+        int transaction = program.startTransaction("dispatch ref");
+        try {
+            program.getReferenceManager().addMemoryReference(builder.addr("0x1090"),
+                builder.addr("0x1001"), RefType.DATA, SourceType.USER_DEFINED, 0);
+        }
+        finally {
+            program.endTransaction(transaction, true);
+        }
+
+        String listing = Files.readString(exportTo("word-table.asm", 500));
+
+        assertTrue(listing, listing.contains("word[33]  {E3Fh, E94h, EB0h, F02h, F8Bh, FB5h, "
+            + "FBFh, FC9h, action_move, 1008h, 107Eh, 1125h, 1129h, F99h, FA8h, 118Fh, "
+            + "112Dh, 1161h, 1189h, 118Ch, FDDh, 1168h, 116Eh, 113Dh, E8Dh, 1174h, "
+            + "117Ah, EA6h, EABh, E33h, E25h, FF1h, FCCh}"));
+        assertFalse(listing.contains("3f0e940eb00e"));
+    }
+
+    @Test
+    public void scalarArrayRetainsEnumNames() throws Exception {
+        var kind = new ghidra.program.model.data.EnumDataType("Action", 1);
+        kind.add("MOVE", 1);
+        kind.add("TAKE", 2);
+        builder.setBytes("0x1080", "01 02 01 02");
+        builder.applyDataType("0x1080", new ghidra.program.model.data.ArrayDataType(kind, 4, 1), 1);
 
         String listing = exportWholeProgram();
 
-        assertEquals("the array must be one 32-byte code unit", 32,
-            program.getListing().getDataAt(builder.addr("0x1080")).getLength());
-        assertTrue("all 64 hex characters must be emitted on one line",
-            listing.contains("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"));
+        assertTrue(listing, listing.contains("{MOVE, TAKE, MOVE, TAKE}"));
+        assertFalse(listing.contains("01020102"));
+    }
+
+    @Test
+    public void opaqueArraySummarizesBytesWithoutLosingOffcutAnnotations() throws Exception {
+        builder.createMemory("payload", "0x2000", 2280);
+        builder.setBytes("0x2000", "cb 8f ee 3d b7 01 10 25");
+        builder.applyDataType("0x2000", new ghidra.program.model.data.ArrayDataType(
+            ByteDataType.dataType, 2280, 1), 1);
+        builder.createLabel("0x2010", "payload_field");
+        setComment("0x2010", CommentType.EOL, "PAYLOAD_OFFCUT");
+        int transaction = program.startTransaction("payload ref");
+        try {
+            program.getListing().getDataAt(builder.addr("0x2000"))
+                .setProperty(CompleteListingWriter.OPAQUE_DATA_PROPERTY);
+            program.getReferenceManager().addMemoryReference(builder.addr("0x1000"),
+                builder.addr("0x2010"), RefType.READ, SourceType.USER_DEFINED, 0);
+        }
+        finally {
+            program.endTransaction(transaction, true);
+        }
+
+        String listing = Files.readString(exportTo("opaque.asm", 129));
+        String row = lineContaining(listing, "opaque (2280 bytes)");
+        assertTrue(row, row.startsWith("00002000") && row.contains("byte[2280]"));
+        assertFalse(listing.contains("cb8fee3db7011025"));
+        assertFalse(listing.contains("|_00002001"));
+        assertTrue(listing.contains("payload_field"));
+        assertTrue(listing.contains("[offcut 00002010] PAYLOAD_OFFCUT"));
+        assertTrue(listing.contains("XREF offcut[1]: 00001000(R)"));
+        assertTrue(lineContaining(listing, "PUSH").contains("55"));
+    }
+
+    @Test
+    public void longStringRetainsItsReadableValueWithoutDuplicateHex() throws Exception {
+        String value = "A readable string longer than thirty-two bytes, ending in STRING_TAIL";
+        int transaction = program.startTransaction("string");
+        try {
+            program.getMemory().setBytes(builder.addr("0x1080"),
+                (value + "\0").getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            program.getListing().createData(builder.addr("0x1080"),
+                ghidra.program.model.data.StringDataType.dataType, value.length() + 1);
+        }
+        finally {
+            program.endTransaction(transaction, true);
+        }
+
+        String listing = exportWholeProgram();
+
+        assertConsecutiveLines(listing,
+            "00001080                                  string    \"A readable string longer"
+                + " than thirty-two bytes,",
+            "; ending in STRING_TAIL\"");
+        assertTrue("the next word must not fit on the first line",
+            lineContaining(listing, "string").length() + " ending".length() > 100);
+        assertFalse(listing.contains("41207265616461626c65"));
+    }
+
+    @Test
+    public void uninitializedRunsStopAtAnnotationsDataAndMemoryBoundaries() throws Exception {
+        builder.createUninitializedMemory("workspace", "0x2000", 0x100);
+        builder.createUninitializedMemory("next_workspace", "0x2100", 0x40);
+        builder.createMemory("initialized_tail", "0x2140", 0x20);
+        builder.createLabel("0x2000", "workspace_start");
+        builder.createLabel("0x2020", "workspace_field");
+        setComment("0x2040", CommentType.EOL, "WORKSPACE_COMMENT");
+        builder.applyDataType("0x2080", ghidra.program.model.data.WordDataType.dataType, 1);
+        int transaction = program.startTransaction("workspace refs");
+        try {
+            program.getReferenceManager().addMemoryReference(builder.addr("0x2070"),
+                builder.addr("0x2060"), RefType.READ, SourceType.USER_DEFINED, 0);
+        }
+        finally {
+            program.endTransaction(transaction, true);
+        }
+
+        String listing = exportWholeProgram();
+
+        String[] starts = { "00002000", "00002020", "00002040", "00002060",
+            "00002070", "00002082", "00002100" };
+        int[] sizes = { 32, 32, 32, 16, 16, 126, 64 };
+        for (int index = 0; index < starts.length; index++) {
+            final String start = starts[index];
+            String row = listing.lines().filter(line -> line.startsWith(start)).findFirst()
+                .orElseThrow(() -> new AssertionError("missing row at " + start));
+            assertTrue(row, row.contains("uninitialized (" + sizes[index] + " bytes)"));
+        }
+        assertEquals(7, listing.lines().filter(line -> line.contains("uninitialized (")).count());
+        assertFalse(listing.lines().anyMatch(line -> line.startsWith("00002010")));
+        assertTrue(listing.lines().anyMatch(line -> line.startsWith("00002080")
+            && line.contains("word")));
+        assertTrue(listing.contains("WORKSPACE_COMMENT"));
+        assertFalse(listing.contains("[offcut"));
+        for (String start : new String[] { "00002140", "00002150" }) {
+            assertTrue(listing.lines().anyMatch(line -> line.startsWith(start)
+                && line.contains("00000000000000000000000000000000")
+                && line.endsWith("undefined")));
+        }
     }
 
     /**
@@ -484,11 +629,7 @@ public class CompleteListingWriterGhidraTest {
     }
 
     /**
-     * An array of scalars must not emit a line per element. The parent's byte column is uncapped,
-     * so {@code [3] byte 1h} restates a value already printed in full on the line above it — on
-     * the real program that was 13,800 lines of restatement, over half the artifact. A field name
-     * has no such duplicate, so structure components are still emitted, including where the
-     * structure is itself an array element: that is what keeps a record table readable.
+     * Scalar arrays show values on their parent's row; structured elements retain their fields.
      */
     @Test
     public void scalarArrayElementsAreNotEmittedButStructureFieldsAre() throws Exception {
@@ -502,18 +643,41 @@ public class CompleteListingWriterGhidraTest {
         record.add(ghidra.program.model.data.ByteDataType.dataType, "to_room", null);
         builder.setBytes("0x1090", "03 0c 06 0a");
         builder.applyDataType("0x1090", new ghidra.program.model.data.ArrayDataType(
-            record, 2, record.getLength()), 1);
+            record, 20, record.getLength()), 1);
 
         String listing = exportWholeProgram();
 
-        assertTrue("the scalar array's own line must carry every byte",
-            listing.contains("00010203"));
+        assertTrue("the scalar array's own line must carry every value",
+            listing.contains("{0h, 1h, 2h, 3h}"));
         assertFalse("a scalar array element must not get its own line",
             listing.contains("|_00001081"));
         assertTrue("an array element that is a structure must still be emitted",
             listing.contains("|_00001090"));
         assertTrue("and its field names must survive",
             listing.contains("from_room") && listing.contains("to_room"));
+        assertTrue(listing.contains("|_000010b6"));
+        assertTrue(listing.lines().anyMatch(line -> line.contains("|_00001091")
+            && line.contains("to_room") && line.endsWith("Ch")));
+    }
+
+    @Test
+    public void packedStructuresAndTheirArraysRetainPaddingBytes() throws Exception {
+        var record = new ghidra.program.model.data.StructureDataType("AlignedRecord", 0);
+        record.setPackingEnabled(true);
+        record.add(ByteDataType.dataType, "tag", null);
+        record.add(ghidra.program.model.data.DWordDataType.dataType, "value", null);
+        builder.setBytes("0x1080", "01 a1 a2 a3 44 33 22 11");
+        builder.applyDataType("0x1080", record, 1);
+        assertEquals(8, program.getListing().getDataAt(builder.addr("0x1080")).getLength());
+        builder.setBytes("0x1090", "01 a1 a2 a3 44 33 22 11 02 b1 b2 b3 88 77 66 55");
+        builder.applyDataType("0x1090", new ghidra.program.model.data.ArrayDataType(record, 2, 8), 1);
+
+        String listing = exportWholeProgram();
+
+        assertTrue(listing.lines().anyMatch(line -> line.startsWith("00001080")
+            && line.contains("01a1a2a344332211")));
+        assertTrue(listing.contains("01a1a2a34433221102b1b2b388776655"));
+        assertTrue(listing.contains("11223344h") && listing.contains("55667788h"));
     }
 
     /** Pointer elements carry symbolic meaning that their array's raw byte line does not. */
@@ -522,7 +686,7 @@ public class CompleteListingWriterGhidraTest {
         builder.setBytes("0x10a0",
             "80 10 00 00 00 00 00 00 90 10 00 00 00 00 00 00");
         builder.applyDataType("0x10a0", new ghidra.program.model.data.ArrayDataType(
-            new PointerDataType(), 2, 8), 1);
+            new PointerDataType(), 5, 8), 1);
 
         String listing = exportWholeProgram();
 
@@ -530,6 +694,8 @@ public class CompleteListingWriterGhidraTest {
             listing.contains("|_000010a0"));
         assertTrue("the second pointer element must be emitted",
             listing.contains("|_000010a8"));
+        assertTrue("the last pointer element must be emitted",
+            listing.contains("|_000010c0"));
     }
 
     /** Offcut annotations: WORK_PTR on the real program reports 60 offcut references. */
@@ -828,19 +994,24 @@ public class CompleteListingWriterGhidraTest {
      */
     @Test
     public void shortMemoryReadFailsTheExport() throws Exception {
+        builder.applyDataType("0x1080", new ghidra.program.model.data.ArrayDataType(
+            ByteDataType.dataType, 64, 1), 1);
         ProgramDB spied = Mockito.spy(program);
         Memory shortReading = Mockito.spy(program.getMemory());
         Mockito.doReturn(shortReading).when(spied).getMemory();
         Mockito.doReturn(1).when(shortReading)
             .getBytes(Mockito.any(Address.class), Mockito.any(byte[].class));
-        ExportService.CompleteListingRunner runner =
-            new ExportService.CompleteListingRunner(100);
+        for (String[] range : new String[][] {
+            { "0x1001", "0x1003" }, { "0x1080", "0x10bf" } }) {
+            ExportService.CompleteListingRunner runner =
+                new ExportService.CompleteListingRunner(100);
+            boolean exported = runner.export(temporaryFolder.newFile(), spied,
+                new ghidra.program.model.address.AddressSet(
+                    builder.addr(range[0]), builder.addr(range[1])), TaskMonitor.DUMMY);
 
-        boolean exported = runner.export(temporaryFolder.newFile("short.asm"), spied,
-            program.getMemory(), TaskMonitor.DUMMY);
-
-        assertFalse("a short read must not produce an artifact", exported);
-        assertTrue(runner.diagnostic(), runner.diagnostic().contains("short read"));
+            assertFalse("a short read must not produce an artifact", exported);
+            assertTrue(runner.diagnostic(), runner.diagnostic().contains("short read"));
+        }
     }
 
     /** A destination that cannot be written must fail the export, not publish a partial file. */
