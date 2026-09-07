@@ -6,6 +6,10 @@ Complete version history for the GhidraMCP-next project.
 
 ## Unreleased
 
+### Changed
+
+- **Breaking:** `export_full_listing` indents wrapped data and operands instead of prefixing them with `;`. Actual comments retain comment continuations, including EOL comments following wrapped operands.
+
 ## 0.105.0
 
 ### Changed

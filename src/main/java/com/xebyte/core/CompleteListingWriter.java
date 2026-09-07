@@ -49,8 +49,8 @@ import ghidra.app.util.template.TemplateSimplifier;
  *
  * <p>Annotations are never clipped. Data marked opaque has an explicit byte-count summary;
  * other arrays retain their typed values. Uninitialized space is grouped at meaningful boundaries.
- * Every physical line respects the requested column width; overflow continues on ordinary
- * assembly-comment lines and the read-back audit unfolds those lines before checking content.
+ * Every physical line respects the requested column width; data and operand continuations are
+ * indented, while actual comments retain their comment prefix. The read-back audit unfolds them.
  *
  * <p>Annotation gathering is delegated to {@link RangeIndex}, which is driven from
  * {@code getCommentAddressIterator}, {@code getReferenceSourceIterator} and
@@ -75,7 +75,8 @@ final class CompleteListingWriter {
     private static final int INCOMING_BUDGET = 64;
 
     private static final String ADDRESS_INDENT = "                ";
-    private static final String WRAP_CONTINUATION = "; ";
+    private static final String COMMENT_CONTINUATION = "; ";
+    private static final String DATA_CONTINUATION = "  ";
 
     private final Program program;
     private final int columnWidth;
@@ -100,6 +101,7 @@ final class CompleteListingWriter {
 
     private BitSet wrappedContinuationLines = new BitSet();
     private BitSet wordWrapContinuationLines = new BitSet();
+    private BitSet commentContinuationLines = new BitSet();
     private int physicalLineCount;
 
     private int collectedLabels;
@@ -144,6 +146,7 @@ final class CompleteListingWriter {
         out.flush();
         wrappedContinuationLines = out.wrappedContinuationLines();
         wordWrapContinuationLines = out.wordWrapContinuationLines();
+        commentContinuationLines = out.commentContinuationLines();
         physicalLineCount = out.physicalLineCount();
     }
 
@@ -333,7 +336,8 @@ final class CompleteListingWriter {
             String suffix = label.primary() ? "" : "  ; secondary";
             String offcut = label.address().equals(start)
                 ? "" : "  ; offcut at " + label.address();
-            out.println(qualified + ":" + suffix + offcut);
+            out.println(qualified + ":" + suffix + offcut,
+                suffix.isEmpty() && offcut.isEmpty() ? -1 : qualified.length() + 3);
             emittedLabels++;
         }
 
@@ -449,7 +453,7 @@ final class CompleteListingWriter {
             String item = referenceToken(reference, outgoing);
             if (!first && line.length() + item.length() + 3 > columnWidth) {
                 // Trailing comma before the break, so a wrapped list still reads as a list.
-                out.println(line.append(",").toString());
+                out.println(line.append(",").toString(), 0);
                 line = new StringBuilder(continuation);
             }
             else if (!first) {
@@ -459,7 +463,7 @@ final class CompleteListingWriter {
             emittedReferences++;
             first = false;
         }
-        out.println(line.toString());
+        out.println(line.toString(), 0);
     }
 
     private String abbreviate(Reference reference) {
@@ -511,7 +515,8 @@ final class CompleteListingWriter {
             return;
         }
         int commentColumn = Math.max(line.length() + 2, 58);
-        out.println(rstrip(pad(line.toString(), commentColumn) + "; " + eol.get(0)));
+        out.println(rstrip(pad(line.toString(), commentColumn) + "; " + eol.get(0)),
+            commentColumn);
         for (int index2 = 1; index2 < eol.size(); index2++) {
             out.println(rstrip("; " + eol.get(index2)));
         }
@@ -831,7 +836,9 @@ final class CompleteListingWriter {
                 if (logicalLines.isEmpty()) {
                     return "orphan wrapped continuation at line " + lineNumber;
                 }
-                if (!line.startsWith(WRAP_CONTINUATION)) {
+                String prefix = commentContinuationLines.get(lineIndex)
+                    ? COMMENT_CONTINUATION : DATA_CONTINUATION;
+                if (!line.startsWith(prefix)) {
                     return "wrapped continuation marker missing at line " + lineNumber;
                 }
                 int last = logicalLines.size() - 1;
@@ -986,6 +993,7 @@ final class CompleteListingWriter {
         private final int width;
         private final BitSet wrappedContinuationLines = new BitSet();
         private final BitSet wordWrapContinuationLines = new BitSet();
+        private final BitSet commentContinuationLines = new BitSet();
         private int physicalLineCount;
 
         WidthLimitedWriter(PrintWriter destination, int width) {
@@ -994,11 +1002,16 @@ final class CompleteListingWriter {
         }
 
         void println(String value) {
+            println(value, value.stripLeading().startsWith(";") ? 0 : -1);
+        }
+
+        // Callers supply inline comment boundaries; semicolons inside data values are content.
+        void println(String value, int commentStart) {
             if (value.indexOf('\n') >= 0 || value.indexOf('\r') >= 0) {
                 throw new IllegalArgumentException("logical listing line contains a newline");
             }
             if (value.length() <= width) {
-                emit(value, false, false);
+                emit(value, false, false, false);
                 return;
             }
 
@@ -1006,6 +1019,7 @@ final class CompleteListingWriter {
             String prefix = "";
             boolean continuation = false;
             boolean wordWrapContinuation = false;
+            boolean commentContinuation = false;
             while (prefix.length() + remaining.length() > width) {
                 int available = width - prefix.length();
                 int split = remaining.lastIndexOf(' ', available);
@@ -1031,29 +1045,35 @@ final class CompleteListingWriter {
                     whitespaceSplit = false;
                 }
                 emit(prefix + remaining.substring(0, split), continuation,
-                    wordWrapContinuation);
+                    wordWrapContinuation, commentContinuation);
                 remaining = remaining.substring(split);
-                prefix = whitespaceSplit ? ";" : WRAP_CONTINUATION;
+                commentContinuation = commentStart >= 0
+                    && value.length() - remaining.length() >= commentStart;
+                String marker = commentContinuation ? COMMENT_CONTINUATION : DATA_CONTINUATION;
+                prefix = whitespaceSplit ? marker.substring(0, 1) : marker;
                 continuation = true;
                 wordWrapContinuation = whitespaceSplit;
             }
-            emit(prefix + remaining, continuation, wordWrapContinuation);
+            emit(prefix + remaining, continuation, wordWrapContinuation, commentContinuation);
         }
 
         void println() {
-            emit("", false, false);
+            emit("", false, false, false);
         }
 
         void flush() {
             destination.flush();
         }
 
-        private void emit(String value, boolean continuation, boolean wordWrap) {
+        private void emit(String value, boolean continuation, boolean wordWrap, boolean comment) {
             if (continuation) {
                 wrappedContinuationLines.set(physicalLineCount);
             }
             if (wordWrap) {
                 wordWrapContinuationLines.set(physicalLineCount);
+            }
+            if (comment) {
+                commentContinuationLines.set(physicalLineCount);
             }
             physicalLineCount++;
             destination.println(value);
@@ -1065,6 +1085,10 @@ final class CompleteListingWriter {
 
         BitSet wordWrapContinuationLines() {
             return (BitSet) wordWrapContinuationLines.clone();
+        }
+
+        BitSet commentContinuationLines() {
+            return (BitSet) commentContinuationLines.clone();
         }
 
         int physicalLineCount() {

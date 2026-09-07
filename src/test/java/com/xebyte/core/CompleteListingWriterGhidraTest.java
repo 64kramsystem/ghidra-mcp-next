@@ -146,6 +146,33 @@ public class CompleteListingWriterGhidraTest {
         assertFalse("wrapping must not expose bookkeeping markers", listing.contains(";>"));
     }
 
+    @Test
+    public void wrappedOperandRemainsCodeBeforeItsEolComment() throws Exception {
+        String operand = "a_very_long_symbolic_operand_" + "0123456789".repeat(7);
+        int transaction = program.startTransaction("long operand");
+        try {
+            program.getEquateTable().createEquate(operand, 1)
+                .addReference(builder.addr("0x1004"), 1);
+        }
+        finally {
+            program.endTransaction(transaction, true);
+        }
+        setComment("0x1004", CommentType.EOL,
+            "This actual comment continues after the operand and must keep its comment prefix.");
+
+        String listing = Files.readString(exportTo("operand-and-comment.asm", 80));
+        String first = "00001004        b801000000                MOV";
+        String second = "        EAX,a_very_long_symbolic_operand_"
+            + "012345678901234567890123456789012345678";
+        String third = "  9012345678901234567890123456789  ; This actual comment continues after the";
+        String fourth = "; operand and must keep its comment prefix.";
+        assertConsecutiveLines(listing, first, second, third, fourth);
+        assertTrue(first.length() + ("       EAX," + operand).length() > 80);
+        assertEquals(80, second.length());
+        assertTrue(third.length() <= 80 && third.length() + " operand".length() > 80);
+        assertTrue(fourth.length() <= 80);
+    }
+
     /** Mechanism 1: AsciiExporter clips plate comments too. */
     @Test
     public void longPlateCommentIsNotClipped() throws Exception {
@@ -457,9 +484,9 @@ public class CompleteListingWriterGhidraTest {
         listing = Files.readString(exportTo("byte-table-wrapped.asm", 129));
         String first = "00001080                                  byte[53]  "
             + "{1Ah, 1Eh, 22h, 26h, 2Eh, 32h, 3Ch, 40h, 4Ch, 5Ch, 64h, 6Ch, 76h, AAh, DEh,";
-        String second = "; F2h, 14h, 1Ah, 20h, 2Ch, 3Ah, 4Eh, 64h, 96h, ADh, C4h, FCh, "
+        String second = "  F2h, 14h, 1Ah, 20h, 2Ch, 3Ah, 4Eh, 64h, 96h, ADh, C4h, FCh, "
             + "20h, 42h, 76h, 9Fh, F0h, 28h, 4Ah, 80h, B7h, DFh, 15h, 1Fh, 25h,";
-        String third = "; 2Bh, 31h, 61h, 66h, A8h, FEh, 30h, 86h, B3h, DDh, 2h, 7h, 7h}";
+        String third = "  2Bh, 31h, 61h, 66h, A8h, FEh, 30h, 86h, B3h, DDh, 2h, 7h, 7h}";
         assertConsecutiveLines(listing, first, second, third);
         assertTrue(first.length() <= 129 && first.length() + " F2h,".length() > 129);
         assertTrue(second.length() <= 129 && second.length() + " 2Bh,".length() > 129);
@@ -539,7 +566,7 @@ public class CompleteListingWriterGhidraTest {
 
     @Test
     public void longStringRetainsItsReadableValueWithoutDuplicateHex() throws Exception {
-        String value = "A readable string longer than thirty-two bytes, ending in STRING_TAIL";
+        String value = "A readable string longer than thirty-two bytes; ending in STRING_TAIL";
         int transaction = program.startTransaction("string");
         try {
             program.getMemory().setBytes(builder.addr("0x1080"),
@@ -555,8 +582,8 @@ public class CompleteListingWriterGhidraTest {
 
         assertConsecutiveLines(listing,
             "00001080                                  string    \"A readable string longer"
-                + " than thirty-two bytes,",
-            "; ending in STRING_TAIL\"");
+                + " than thirty-two bytes;",
+            "  ending in STRING_TAIL\"");
         assertTrue("the next word must not fit on the first line",
             lineContaining(listing, "string").length() + " ending".length() > 100);
         assertFalse(listing.contains("41207265616461626c65"));
