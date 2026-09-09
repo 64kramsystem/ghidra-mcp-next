@@ -6,6 +6,8 @@ Complete version history for the GhidraMCP-next project.
 
 ## Unreleased
 
+## 0.107.0
+
 ### Added
 
 - `debugger_terminal_output` reads recent text and status from retained debugger terminals, including terminated sessions.
