@@ -1,6 +1,7 @@
 package com.xebyte.core;
 
 import docking.ActionContext;
+import ghidra.app.plugin.core.terminal.TerminalProvider;
 import ghidra.app.services.DebuggerLogicalBreakpointService;
 import ghidra.app.services.DebuggerStaticMappingService;
 import ghidra.app.services.DebuggerTargetService;
@@ -48,6 +49,7 @@ import ghidra.trace.model.stack.TraceStackFrame;
 import ghidra.trace.model.thread.TraceThread;
 import ghidra.trace.model.target.path.KeyPath;
 import ghidra.util.Msg;
+import ghidra.util.Swing;
 import ghidra.util.task.ConsoleTaskMonitor;
 import ghidra.util.task.TaskMonitor;
 
@@ -925,6 +927,50 @@ public class DebuggerService {
         }
 
         return Response.ok(status);
+    }
+
+    @McpTool(path = "/debugger/terminal_output",
+            description = "Read retained debugger terminal tails, including terminated sessions. " +
+                    "Check after debugger operations and shutdown for asynchronous errors. " +
+                    "Starting another terminal removes terminated tabs.")
+    public Response terminalOutput(
+            @Param(value = "max_lines", defaultValue = "100",
+                    schemaFragment = "{\"minimum\":1}",
+                    description = "Maximum terminal rows per tab; request available_lines " +
+                            "to read all retained text") int maxLines) {
+        if (maxLines < 1) {
+            return Response.err("max_lines must be positive");
+        }
+        return Swing.runNow(() -> {
+            PluginTool tool = getDebuggerTool();
+            if (tool == null) return noDebugger();
+
+            List<Map<String, Object>> terminals = new ArrayList<>();
+            for (TerminalProvider terminal : tool.getWindowManager()
+                    .getComponentProviders(TerminalProvider.class)) {
+                int columns = terminal.getColumns();
+                int lastLine = terminal.getRows() - 1;
+                while (lastLine >= 0 &&
+                        terminal.getRangeText(0, lastLine, columns, lastLine).isEmpty()) {
+                    lastLine--;
+                }
+                int availableLines = terminal.getScrollBackRows() + lastLine + 1;
+                int returnedLines = Math.min(maxLines, availableLines);
+                String text = returnedLines == 0 ? "" : terminal.getRangeText(
+                        0, lastLine - returnedLines + 1, columns, lastLine);
+                Map<String, Object> result = new LinkedHashMap<>();
+                result.put("terminal_id", terminal.getInstanceID());
+                result.put("title", terminal.getTitle());
+                result.put("subtitle", terminal.getSubTitle());
+                result.put("terminated", terminal.isTerminated());
+                result.put("text", text);
+                result.put("available_lines", availableLines);
+                result.put("returned_lines", returnedLines);
+                result.put("truncated", returnedLines < availableLines);
+                terminals.add(result);
+            }
+            return Response.ok(Map.of("terminals", terminals));
+        });
     }
 
     @McpTool(path = "/debugger/target_methods",

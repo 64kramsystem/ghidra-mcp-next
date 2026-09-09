@@ -79,6 +79,8 @@ The retained surface covers:
 
 Use address-space-qualified addresses for overlays or ambiguous maps.
 
+Call `debugger_terminal_output(max_lines=100)` after debugger operations and shutdown to inspect asynchronous errors. It reads retained terminal tabs, including terminated sessions; starting another terminal removes terminated tabs.
+
 ## Tests
 
 ```bash
