@@ -823,7 +823,7 @@ def collect_preflight_issues(
         issues.append(str(exc))
 
     if shutil.which("java") is None:
-        issues.append("Java not found on PATH (JDK 21 recommended).")
+        issues.append("Java not found on PATH (JDK 25 required).")
 
     try:
         find_ghidra_executable(ghidra_path)

@@ -9,8 +9,8 @@ The bridge adds only five management tools: `list_instances`, `connect_instance`
 
 ## Requirements
 
-- Ghidra 12.1.2
-- Java 21
+- Ghidra 12.2
+- Java 25
 - Maven 3.9 or later
 - Python 3.11 or later
 - `uv`

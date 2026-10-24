@@ -6,6 +6,10 @@ Complete version history for the GhidraMCP-next project.
 
 ## Unreleased
 
+### Changed
+
+- Build and run the extension against Ghidra 12.2 with Java 25; update CI, setup guidance, and the live-fixture runtime dependencies to match.
+
 ## 0.107.0
 
 ### Added

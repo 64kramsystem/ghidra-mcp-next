@@ -27,7 +27,7 @@ jobs:
     - name: Set up Java
       uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95  # v5.6.0
       with:
-        java-version: '21'
+        java-version: '25'
         distribution: 'temurin'
         cache: maven
 
@@ -47,14 +47,14 @@ jobs:
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
       with:
         path: /tmp/ghidra
-        key: ghidra-12.1.2-PUBLIC-20260605
+        key: ghidra-12.2-PUBLIC-20261016
 
     - name: Download Ghidra
       if: steps.cache-ghidra.outputs.cache-hit != 'true'
       run: |
-        echo "Downloading Ghidra 12.1.2..."
+        echo "Downloading Ghidra 12.2..."
         curl -sL -o /tmp/ghidra.zip \
-          "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_12.1.2_build/ghidra_12.1.2_PUBLIC_20260605.zip"
+          "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_12.2_build/ghidra_12.2_PUBLIC_20261016.zip"
         mkdir -p /tmp/ghidra
         unzip -q /tmp/ghidra.zip -d /tmp/ghidra
         rm /tmp/ghidra.zip
@@ -62,7 +62,7 @@ jobs:
     - name: Install Ghidra JARs to Maven local repository
       run: |
         GHIDRA_DIR=$(find /tmp/ghidra -maxdepth 1 -type d -name 'ghidra_*' | head -1)
-        GHIDRA_VERSION="12.1.2"
+        GHIDRA_VERSION="12.2"
         echo "Using Ghidra directory: $GHIDRA_DIR"
 
         # Install Framework JARs
@@ -87,6 +87,10 @@ jobs:
         mvn -q install:install-file -Dfile="$GHIDRA_DIR/Ghidra/Framework/Help/lib/Help.jar" \
             -DgroupId=ghidra -DartifactId=Help -Dversion=$GHIDRA_VERSION -Dpackaging=jar
 
+        # Emulation is also required by the extension's runtime services.
+        mvn -q install:install-file -Dfile="$GHIDRA_DIR/Ghidra/Framework/Emulation/lib/Emulation.jar" \
+            -DgroupId=ghidra -DartifactId=Emulation -Dversion=$GHIDRA_VERSION -Dpackaging=jar
+
         # Install Debugger JARs (for DebuggerService, v5.4.0+)
         mvn -q install:install-file -Dfile="$GHIDRA_DIR/Ghidra/Debug/Debugger-api/lib/Debugger-api.jar" \
             -DgroupId=ghidra -DartifactId=Debugger-api -Dversion=$GHIDRA_VERSION -Dpackaging=jar
@@ -107,7 +111,7 @@ jobs:
         mvn -q install:install-file -Dfile="$GHIDRA_DIR/Ghidra/Features/FunctionID/lib/FunctionID.jar" \
             -DgroupId=ghidra -DartifactId=FunctionID -Dversion=$GHIDRA_VERSION -Dpackaging=jar
 
-        echo "✅ Installed 18 Ghidra JARs to Maven local repository"
+        echo "✅ Installed 19 Ghidra JARs to Maven local repository"
 
     - name: Build extension
       run: |

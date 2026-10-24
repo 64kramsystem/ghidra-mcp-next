@@ -11,9 +11,9 @@
     <description>Local MCP access to Ghidra's GUI project and TraceRMI debugger.</description>
     <url>https://github.com/64kramsystem/ghidra-mcp-next</url>
     <properties>
-        <maven.compiler.release>21</maven.compiler.release>
+        <maven.compiler.release>25</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <ghidra.version>12.1.2</ghidra.version>
+        <ghidra.version>12.2</ghidra.version>
         <mockito.version>5.23.0</mockito.version>
         <!-- Build metadata only: build.timestamp/build.number in
              version.properties. Release identity is ${project.version}. -->
@@ -323,7 +323,7 @@
                                 <additionalClasspathElement>${ghidra.test.install.dir}/Ghidra/Framework/Generic/lib/log4j-api-2.26.1.jar</additionalClasspathElement>
                                 <additionalClasspathElement>${ghidra.test.install.dir}/Ghidra/Framework/Generic/lib/log4j-core-2.26.1.jar</additionalClasspathElement>
                                 <!-- Generic collections and XML support loaded by ProgramDB. -->
-                                <additionalClasspathElement>${ghidra.test.install.dir}/Ghidra/Framework/Generic/lib/commons-collections4-4.1.jar</additionalClasspathElement>
+                                <additionalClasspathElement>${ghidra.test.install.dir}/Ghidra/Framework/Generic/lib/commons-collections4-4.6.0.jar</additionalClasspathElement>
                                 <additionalClasspathElement>${ghidra.test.install.dir}/Ghidra/Framework/Generic/lib/commons-io-2.19.0.jar</additionalClasspathElement>
                                 <additionalClasspathElement>${ghidra.test.install.dir}/Ghidra/Framework/Generic/lib/guava-32.1.3-jre.jar</additionalClasspathElement>
                                 <additionalClasspathElement>${ghidra.test.install.dir}/Ghidra/Framework/Generic/lib/jdom2-2.0.6.1.jar</additionalClasspathElement>
