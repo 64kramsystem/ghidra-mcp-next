@@ -6,6 +6,8 @@ Complete version history for the GhidraMCP-next project.
 
 ## Unreleased
 
+## 0.108.0
+
 ### Changed
 
 - **Breaking:** support Ghidra 12.2 and JDK 25 only. Read installation metadata, require an exact version match, remove older-install selection and partial JAR installation fallbacks, and propagate debugger Python setup failures.
