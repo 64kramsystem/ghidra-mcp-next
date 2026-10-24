@@ -37,6 +37,7 @@ import ghidra.program.model.lang.RegisterValue;
 import ghidra.program.model.listing.Program;
 import ghidra.program.model.mem.Memory;
 import ghidra.trace.model.Trace;
+import ghidra.trace.model.Lifespan;
 import ghidra.trace.model.TraceExecutionState;
 import ghidra.trace.model.breakpoint.TraceBreakpointKind;
 import ghidra.trace.model.guest.TracePlatform;
@@ -1292,10 +1293,15 @@ public class DebuggerService {
     // ========================================================================
 
     @McpTool(path = "/debugger/set_breakpoint", method = "POST",
-            description = "Set a software execution breakpoint at an address in the trace")
+            description = "Set a breakpoint/watchpoint: x=software execute, X=hardware execute, " +
+                    "R=read, W=write, RW=read/write. Execute breakpoints require length 1.")
     public Response setBreakpoint(
             @Param(value = "address",
-                    description = "Address to break at (in trace address space)") String addressStr) {
+                    description = "Address to break at (in trace address space)") String addressStr,
+            @Param(value = "kind", defaultValue = "x",
+                    schemaFragment = "{\"enum\":[\"x\",\"X\",\"R\",\"W\",\"RW\"]}") String kind,
+            @Param(value = "length", defaultValue = "1", strictInteger = true,
+                    description = "Watchpoint range length in bytes (1..65536)") long length) {
         TraceContext ctx = getContext();
         if (ctx == null) return noTrace();
         Target target = getTarget(ctx);
@@ -1307,16 +1313,47 @@ public class DebuggerService {
         }
 
         try {
-            AddressRange range = new AddressRangeImpl(addr, 1);
-            target.placeBreakpoint(range,
-                    Set.of(TraceBreakpointKind.SW_EXECUTE),
-                    "MCP breakpoint", "");
+            Set<TraceBreakpointKind> kinds = DebuggerBreakpointRequest.kinds(kind, length);
+            if (!target.getSupportedBreakpointKinds().containsAll(kinds)) {
+                return Response.err("Target does not support breakpoint kind " + kind);
+            }
+            AddressRange range = new AddressRangeImpl(addr, length);
+            target.placeBreakpointAsync(range, kinds, "", "")
+                    .get(ACTION_TIMEOUT_MS, TimeUnit.MILLISECONDS);
             return Response.ok(Map.of(
                     "address", addr.toString(),
-                    "type", "SW_EXECUTE",
+                    "kind", kind,
+                    "length", length,
                     "status", "set"));
         } catch (Exception e) {
             return Response.err("Failed to set breakpoint: " + e.getMessage());
+        }
+    }
+
+    @McpTool(path = "/debugger/search_memory_history",
+            description = "Find exact hex bytes in recorded trace memory across an inclusive " +
+                    "snapshot interval. Matches must fit inside start..end; returned lifespans " +
+                    "are clipped to first_snap..last_snap. Does not read the live target.")
+    public Response searchMemoryHistory(
+            @Param(value = "pattern", description = "Exact hex bytes, no wildcards") String pattern,
+            @Param(value = "start") String startText,
+            @Param(value = "end") String endText,
+            @Param(value = "first_snap", strictInteger = true) long firstSnap,
+            @Param(value = "last_snap", strictInteger = true) long lastSnap,
+            @Param(value = "limit", defaultValue = "100", strictInteger = true) int limit) {
+        TraceContext ctx = getContext();
+        if (ctx == null) return noTrace();
+        try {
+            Address start = parseAddress(ctx.trace, startText);
+            Address end = parseAddress(ctx.trace, endText);
+            if (start == null || end == null) {
+                return Response.err("Invalid trace address");
+            }
+            return Response.ok(DebuggerMemoryHistory.search(
+                    ctx.trace.getMemoryManager(), new AddressRangeImpl(start, end),
+                    Lifespan.span(firstSnap, lastSnap), pattern, limit));
+        } catch (Exception e) {
+            return Response.err("Trace memory search failed: " + e.getMessage());
         }
     }
 
@@ -1469,28 +1506,10 @@ public class DebuggerService {
             return Response.err("Invalid address: " + addressStr);
         }
 
-        int readSize = Math.min(size, MAX_MEMORY_READ);
-
         try {
-            // Try to read from the trace first (cached data)
-            TraceMemoryManager memMgr = ctx.trace.getMemoryManager();
-            ByteBuffer buf = ByteBuffer.allocate(readSize);
-            int bytesRead = memMgr.getBytes(ctx.snap, addr, buf);
-
-            if (bytesRead == 0) {
-                // Try forcing a read from the live target
-                Target target = getTarget(ctx);
-                if (target != null) {
-                    AddressSet addrSet = new AddressSet(addr, addr.add(readSize - 1));
-                    target.readMemory(addrSet, new ConsoleTaskMonitor());
-                    buf.clear();
-                    bytesRead = memMgr.getBytes(ctx.snap, addr, buf);
-                }
-            }
-
-            byte[] data = new byte[bytesRead];
-            buf.flip();
-            buf.get(data);
+            byte[] data = DebuggerMemorySemantics.readKnownBytes(
+                    ctx.trace.getMemoryManager(), ctx.snap, addr, size,
+                    getTarget(ctx), new ConsoleTaskMonitor());
 
             // Format as hex dump
             StringBuilder hexStr = new StringBuilder();
@@ -1506,7 +1525,7 @@ public class DebuggerService {
 
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("address", addr.toString());
-            result.put("size", bytesRead);
+            result.put("size", data.length);
             result.put("hex", hexStr.toString());
             result.put("dwords", dwords);
             return Response.ok(result);

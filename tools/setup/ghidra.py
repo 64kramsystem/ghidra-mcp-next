@@ -71,82 +71,12 @@ def ghidra_user_base_dir() -> Path:
     return Path.home() / ".config" / "ghidra"
 
 
-def _version_sort_key(name: str) -> tuple[int, int, int, int]:
-    """Sort key for Ghidra user-config dir names.
-
-    Returns ``(major, minor, patch, explicit_patch)``. The trailing
-    flag is 1 when the dir name carried an explicit patch component
-    (e.g. ``ghidra_12.1.0_PUBLIC``) and 0 when it didn't
-    (``ghidra_12.1_PUBLIC``), so a dir with an explicit patch beats
-    an otherwise-equal shorter dir name. Without this tiebreaker the
-    sort was non-deterministic across filesystems: Windows' alpha
-    glob order put ``ghidra_12.1.0_PUBLIC`` before ``ghidra_12.1_PUBLIC``
-    and the test passed; Linux's creation-order glob produced the
-    opposite outcome and CI failed.
-    """
-    match = re.search(r"ghidra_(\d+)\.(\d+)(?:\.(\d+))?", name)
-    if not match:
-        return (0, 0, 0, 0)
-    explicit_patch = 1 if match.group(3) is not None else 0
-    return (
-        int(match.group(1)),
-        int(match.group(2)),
-        int(match.group(3) or 0),
-        explicit_patch,
-    )
-
-
 def resolve_ghidra_user_dir(ghidra_path: Path, user_base_dir: Path | None = None) -> Path:
-    """Resolve the user-config dir matching a Ghidra install.
-
-    Ghidra writes its per-user state under
-    ``%APPDATA%\\ghidra\\ghidra_<version>_<layout>\\``. The dir is
-    created lazily on first launch, so for a freshly-installed Ghidra
-    it may not exist yet. We therefore prefer to *construct* the
-    expected dir name from the install path rather than enumerating
-    existing siblings — see #217, where a v5.10→v5.11 deploy targeting
-    a freshly-installed ``F:\\ghidra_12.1_PUBLIC`` quietly resolved to
-    a leftover ``ghidra_12.1_DEV`` user dir and installed the
-    extension where the running Ghidra never looked for it.
-    """
-    user_base_dir = user_base_dir or ghidra_user_base_dir()
-    target_version, target_layout = infer_ghidra_install_meta(ghidra_path)
-
-    # When both version and layout are recoverable from the install
-    # path, return the explicit dir unconditionally. The dir does not
-    # need to already exist — Ghidra will create it on first launch.
-    if target_version and target_layout:
-        return user_base_dir / f"ghidra_{target_version}_{target_layout}"
-
-    # Version known but layout couldn't be inferred (e.g. a custom
-    # install path with application.properties present). Prefer an
-    # existing matching dir, then PUBLIC, then a constructed PUBLIC
-    # default.
-    if target_version:
-        if user_base_dir.is_dir():
-            matching_dirs = sorted(
-                path
-                for path in user_base_dir.glob(f"ghidra_{target_version}*")
-                if path.is_dir() and "_location_" not in path.name
-            )
-            if matching_dirs:
-                public_dir = next((path for path in matching_dirs if "PUBLIC" in path.name), None)
-                return public_dir or matching_dirs[0]
-        return user_base_dir / f"ghidra_{target_version}_PUBLIC"
-
-    # No version metadata at all — last-resort fallback to the
-    # newest-looking existing dir so a totally custom install still
-    # gets *some* answer instead of an exception.
-    if user_base_dir.is_dir():
-        version_dirs = sorted(
-            (path for path in user_base_dir.glob("ghidra_*") if path.is_dir()),
-            key=lambda path: _version_sort_key(path.name),
-            reverse=True,
-        )
-        if version_dirs:
-            return version_dirs[0]
-
-    return user_base_dir / "ghidra_unknown_PUBLIC"
+    """Select exactly the user directory named by the installation metadata."""
+    version, release = infer_ghidra_install_meta(ghidra_path)
+    if version != "12.2":
+        raise ValueError(f"Ghidra 12.2 is required; found {version}")
+    return (user_base_dir or ghidra_user_base_dir()) / f"ghidra_{version}_{release}"
 
 
 def patch_frontend_tool_config(content: str) -> tuple[str, bool]:
@@ -256,39 +186,15 @@ def _write_text_file(path: Path, content: str) -> None:
 
 def patch_ghidra_user_configs(
     user_base_dir: Path,
-    target_user_dir: Path | None = None,
+    target_user_dir: Path,
     *,
     dry_run: bool = False,
 ) -> None:
-    """Patch FrontEndTool.xml + tool tcd files under the Ghidra user dir.
-
-    When ``target_user_dir`` is provided, only files inside that directory
-    are patched. This is the recommended call shape from
-    :func:`deploy_to_ghidra` — a Ghidra 12.1 deploy must NOT touch the
-    user-config dirs left over from older Ghidra installs (12.0.4,
-    11.4.2, …), because those dirs reference extensions from those older
-    Ghidras. Stamping the new plugin's INCLUDE into a sibling version's
-    FrontEndTool.xml is exactly the #217 bug: the deploy log this morning
-    showed ``Patched FrontEnd config …/ghidra_12.0.4_PUBLIC/…`` even
-    though we were targeting 12.1.
-
-    When ``target_user_dir`` is None, falls back to globbing every
-    version subdirectory under ``user_base_dir``. Kept for backward
-    compatibility (existing tests pass without changes); production
-    deploys should always supply ``target_user_dir``.
-    """
-    if not user_base_dir.is_dir():
+    """Patch configuration only in the selected installation's user directory."""
+    if not target_user_dir.is_dir():
         return
-
-    if target_user_dir is not None:
-        # #217 fix: restrict the glob to a single subdirectory.
-        if not target_user_dir.is_dir():
-            return
-        front_end_files = sorted(target_user_dir.glob("FrontEndTool.xml"))
-        tcd_files = sorted(target_user_dir.glob("tools/*.tcd"))
-    else:
-        front_end_files = sorted(user_base_dir.glob("*/FrontEndTool.xml"))
-        tcd_files = sorted(user_base_dir.glob("*/tools/*.tcd"))
+    front_end_files = sorted(target_user_dir.glob("FrontEndTool.xml"))
+    tcd_files = sorted(target_user_dir.glob("tools/*.tcd"))
 
     for front_end_file in front_end_files:
         updated, modified = patch_frontend_tool_config(front_end_file.read_text(encoding="utf-8"))
@@ -311,16 +217,6 @@ def patch_ghidra_user_configs(
         print(f"Patched tool config {tcd_file}")
 
 
-def _find_plugin_jar(repo_root: Path) -> Path | None:
-    target_dir = repo_root / "target"
-    jars = sorted(
-        target_dir.glob("GhidraMCP-next*.jar"),
-        key=lambda path: path.stat().st_mtime,
-        reverse=True,
-    )
-    return jars[0] if jars else None
-
-
 def install_user_extension(repo_root: Path, ghidra_path: Path, archive_path: Path, *, dry_run: bool = False) -> Path:
     user_base_dir = ghidra_user_base_dir()
     user_version_dir = resolve_ghidra_user_dir(ghidra_path, user_base_dir)
@@ -333,6 +229,15 @@ def install_user_extension(repo_root: Path, ghidra_path: Path, archive_path: Pat
         print(f"DRY RUN: remove stale jars matching {user_lib_dir / 'GhidraMCP-next*.jar'}")
         print(f"DRY RUN: extract {archive_path} -> {user_extensions_base}")
         return user_extension_dir
+
+    # Reject an invalid archive before touching an existing installation.
+    with zipfile.ZipFile(archive_path) as archive:
+        damaged = archive.testzip()
+        if damaged:
+            raise ValueError(f"Damaged extension archive member: {damaged}")
+        metadata = archive.read("GhidraMCP-next/extension.properties").decode("utf-8")
+        if "version=12.2" not in metadata.splitlines():
+            raise ValueError("The extension archive must target Ghidra 12.2")
 
     user_extensions_base.mkdir(parents=True, exist_ok=True)
     user_lib_dir.mkdir(parents=True, exist_ok=True)
@@ -347,20 +252,10 @@ def install_user_extension(repo_root: Path, ghidra_path: Path, archive_path: Pat
                 time.sleep(1)
         print(f"Removed stale plugin jar {stale_jar}")
 
-    try:
-        with zipfile.ZipFile(archive_path) as archive:
-            archive.extractall(user_extensions_base)
-        print(f"Installed user extension to {user_extension_dir}")
-        return user_extension_dir
-    except Exception as exc:
-        plugin_jar = _find_plugin_jar(repo_root)
-        if plugin_jar is None:
-            raise RuntimeError("Extension extraction failed and no fallback plugin jar was found") from exc
-
-        fallback_destination = user_lib_dir / "GhidraMCP-next.jar"
-        shutil.copy2(plugin_jar, fallback_destination)
-        print(f"Fell back to jar-only install at {fallback_destination}")
-        return user_extension_dir
+    with zipfile.ZipFile(archive_path) as archive:
+        archive.extractall(user_extensions_base)
+    print(f"Installed user extension to {user_extension_dir}")
+    return user_extension_dir
 
 
 def find_ghidra_executable(ghidra_path: Path) -> Path:
@@ -406,13 +301,7 @@ def print_command(command: list[str]) -> None:
 
 def resolve_mcp_url(repo_root: Path) -> str:
     env_values = load_env_file(repo_root / ".env")
-    if env_values.get("GHIDRA_MCP_URL"):
-        return env_values["GHIDRA_MCP_URL"].rstrip("/")
-    port = env_values.get("GHIDRA_MCP_PORT", "8089").strip() or "8089"
-    bind = env_values.get("GHIDRA_MCP_BIND_ADDRESS", "127.0.0.1").strip()
-    if not bind or bind in {"0.0.0.0", "::"}:
-        bind = "127.0.0.1"
-    return f"http://{bind}:{port}".rstrip("/")
+    return env_values.get("GHIDRA_MCP_URL", DEFAULT_MCP_URL).rstrip("/")
 
 
 def _mcp_request(
@@ -582,12 +471,7 @@ def close_running_ghidra_for_deploy(
         _mcp_request(repo_root, mcp_url, "/save_all_programs", timeout=60)
         print("Requested save for all open Ghidra programs.")
     except Exception as exc:
-        print(f"WARNING: save_all_programs failed before deploy: {exc}")
-        try:
-            _mcp_request(repo_root, mcp_url, "/save_program", timeout=60)
-            print("Requested fallback Ghidra program save.")
-        except Exception as fallback_exc:
-            print(f"WARNING: fallback save_program failed before deploy: {fallback_exc}")
+        raise RuntimeError("Could not save all open programs; deployment stopped") from exc
     try:
         _mcp_request(repo_root, mcp_url, "/exit_ghidra", timeout=10)
         print("Requested graceful Ghidra exit.")
@@ -688,29 +572,16 @@ def install_ghidratrace_for_debugger(
     *,
     dry_run: bool = False,
 ) -> int:
-    """Install the matching ``ghidratrace`` wheel into the launcher Python.
-
-    Why this exists: when Ghidra is upgraded (e.g., 12.0.4 → 12.1), the
-    wheel that ships at ``<ghidra>/Ghidra/Debug/Debugger-rmi-trace/pypkg/dist``
-    bumps version too. If a stale 12.0 ``ghidratrace`` is still
-    pip-installed in the launcher's Python, TraceRmi negotiation fails
-    with ``VersionMismatchError: Front-end: 12.1, back-end: 12.0`` —
-    observed twice in this release cycle. The wheel lives inside the
-    Ghidra install (not on PyPI), so the bridge environment cannot provide it.
-
-    Returns 0 on success / no-op, nonzero on installer failure.
-    """
+    """Install the exact client's wheel and required protobuf into debugger Python."""
     wheel_dir = ghidra_path / "Ghidra" / "Debug" / "Debugger-rmi-trace" / "pypkg" / "dist"
-    wheels = sorted(wheel_dir.glob("ghidratrace-*-py3-none-any.whl"))
+    wheels = sorted(wheel_dir.glob("ghidratrace-12.2-py3-none-any.whl"))
     if not wheels:
-        print(f"  No ghidratrace wheel found under {wheel_dir} — skipping debugger Python sync")
-        return 0
+        raise FileNotFoundError(f"No ghidratrace 12.2 wheel found under {wheel_dir}")
     wheel = wheels[-1]
 
     debugger_python = _resolve_debugger_python(repo_root)
     if debugger_python is None:
-        print("  Could not resolve a debugger Python (set GHIDRA_DEBUGGER_PYTHON) — skipping")
-        return 0
+        raise RuntimeError("Set GHIDRA_DEBUGGER_PYTHON to the debugger Python interpreter")
 
     if dry_run:
         print(f"DRY RUN: {debugger_python} -m pip install --force-reinstall {wheel}")
@@ -752,6 +623,9 @@ def install_ghidra_dependencies(
 ) -> int:
     maven_command = str(find_maven_command())
     ghidra_version = read_pom_ghidra_version(repo_root)
+    installed_version, _ = infer_ghidra_install_meta(ghidra_path)
+    if installed_version != ghidra_version:
+        raise ValueError(f"Ghidra {ghidra_version} required; found {installed_version}")
     m2_root = Path.home() / ".m2" / "repository" / "ghidra"
 
     for artifact_id, relative_path in REQUIRED_GHIDRA_JARS:
@@ -760,7 +634,7 @@ def install_ghidra_dependencies(
             raise FileNotFoundError(f"Missing required Ghidra jar: {jar_path}")
 
         cached_jar = m2_root / artifact_id / ghidra_version / f"{artifact_id}-{ghidra_version}.jar"
-        if cached_jar.is_file() and not force:
+        if cached_jar.is_file() and not force and cached_jar.read_bytes() == jar_path.read_bytes():
             print(f"Skipping already installed dependency: {artifact_id}")
             continue
 
@@ -783,16 +657,7 @@ def install_ghidra_dependencies(
         if completed.returncode != 0:
             return completed.returncode
 
-    # Keep the debugger launcher's Python in sync with the installed
-    # Ghidra version's ghidratrace wheel. Without this, a Ghidra version
-    # bump leaves a stale ghidratrace pip-installed in the launcher's
-    # Python and TraceRmi negotiation fails with the back-end reporting
-    # the old version. Best-effort: a failure here does NOT block the
-    # main JAR-install dependency setup since most users don't use the
-    # live debugger.
-    install_ghidratrace_for_debugger(repo_root, ghidra_path, dry_run=dry_run)
-
-    return 0
+    return install_ghidratrace_for_debugger(repo_root, ghidra_path, dry_run=dry_run)
 
 
 def test_write_access(path_to_test: Path) -> bool:

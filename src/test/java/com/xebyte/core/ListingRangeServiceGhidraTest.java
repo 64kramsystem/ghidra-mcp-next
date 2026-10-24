@@ -4,7 +4,6 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
-import static org.junit.Assume.assumeTrue;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -39,8 +38,8 @@ public class ListingRangeServiceGhidraTest {
 
     @BeforeClass
     public static void initializeGhidra() throws Exception {
-        String installDir = System.getenv("GHIDRA_INSTALL_DIR");
-        assumeTrue("GHIDRA_INSTALL_DIR is required for real Ghidra tests",
+        String installDir = System.getProperty("ghidra.test.install.dir");
+        org.junit.Assert.assertTrue("Pass -Dghidra.test.install.dir for Ghidra 12.2 tests",
             installDir != null && !installDir.isBlank());
         if (!Application.isInitialized()) {
             ApplicationConfiguration configuration = new ApplicationConfiguration();

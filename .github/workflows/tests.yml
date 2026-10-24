@@ -63,6 +63,7 @@ jobs:
       run: |
         GHIDRA_DIR=$(find /tmp/ghidra -maxdepth 1 -type d -name 'ghidra_*' | head -1)
         GHIDRA_VERSION="12.2"
+        echo "GHIDRA_INSTALL_DIR=$GHIDRA_DIR" >> "$GITHUB_ENV"
         echo "Using Ghidra directory: $GHIDRA_DIR"
 
         # Install Framework JARs
@@ -118,16 +119,9 @@ jobs:
         mvn clean package assembly:single -DskipTests \
           -Drelease.timestamp="${{ steps.build-meta.outputs.build_timestamp }}"
 
-    - name: Run offline Java tests
+    - name: Run Java tests against Ghidra 12.2
       run: |
-        # Runtime service and schema behavior exercised without a Ghidra server.
-        # Live integration tests require a running Ghidra instance and are excluded
-        # from this run.
-        #
-        # com.xebyte.core is included too: those are Mockito/ProgramBuilder tests that
-        # need no Ghidra server either, but matching only com.xebyte.offline meant the
-        # test files under com.xebyte.core never ran in CI at all.
-        mvn -q test -Dtest='com.xebyte.offline.*Test,com.xebyte.core.*Test'
+        mvn -q -Dghidra.test.install.dir="$GHIDRA_INSTALL_DIR" test
 
     - name: Upload test results
       if: always()

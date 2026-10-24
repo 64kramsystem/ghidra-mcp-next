@@ -5,7 +5,6 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
-import static org.junit.Assume.assumeTrue;
 
 import java.io.File;
 import java.util.LinkedHashMap;
@@ -45,9 +44,9 @@ public class ControlFlowServiceGhidraTest {
     private String targetSpaceName;
 
     @BeforeClass
-    public static void initializeGhidraOrSkip() throws Exception {
+    public static void initializeGhidra() throws Exception {
         String installDir = System.getProperty("ghidra.test.install.dir");
-        assumeTrue(installDir != null && !installDir.isBlank());
+        org.junit.Assert.assertTrue("Pass -Dghidra.test.install.dir for Ghidra 12.2 tests", installDir != null && !installDir.isBlank());
         if (!Application.isInitialized()) {
             ApplicationConfiguration configuration =
                 new ApplicationConfiguration();

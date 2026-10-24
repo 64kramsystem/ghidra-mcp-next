@@ -1,5 +1,7 @@
 package com.xebyte.core;
 
+import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
@@ -10,6 +12,8 @@ import java.util.Map;
 
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressRange;
+import ghidra.program.model.address.AddressRangeImpl;
+import ghidra.program.model.address.AddressOverflowException;
 import ghidra.program.model.address.AddressSet;
 import ghidra.program.model.address.AddressSetView;
 import ghidra.program.model.mem.Memory;
@@ -21,7 +25,9 @@ import ghidra.trace.model.memory.TraceMemoryState;
 import ghidra.trace.model.target.TraceObject;
 import ghidra.trace.model.target.TraceObjectValue;
 import ghidra.trace.model.thread.TraceProcess;
+import ghidra.debug.api.target.Target;
 import ghidra.util.task.TaskMonitor;
+import ghidra.util.exception.CancelledException;
 
 final class DebuggerMemorySemantics {
     interface ProgramBlockWriter {
@@ -48,6 +54,41 @@ final class DebuggerMemorySemantics {
             boolean volatileMemory) {}
 
     private DebuggerMemorySemantics() {}
+
+    static byte[] readKnownBytes(TraceMemoryManager memory, long snap, Address address,
+            int size, Target target, TaskMonitor monitor)
+            throws IOException, AddressOverflowException, CancelledException {
+        if (size < 1 || size > 4096) {
+            throw new IllegalArgumentException("size must be from 1 to 4096");
+        }
+        AddressRange range = new AddressRangeImpl(address, size);
+        if (!hasKnownBytes(memory, snap, range)) {
+            if (target == null || target.getSnap() != snap) {
+                throw new IOException("Memory is not recorded at snapshot " + snap);
+            }
+            target.readMemory(new AddressSet(range), monitor);
+        }
+        if (!hasKnownBytes(memory, snap, range)) {
+            throw new IOException("Target did not supply the complete requested memory range");
+        }
+        ByteBuffer buffer = ByteBuffer.allocate(size);
+        if (memory.getBytes(snap, address, buffer) != size) {
+            throw new IOException("Incomplete trace memory read");
+        }
+        return buffer.array();
+    }
+
+    private static boolean hasKnownBytes(TraceMemoryManager memory, long snap, AddressRange range) {
+        // Ghidra 12.2's oneState/isKnown loop does not advance its iterator when
+        // there are multiple state entries. Iterate the public state results directly.
+        AddressSet missing = new AddressSet(range);
+        for (var entry : memory.getStates(snap, range)) {
+            if (entry.getValue() == TraceMemoryState.KNOWN) {
+                missing.delete(entry.getKey().getRange());
+            }
+        }
+        return missing.isEmpty();
+    }
 
     static Long parsePid(Object value) {
         if (value instanceof Number number) {

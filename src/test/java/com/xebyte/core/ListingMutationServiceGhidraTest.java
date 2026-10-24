@@ -5,7 +5,6 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertNotNull;
-import static org.junit.Assume.assumeTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -359,7 +358,7 @@ public class ListingMutationServiceGhidraTest {
     @Test
     public void liveMixedPartialRangePreservesOwnedAnnotationsAndMatchesPreview()
             throws Exception {
-        initializeGhidraOrSkip();
+        initializeGhidra();
         ProgramBuilder builder =
             new ProgramBuilder("undefine-mixed-6502",
                 "6502:LE:16:default", "default", this);
@@ -521,7 +520,7 @@ public class ListingMutationServiceGhidraTest {
     @Test
     public void livePreservationFalseRemovesOnlyAnnotationsOnSelectedUnits()
             throws Exception {
-        initializeGhidraOrSkip();
+        initializeGhidra();
         ProgramBuilder builder =
             new ProgramBuilder("undefine-removal-6502",
                 "6502:LE:16:default", "default", this);
@@ -601,7 +600,7 @@ public class ListingMutationServiceGhidraTest {
 
     @Test
     public void liveApplyFailureRollsBackListingAndAnnotations() throws Exception {
-        initializeGhidraOrSkip();
+        initializeGhidra();
         ProgramBuilder builder =
             new ProgramBuilder("undefine-rollback-6502",
                 "6502:LE:16:default", "default", this);
@@ -669,7 +668,7 @@ public class ListingMutationServiceGhidraTest {
     @Test
     public void liveFunctionRemovalRejectsLocalLabelsAndCollateralReferences()
             throws Exception {
-        initializeGhidraOrSkip();
+        initializeGhidra();
         ProgramBuilder builder =
             new ProgramBuilder("undefine-function-collateral-6502",
                 "6502:LE:16:default", "default", this);
@@ -821,7 +820,7 @@ public class ListingMutationServiceGhidraTest {
     @Test
     public void liveFunctionRemovalRejectsDisjointDirectThunkCollateral()
             throws Exception {
-        initializeGhidraOrSkip();
+        initializeGhidra();
         ProgramBuilder builder =
             new ProgramBuilder("undefine-function-thunk-6502",
                 "6502:LE:16:default", "default", this);
@@ -1056,10 +1055,10 @@ public class ListingMutationServiceGhidraTest {
         return new ListingMutationService(provider, new DirectThreadingStrategy());
     }
 
-    private static void initializeGhidraOrSkip() throws Exception {
+    private static void initializeGhidra() throws Exception {
         String installDir = System.getProperty("ghidra.test.install.dir");
-        assumeTrue(
-            "A Ghidra install is required for ProgramBuilder-backed tests",
+        org.junit.Assert.assertTrue(
+            "Pass -Dghidra.test.install.dir for Ghidra 12.2 tests",
             installDir != null && !installDir.isBlank()
                 && new File(installDir).isDirectory());
         if (!Application.isInitialized()) {

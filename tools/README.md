@@ -20,11 +20,16 @@ python -m tools.setup verify-ghidra --ghidra-path /path/to/ghidra
 - `deploy` installs the freshest extension archive into the selected Ghidra
   profile and starts the configured installation.
 - `verify-ghidra` checks an installation against the configured Ghidra
-  compatibility target.
+  exact 12.2 target.
 
-Release builds derive the Ghidra extension identity from the build timestamp.
-The Python bridge version is independently derived from the latest Git commit
-that changed bridge or bridge-packaging inputs.
+The extension and Python bridge share the semantic release version in `pom.xml`.
+Build timestamps are metadata only. Build and run with JDK 25.
+
+Run all Java fixtures with:
+
+```sh
+python -m tools.setup run-tests --ghidra-path /path/to/ghidra_12.2_PUBLIC
+```
 
 Manual Java packaging remains available:
 

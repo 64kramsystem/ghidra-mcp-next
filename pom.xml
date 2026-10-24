@@ -118,9 +118,21 @@
         </dependency>
         <!-- Gson (provided — bundled with Ghidra in Framework/Generic/lib/) -->
         <dependency>
+            <groupId>ghidra</groupId>
+            <artifactId>Emulation</artifactId>
+            <version>${ghidra.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-collections4</artifactId>
+            <version>4.6.0</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
             <groupId>com.google.code.gson</groupId>
             <artifactId>gson</artifactId>
-            <version>2.14.0</version>
+            <version>2.13.2</version>
             <scope>provided</scope>
         </dependency>
         <!-- ProjectLocator uses this Ghidra-bundled library at runtime. -->
@@ -184,15 +196,38 @@
             </resource>
         </resources>
         <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <version>3.6.2</version>
+                <executions>
+                    <execution>
+                        <id>require-current-ghidra-toolchain</id>
+                        <goals><goal>enforce</goal></goals>
+                        <configuration>
+                            <rules>
+                                <requireJavaVersion>
+                                    <version>[25,26)</version>
+                                    <message>Build GhidraMCP-next with JDK 25.</message>
+                                </requireJavaVersion>
+                                <requireProperty>
+                                    <property>ghidra.version</property>
+                                    <regex>12\.2</regex>
+                                    <regexMessage>GhidraMCP-next targets Ghidra 12.2 only.</regexMessage>
+                                </requireProperty>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
             <!-- Maven Surefire Plugin — load Mockito statically, disable CDS (instrumentation
-                 appends to the bootstrap classpath), and enable Byte Buddy experimental mode
-                 for Java 25. @{argLine} late-binds the JaCoCo agent. -->
+                 appends to the bootstrap classpath), and use Java 25. @{argLine} late-binds the JaCoCo agent. -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.5.6</version>
                 <configuration>
-                    <argLine>@{argLine} -javaagent:${settings.localRepository}/org/mockito/mockito-core/${mockito.version}/mockito-core-${mockito.version}.jar -Xshare:off -Dnet.bytebuddy.experimental=true</argLine>
+                    <argLine>@{argLine} -javaagent:${settings.localRepository}/org/mockito/mockito-core/${mockito.version}/mockito-core-${mockito.version}.jar -Xshare:off</argLine>
                 </configuration>
             </plugin>
             <!-- JaCoCo — line coverage for the offline test tier. Report lands in
@@ -297,11 +332,11 @@
 
     <!-- Build Profiles -->
     <profiles>
-        <!-- Opt-in runtime support for ProgramBuilder-backed live fixtures.
-             Activate with -Dghidra.test.install.dir=/path/to/ghidra.  These
+        <!-- Required runtime support for the Ghidra 12.2 fixture suite.
+             Activate with -Dghidra.test.install.dir=/path/to/ghidra. These
              jars are shipped by Ghidra but are not transitive dependencies of
              the locally installed module POMs.  Keeping them on Surefire's
-             runtime path avoids changing normal compilation or CI behavior. -->
+             runtime path keeps compilation independent of the installation layout. -->
         <profile>
             <id>ghidra-live-fixtures</id>
             <activation>

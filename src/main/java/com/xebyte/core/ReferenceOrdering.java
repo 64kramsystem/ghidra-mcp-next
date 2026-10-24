@@ -13,7 +13,7 @@ import ghidra.program.model.symbol.SourceType;
  * Shared reference ordering and bounded iteration for listing and xref continuations.
  *
  * <p>Incoming references intentionally retain Ghidra's stored order. In Ghidra
- * 12.1.2, {@code ReferenceDBManager.getReferencesTo} delegates to
+ * 12.2, {@code ReferenceDBManager.getReferencesTo} delegates to
  * {@code RefList.getRefs}; {@code RefListV0} returns append order and
  * {@code BigRefListV0} iterates its monotonically increasing table keys. Thus a
  * fixed program modification has a stable stored order without an eager

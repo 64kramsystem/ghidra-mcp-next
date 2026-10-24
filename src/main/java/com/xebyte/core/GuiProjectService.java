@@ -99,7 +99,7 @@ public final class GuiProjectService {
 
     private static void notifyProjectClosed(FrontEndTool frontEnd, Project project) {
         try {
-            // Ghidra 12.1.2 keeps listener enumeration package-private. Its own
+            // Ghidra 12.2 keeps listener enumeration package-private. Its own
             // FileActionManager calls projectClosed after Project.close(), but
             // ProjectManager's public API does not. Mirror that required step so
             // RecoverySnapshotMgr and other FrontEnd listeners release the old

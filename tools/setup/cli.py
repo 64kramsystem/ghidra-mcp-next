@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -96,6 +97,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print the test command without running it.",
     )
+    test_parser.add_argument("--ghidra-path", type=Path)
     test_parser.set_defaults(func=cmd_run_tests)
 
     ghidra_deps_parser = subparsers.add_parser(
@@ -198,7 +200,7 @@ def _resolve_ghidra_path(repo_root: Path, ghidra_path: Path | None) -> Path | No
         return ghidra_path.resolve()
 
     env_values = _load_repo_env(repo_root)
-    raw_path = env_values.get("GHIDRA_PATH", "").strip()
+    raw_path = os.environ.get("GHIDRA_INSTALL_DIR", env_values.get("GHIDRA_PATH", "")).strip()
     if not raw_path:
         return None
 
@@ -233,11 +235,6 @@ def cmd_verify_ghidra(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
-    if inferred_version != ghidra_version:
-        print(
-            f"Note: Ghidra path is {inferred_version}, pom.xml pins "
-            f"{ghidra_version} — same minor series, treated as compatible."
-        )
     print("Version check passed.")
     return 0
 
@@ -287,11 +284,6 @@ def cmd_preflight(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
-    if inferred_version != ghidra_version:
-        print(
-            f"Note: Ghidra path is {inferred_version}, pom.xml pins "
-            f"{ghidra_version} — same minor series, treated as compatible."
-        )
     issues = collect_preflight_issues(
         repo_root,
         ghidra_path,
@@ -319,7 +311,9 @@ def cmd_clean(args: argparse.Namespace) -> int:
 
 
 def cmd_run_tests(args: argparse.Namespace) -> int:
-    return run_maven(detect_repo_root(), ["test"], dry_run=args.dry_run)
+    root = detect_repo_root()
+    install = _require_ghidra_path(root, args.ghidra_path)
+    return run_maven(root, [f"-Dghidra.test.install.dir={install}", "test"], dry_run=args.dry_run)
 
 
 def cmd_install_ghidra_deps(args: argparse.Namespace) -> int:

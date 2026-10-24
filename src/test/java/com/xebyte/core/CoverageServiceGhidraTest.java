@@ -2,7 +2,6 @@ package com.xebyte.core;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
-import static org.junit.Assume.assumeTrue;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
@@ -34,9 +33,9 @@ public class CoverageServiceGhidraTest {
     private CoverageService coverage;
 
     @BeforeClass
-    public static void initializeGhidraOrSkip() throws Exception {
+    public static void initializeGhidra() throws Exception {
         String installDir = System.getProperty("ghidra.test.install.dir");
-        assumeTrue("ghidra.test.install.dir is required",
+        org.junit.Assert.assertTrue("Pass -Dghidra.test.install.dir for Ghidra 12.2 tests",
             installDir != null && !installDir.isBlank());
         if (!Application.isInitialized()) {
             ApplicationConfiguration configuration =

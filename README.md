@@ -9,8 +9,8 @@ The bridge adds only five management tools: `list_instances`, `connect_instance`
 
 ## Requirements
 
-- Ghidra 12.2
-- Java 25
+- Ghidra 12.2 exactly
+- JDK 25 (build and runtime baseline)
 - Maven 3.9 or later
 - Python 3.11 or later
 - `uv`
@@ -106,3 +106,34 @@ The command requires clean, synchronized `main`, builds the extension and bridge
 - [C++ `this` typing](docs/THIS_POINTER_TYPING.md)
 - [Multiple open programs](docs/MULTI_PROGRAM_SUPPORT_ANALYSIS.md)
 - [Structure editing](docs/STRUCT_RESIZE_WORKFLOW.md)
+
+## Ghidra 12.2 debugger features
+
+`debugger_set_breakpoint(address="RAM:1000", kind="RW", length=8)` sets a read/write
+watchpoint when the target supports it. Kinds are `x` (software execute), `X`
+(hardware execute), `R`, `W`, and `RW`. Execute breakpoints require length 1.
+
+`debugger_search_memory_history(pattern="1122", start="RAM:1000", end="RAM:1fff",
+first_snap=0, last_snap=100, limit=100)` searches recorded memory with Ghidra's
+history index. Matches stay inside the address range and their lifespans are
+clipped to the requested snapshots. This does not read the live target.
+
+Old debugger traces cannot be upgraded to 12.2. Capture new traces. Setup rejects
+other Ghidra versions and never selects an older installation's user directory.
+
+## Emulator integration test
+
+With sibling checkouts of `c64-mcp`, `ghidra-vice-connector`, `dosbox-x`, and
+`ghidra-dosbox_x-connector`, a built DOSBox-X, VICE, and GDB:
+
+```sh
+JAVA_HOME=/path/to/jdk-25 python tools/test_debugger_stacks.py \
+  --ghidra /path/to/ghidra_12.2_PUBLIC
+```
+
+The Python interpreter needs `protobuf>=6.31.0`. The test creates disposable
+emulators and a real Ghidra TraceRMI server; only the GUI service container is
+substituted. It exercises C64 MCP calls through the Java extension and the VICE
+agent, then the DOSBox-X launcher through Ghidra's bundled GDB agent. Logs and
+its temporary project are retained in the printed directory. Use `--stack vice`
+or `--stack dos` to run one side.

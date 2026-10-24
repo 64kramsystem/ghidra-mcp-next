@@ -5,7 +5,6 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
-import static org.junit.Assume.assumeTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -52,9 +51,9 @@ public class ProgramOpenOwnershipGhidraTest {
     private ProgramScriptService service;
 
     @BeforeClass
-    public static void initializeGhidraOrSkip() throws Exception {
+    public static void initializeGhidra() throws Exception {
         String installDir = System.getProperty("ghidra.test.install.dir");
-        assumeTrue("ghidra.test.install.dir is required",
+        org.junit.Assert.assertTrue("Pass -Dghidra.test.install.dir for Ghidra 12.2 tests",
             installDir != null && !installDir.isBlank());
         if (!Application.isInitialized()) {
             ApplicationConfiguration configuration = new ApplicationConfiguration();
@@ -191,5 +190,20 @@ public class ProgramOpenOwnershipGhidraTest {
 
     private static JsonObject json(Response response) {
         return JsonParser.parseString(response.toJson()).getAsJsonObject();
+    }
+
+    @Test
+    public void importsDosComUsingTheNative122Loader() throws Exception {
+        Path com = Files.createTempDirectory("dos-com").resolve("hello.com");
+        Files.write(com, new byte[]{(byte) 0xb4, 9, (byte) 0xcd, 0x21,
+            (byte) 0xb4, 9, (byte) 0xcd, 0x21,
+            (byte) 0xb4, 0x4c, (byte) 0xcd, 0x21, (byte) 0xc3});
+        JsonObject result = json(service.importFile(com.toString(), "/", "", "", false));
+        assertTrue(result.toString(), result.has("success"));
+        assertEquals("x86:LE:16:Real Mode", result.get("language").getAsString());
+        Program loaded = provider.getProgram(result.get("path").getAsString());
+        assertNotNull(loaded);
+        assertEquals("Old-style DOS Executable (COM)", loaded.getExecutableFormat());
+        assertEquals((byte) 0xb4, loaded.getMemory().getByte(loaded.getAddressFactory().getAddress("0100")));
     }
 }

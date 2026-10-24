@@ -2,7 +2,6 @@ package com.xebyte.core;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
-import static org.junit.Assume.assumeTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -469,7 +468,7 @@ public class FlowDisassemblyServiceGhidraTest {
 
     @Test
     public void live6502DryRunAndCommitHaveEqualNewInstructionSet() throws Exception {
-        initializeGhidraOrSkip();
+        initializeGhidra();
         ProgramBuilder builder =
             new ProgramBuilder("flow-6502", "6502:LE:16:default", "default", this);
         try {
@@ -571,7 +570,7 @@ public class FlowDisassemblyServiceGhidraTest {
     @Test
     public void liveOverlayNestedCallsCommitInOverlaySpace()
             throws Exception {
-        initializeGhidraOrSkip();
+        initializeGhidra();
         ProgramBuilder builder =
             new ProgramBuilder("flow-overlay-calls-6502",
                 "6502:LE:16:default", "default", this);
@@ -635,7 +634,7 @@ public class FlowDisassemblyServiceGhidraTest {
     @Test
     public void live6502DefinedDataIsBarrierOrAnnotationPreservingClear()
             throws Exception {
-        initializeGhidraOrSkip();
+        initializeGhidra();
         ProgramBuilder builder =
             new ProgramBuilder("flow-data-6502", "6502:LE:16:default", "default", this);
         try {
@@ -711,7 +710,7 @@ public class FlowDisassemblyServiceGhidraTest {
     @Test
     public void liveExistingInstructionCanCrossIntoUndefinedCommitFrontier()
             throws Exception {
-        initializeGhidraOrSkip();
+        initializeGhidra();
         ProgramBuilder builder =
             new ProgramBuilder("flow-existing-frontier-6502",
                 "6502:LE:16:default", "default", this);
@@ -771,7 +770,7 @@ public class FlowDisassemblyServiceGhidraTest {
     @Test
     public void liveCommitContinuesPastStockDisassemblerPaddingStop()
             throws Exception {
-        initializeGhidraOrSkip();
+        initializeGhidra();
         ProgramBuilder builder =
             new ProgramBuilder("flow-padding-stop-6502",
                 "6502:LE:16:default", "default", this);
@@ -828,7 +827,7 @@ public class FlowDisassemblyServiceGhidraTest {
     @Test
     public void liveMultiByteDataClearsOnceAndPreservesInteriorAnnotations()
             throws Exception {
-        initializeGhidraOrSkip();
+        initializeGhidra();
         ProgramBuilder builder =
             new ProgramBuilder("flow-array-data-6502",
                 "6502:LE:16:default", "default", this);
@@ -908,7 +907,7 @@ public class FlowDisassemblyServiceGhidraTest {
 
     @Test
     public void liveDecodeFailureDoesNotClearDefinedData() throws Exception {
-        initializeGhidraOrSkip();
+        initializeGhidra();
         ProgramBuilder builder =
             new ProgramBuilder("flow-decode-failure-data-6502",
                 "6502:LE:16:default", "default", this);
@@ -943,7 +942,7 @@ public class FlowDisassemblyServiceGhidraTest {
 
     @Test
     public void liveBoundaryCrossingDoesNotClearDefinedData() throws Exception {
-        initializeGhidraOrSkip();
+        initializeGhidra();
         ProgramBuilder builder =
             new ProgramBuilder("flow-boundary-data-6502",
                 "6502:LE:16:default", "default", this);
@@ -980,7 +979,7 @@ public class FlowDisassemblyServiceGhidraTest {
     @Test
     public void liveFailedDisassemblyRollsBackDataClearAndAnnotations()
             throws Exception {
-        initializeGhidraOrSkip();
+        initializeGhidra();
         ProgramBuilder builder =
             new ProgramBuilder("flow-rollback-data-6502",
                 "6502:LE:16:default", "default", this);
@@ -1041,7 +1040,7 @@ public class FlowDisassemblyServiceGhidraTest {
     @Test
     public void liveFunctionCreationSeparatesSeedAndDirectCallTarget()
             throws Exception {
-        initializeGhidraOrSkip();
+        initializeGhidra();
         ProgramBuilder builder =
             new ProgramBuilder("flow-functions-6502",
                 "6502:LE:16:default", "default", this);
@@ -1083,7 +1082,7 @@ public class FlowDisassemblyServiceGhidraTest {
 
     @Test
     public void liveFunctionPreflightBlocksBodyOverlap() throws Exception {
-        initializeGhidraOrSkip();
+        initializeGhidra();
         ProgramBuilder builder =
             new ProgramBuilder("flow-function-overlap-6502",
                 "6502:LE:16:default", "default", this);
@@ -1127,7 +1126,7 @@ public class FlowDisassemblyServiceGhidraTest {
     @Test
     public void liveNonDryRunReplansInsideWriteAfterInterleaving()
             throws Exception {
-        initializeGhidraOrSkip();
+        initializeGhidra();
         ProgramBuilder builder =
             new ProgramBuilder("flow-interleaving-6502",
                 "6502:LE:16:default", "default", this);
@@ -1193,7 +1192,7 @@ public class FlowDisassemblyServiceGhidraTest {
     @Test
     public void liveCommitIgnoresExecuteRestrictionWithoutDiagnosticBookmarks()
             throws Exception {
-        initializeGhidraOrSkip();
+        initializeGhidra();
         ProgramBuilder builder =
             new ProgramBuilder("flow-non-executable-6502",
                 "6502:LE:16:default", "default", this);
@@ -1257,7 +1256,7 @@ public class FlowDisassemblyServiceGhidraTest {
     @Test
     public void liveNonDryRequestParsingObservesInterleavedUninitializedSeed()
             throws Exception {
-        initializeGhidraOrSkip();
+        initializeGhidra();
         ProgramBuilder builder =
             new ProgramBuilder("flow-uninitialized-interleaving-6502",
                 "6502:LE:16:default", "default", this);
@@ -1367,10 +1366,10 @@ public class FlowDisassemblyServiceGhidraTest {
         return RAM.getAddress(offset);
     }
 
-    private static void initializeGhidraOrSkip() throws Exception {
+    private static void initializeGhidra() throws Exception {
         String installDir = System.getProperty("ghidra.test.install.dir");
-        assumeTrue(
-            "A Ghidra install is required for ProgramBuilder-backed tests",
+        org.junit.Assert.assertTrue(
+            "Pass -Dghidra.test.install.dir for Ghidra 12.2 tests",
             installDir != null && !installDir.isBlank() &&
                 new File(installDir).isDirectory());
         if (!Application.isInitialized()) {

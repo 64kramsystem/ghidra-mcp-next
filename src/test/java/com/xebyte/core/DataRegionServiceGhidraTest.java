@@ -7,7 +7,6 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
-import static org.junit.Assume.assumeTrue;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -59,9 +58,9 @@ public class DataRegionServiceGhidraTest {
     private DataRegionService service;
 
     @BeforeClass
-    public static void initializeGhidraOrSkip() throws Exception {
+    public static void initializeGhidra() throws Exception {
         String installDir = System.getProperty("ghidra.test.install.dir");
-        assumeTrue(installDir != null && !installDir.isBlank());
+        org.junit.Assert.assertTrue("Pass -Dghidra.test.install.dir for Ghidra 12.2 tests", installDir != null && !installDir.isBlank());
         if (!Application.isInitialized()) {
             ApplicationConfiguration configuration =
                 new ApplicationConfiguration();

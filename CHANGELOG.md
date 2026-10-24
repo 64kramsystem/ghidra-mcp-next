@@ -6,6 +6,22 @@ Complete version history for the GhidraMCP-next project.
 
 ## Unreleased
 
+### Changed
+
+- **Breaking:** support Ghidra 12.2 and JDK 25 only. Read installation metadata, require an exact version match, remove older-install selection and partial JAR installation fallbacks, and propagate debugger Python setup failures.
+- **Breaking:** breakpoint creation accepts `kind` (`x`, `X`, `R`, `W`, `RW`) and `length`, reports compact kinds, validates target support, and waits for placement to complete.
+- Compile and test with Ghidra's bundled Gson 2.13.2 and Commons Collections 4.6.0. Run the required Ghidra fixture profile in CI; missing fixture configuration fails instead of skipping coverage.
+
+### Fixed
+
+- Read trace memory state before returning bytes: uncaptured memory is fetched from the live target at the matching snapshot instead of silently returning zero-filled data.
+
+### Added
+
+- `debugger_search_memory_history` searches exact bytes across recorded snapshots using the 12.2 API, with explicit address bounds and clipped lifespans.
+- Native DOS COM import coverage and a disposable-emulator integration runner for both debugger stacks.
+
+
 ## 0.107.1
 
 ### Changed

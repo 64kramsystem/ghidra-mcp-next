@@ -93,7 +93,7 @@ def check_maven_java(repo_root: Path, maven_command: Path) -> str | None:
         # Nothing to compare against; do not shell out to Maven just to discard the answer.
         return None
     actual = maven_java_major(maven_command)
-    if actual is None or actual == required:
+    if actual == required:
         return None
 
     return (
