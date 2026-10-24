@@ -6,6 +6,14 @@ Complete version history for the GhidraMCP-next project.
 
 ## Unreleased
 
+### Changed
+
+- **Breaking:** pin the MCP Python SDK to 2.3.0 and migrate the stdio bridge to `MCPServer`, using current-protocol subscriptions for dynamic tool-list updates.
+
+### Tests
+
+- Cover tool-list subscriptions, dynamic tool calls, failed schema refreshes, and rollback after partial tool registration.
+
 ## 0.108.0
 
 ### Changed

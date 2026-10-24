@@ -60,10 +60,10 @@ def create_project(
 
 
 async def notify(ctx) -> str | None:
-    if ctx is None or ctx._request_context is None:
+    if ctx is None:
         return None
     try:
-        await ctx.request_context.session.send_tool_list_changed()
+        await ctx.notify_tools_changed()
     except Exception as error:
         return str(error)
     return None

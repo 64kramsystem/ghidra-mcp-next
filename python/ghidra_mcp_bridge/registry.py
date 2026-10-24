@@ -109,7 +109,7 @@ def _add(name: str, value: tuple[object, dict, str]) -> None:
     mcp.add_tool(function, name=name, description=description)
     tool = mcp._tool_manager.get_tool(name)
     if tool is None:
-        raise RuntimeError(f"FastMCP did not publish {name!r}.")
+        raise RuntimeError(f"MCPServer did not publish {name!r}.")
     public_schema = deepcopy(input_schema)
     for item in public_schema.get("properties", {}).values():
         item.pop("source", None)
