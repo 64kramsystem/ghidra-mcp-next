@@ -1,5 +1,8 @@
 # Agent instructions
 
+@AGENTS.development.md
+@AGENTS.git.md
+
 - `$GHIDRA_INSTALL_DIR` identifies the installation
 - Use `$GHIDRA_SOURCE_DIR` when source can replace guesswork
 - Run GhidraMCP-next's Java tests with `mvn -Dghidra.test.install.dir="$GHIDRA_INSTALL_DIR" test`; the environment variable alone does not activate Maven's Ghidra runtime-library profile.

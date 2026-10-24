@@ -75,3 +75,6 @@ __pycache__/
 Thumbs.db
 [Dd]esktop.ini
 $RECYCLE.BIN/
+
+AGENTS*.md
+!AGENTS.md
