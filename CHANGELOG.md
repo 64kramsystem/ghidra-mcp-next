@@ -1,10 +1,15 @@
 # Changelog - GhidraMCP-next
 
+
 Complete version history for the GhidraMCP-next project.
 
 ---
 
 ## Unreleased
+
+### Added
+
+- Add `export_data_objects` to export the complete data-object inventory as JSON.
 
 ## 0.110.0
 

@@ -159,6 +159,64 @@ public final class ExportService {
             normalizeOptional(start), normalizeOptional(end), overwrite);
     }
 
+    @McpTool(path = "/export_data_objects", method = "POST",
+        description = "Export the complete data-object inventory as JSON, including defined data, "
+            + "undefined memory gaps, labels, comments, opaque markers and recorded references.")
+    public Response exportDataObjects(
+            @Param(value = "output_path", source = ParamSource.BODY,
+                description = "New destination filesystem path") String outputPath,
+            @Param(value = "program", defaultValue = "",
+                description = "Target program name (omit to use the active program)")
+                String programName) {
+        if (outputPath == null || outputPath.isBlank()) {
+            return Response.err("output_path is required");
+        }
+        Program program = programProvider.resolveProgram(programName);
+        if (program == null) {
+            return Response.err(programName == null || programName.isBlank()
+                ? "No program currently loaded" : "Program not found: " + programName);
+        }
+        Path destination = security.resolveWithinFileRoot(outputPath);
+        if (destination == null) {
+            return Response.err("output_path is outside GHIDRA_MCP_FILE_ROOT: " + outputPath);
+        }
+        Path parent = destination.getParent();
+        if (parent == null || !Files.isDirectory(parent)) {
+            return Response.err("destination parent is not a directory: " + parent);
+        }
+        Path temporary = siblingTemporaryPath(destination);
+        try {
+            long modification = program.getModificationNumber();
+            JsonObject inventory = new DataObjectInventory(program).collect();
+            Files.writeString(temporary,
+                new com.google.gson.GsonBuilder().setPrettyPrinting().create().toJson(inventory)
+                    + "\n", java.nio.file.StandardOpenOption.CREATE_NEW);
+            if (program.getModificationNumber() != modification) {
+                return Response.err("program changed during export; nothing was published");
+            }
+            JsonObject result = new JsonObject();
+            result.addProperty("program", program.getName());
+            result.addProperty("output_path", destination.toString());
+            result.addProperty("bytes_written", Files.size(temporary));
+            publish(temporary, destination, false);
+            return new Response.Ok(result);
+        }
+        catch (FileAlreadyExistsException e) {
+            return Response.err("destination already exists: " + destination);
+        }
+        catch (Exception e) {
+            return Response.err(e.getMessage() != null ? e.getMessage() : e.toString());
+        }
+        finally {
+            try {
+                Files.deleteIfExists(temporary);
+            }
+            catch (IOException ignored) {
+                // Best-effort cleanup.
+            }
+        }
+    }
+
     private Response export(CompleteListingRunner runner, String programName, String outputPath,
             String start, String end, boolean overwrite) {
         if (outputPath == null || outputPath.isBlank()) {

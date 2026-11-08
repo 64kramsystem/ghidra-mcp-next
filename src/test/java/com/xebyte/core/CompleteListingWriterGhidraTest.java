@@ -93,6 +93,44 @@ public class CompleteListingWriterGhidraTest {
         }
     }
 
+    @Test
+    public void dataObjectInventoryPreservesInteriorMetadataAndDoesNotOverwrite() throws Exception {
+        int transaction = program.startTransaction("inventory fixture");
+        try {
+            program.getListing().createData(builder.addr("0x1080"),
+                new ghidra.program.model.data.ArrayDataType(ByteDataType.dataType, 4, 1));
+            program.getSymbolTable().createLabel(builder.addr("0x1081"), "interior", SourceType.USER_DEFINED);
+            program.getListing().setComment(builder.addr("0x1082"), CommentType.EOL, "inside");
+            var opaque = program.getUsrPropertyManager().createVoidPropertyMap("listing.opaque");
+            opaque.add(builder.addr("0x1081"));
+            opaque.add(builder.addr("0x1083"));
+            program.getReferenceManager().addMemoryReference(builder.addr("0x1000"),
+                builder.addr("0x1082"), RefType.DATA, SourceType.USER_DEFINED, 0);
+            program.getReferenceManager().addMemoryReference(builder.addr("0x1081"),
+                builder.addr("0x1090"), RefType.DATA, SourceType.USER_DEFINED, 0);
+        }
+        finally {
+            program.endTransaction(transaction, true);
+        }
+        Path destination = temporaryFolder.getRoot().toPath().resolve("inventory.json");
+        ExportService service = new ExportService(provider, security);
+        Response response = service.exportDataObjects(destination.toString(), "");
+        assertTrue(response.toJson(), response instanceof Response.Ok);
+        String output = Files.readString(destination);
+        var report = com.google.gson.JsonParser.parseString(output).getAsJsonObject();
+        var objects = report.getAsJsonArray("objects");
+        var row = objects.asList().stream().map(e -> e.getAsJsonObject())
+            .filter(e -> e.get("start").getAsString().endsWith("1080")).findFirst().orElseThrow();
+        assertEquals(4, row.get("length").getAsInt());
+        assertTrue(row.get("array").getAsBoolean());
+        assertEquals(2, row.getAsJsonArray("opaque_markers").size());
+        assertTrue(row.getAsJsonArray("labels").toString().contains("interior"));
+        assertTrue(row.getAsJsonArray("comments").toString().contains("inside"));
+        assertEquals(2, row.getAsJsonArray("references").size());
+        assertFalse(service.exportDataObjects(destination.toString(), "") instanceof Response.Ok);
+        assertEquals(output, Files.readString(destination));
+    }
+
     /** Mechanism 2: AsciiExporter caps EOL comments at 6 lines per code unit. */
     @Test
     public void eolCommentBeyondSixLinesSurvivesInFull() throws Exception {
