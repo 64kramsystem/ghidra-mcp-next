@@ -4,11 +4,9 @@ import json
 import os
 import re
 import shutil
-import signal
 import subprocess
 import sys
 import time
-import urllib.parse
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -51,9 +49,8 @@ REQUIRED_GHIDRA_JARS: tuple[tuple[str, str], ...] = (
 
 PLUGIN_CLASS = "com.xebyte.GhidraMCPPlugin"
 PLUGIN_EXTENSION_NAME = "GhidraMCP-next"
-DEFAULT_MCP_URL = "http://127.0.0.1:8089"
 DEFAULT_MCP_WAIT_SECONDS = 120
-DEFAULT_GHIDRA_EXIT_WAIT_SECONDS = 15
+DEFAULT_GHIDRA_EXIT_WAIT_SECONDS = 60
 
 
 def ghidra_user_base_dir() -> Path:
@@ -299,239 +296,113 @@ def print_command(command: list[str]) -> None:
     print(" ".join(command))
 
 
-def resolve_mcp_url(repo_root: Path) -> str:
-    env_values = load_env_file(repo_root / ".env")
-    return env_values.get("GHIDRA_MCP_URL", DEFAULT_MCP_URL).rstrip("/")
+def _bridge_modules(repo_root: Path):
+    source = str(repo_root / "python")
+    if source not in sys.path:
+        sys.path.insert(0, source)
+    from ghidra_mcp_bridge import discovery, transport
+    return discovery, transport
 
 
-def _mcp_request(
-    repo_root: Path,
-    mcp_url: str,
-    path: str,
-    *,
-    method: str = "GET",
-    data: dict | None = None,
-    params: dict | None = None,
-    timeout: int = 10,
-) -> tuple[int, object]:
-    body = None
-    headers: dict[str, str] = {}
-    if data is not None:
-        body = json.dumps(data).encode("utf-8")
-        headers["Content-Type"] = "application/json"
-    url = f"{mcp_url}{path}"
-    if params:
-        url = f"{url}?{urllib.parse.urlencode(params)}"
-    request = urllib.request.Request(url, data=body, headers=headers, method=method)
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        text = response.read().decode("utf-8", errors="replace")
-        try:
-            parsed: object = json.loads(text)
-        except ValueError:
-            parsed = text
-        return response.status, parsed
+def _target_instances(repo_root: Path, ghidra_path: Path) -> list[dict]:
+    discovery, _ = _bridge_modules(repo_root)
+    pids = {int(process["pid"]) for process in _find_matching_ghidra_processes(ghidra_path)}
+    return [instance for instance in discovery.discover_instances() if instance.get("pid") in pids]
 
 
-def _enumerate_ghidra_processes() -> list[dict[str, object]]:
-    """Return every running Ghidra process on this machine, install-agnostic.
-
-    Each entry is {pid, name, command}. The earlier
-    _find_matching_ghidra_processes filtered by install path on the same
-    pass, which silently missed Ghidras running from a *different*
-    install during a version-changing deploy — see the v5.10→v5.11
-    Ghidra-12.1 deploy where an old 12.0.4 was still up but went
-    undetected. This helper does the cross-platform process scan once;
-    callers filter by path themselves.
-    """
-    if os.name == "nt":
-        command = [
-            "powershell",
-            "-NoProfile",
-            "-Command",
-            (
-                "Get-CimInstance Win32_Process | "
-                "Where-Object { $_.Name -match '^(javaw?|ghidra).*' } | "
-                "Select-Object ProcessId,Name,ExecutablePath,CommandLine | "
-                "ConvertTo-Json -Compress"
-            ),
-        ]
-        completed = subprocess.run(command, capture_output=True, text=True, check=False)
-        if completed.returncode != 0 or not completed.stdout.strip():
-            return []
-        raw = json.loads(completed.stdout)
-        rows = raw if isinstance(raw, list) else [raw]
-        out: list[dict[str, object]] = []
-        for row in rows:
-            cmd = str(row.get("CommandLine") or "")
-            name = str(row.get("Name") or "").lower()
-            cmd_lower = cmd.lower()
-            is_ghidra = name in {"java.exe", "javaw.exe", "ghidrarun.bat", "ghidrarun"} and (
-                "ghidra.ghidra" in cmd_lower or "ghidrarun" in cmd_lower
-            )
-            if is_ghidra:
-                out.append(
-                    {
-                        "pid": int(row["ProcessId"]),
-                        "name": row.get("Name", ""),
-                        "command": cmd,
-                    }
-                )
-        return out
-    ps = subprocess.run(["ps", "-eo", "pid=,args="], capture_output=True, text=True, check=False)
-    out = []
-    for line in ps.stdout.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        pid_text, _, command = stripped.partition(" ")
-        command_lower = command.lower()
-        if "ghidra.ghidra" in command_lower or "ghidrarun" in command_lower:
-            out.append({"pid": int(pid_text), "name": "process", "command": command})
-    return out
+def _mcp_request(repo_root: Path, socket_path: str, path: str, *, params=None, timeout=10):
+    _, transport = _bridge_modules(repo_root)
+    text, status = transport.request(socket_path, "GET", path, query=params, timeout=timeout)
+    return status, json.loads(text)
 
 
 def _find_matching_ghidra_processes(ghidra_path: Path) -> list[dict[str, object]]:
-    """Ghidra processes whose command-line includes ``ghidra_path``.
-
-    Used by the deploy flow to identify the install we're targeting so
-    it can be gracefully shut down before extension replacement. For
-    processes that match *other* Ghidra installs, see
-    ``_find_mismatched_ghidra_processes`` — those would be warned about
-    rather than auto-shut-down, because they may belong to unrelated
-    work the operator hasn't agreed to close.
-    """
-    target = str(ghidra_path.resolve()).lower()
-    return [proc for proc in _enumerate_ghidra_processes() if target in str(proc["command"]).lower()]
+    ps = subprocess.run(["ps", "-ww", "-eo", "pid=,args="], capture_output=True, text=True, check=True)
+    target = str(ghidra_path.resolve())
+    matches = []
+    for line in ps.stdout.splitlines():
+        pid, _, command = line.strip().partition(" ")
+        args = command.split()
+        if args and Path(args[0]).name in {"java", "javaw"} and "ghidra.GhidraRun" in args and f"{target}/" in command:
+            matches.append({"pid": int(pid), "command": command})
+    return matches
 
 
-def _find_mismatched_ghidra_processes(ghidra_path: Path) -> list[dict[str, object]]:
-    """Ghidra processes from a DIFFERENT install than ``ghidra_path``.
-
-    Surfaced as a warning at deploy time so a version-mixing scenario
-    is visible: an old Ghidra still bound to MCP port 8089 will respond
-    to the deploy's post-start smoke checks instead of the just-deployed
-    new version, producing confusing "wrong version" failures.
-    """
-    target = str(ghidra_path.resolve()).lower()
-    return [proc for proc in _enumerate_ghidra_processes() if target not in str(proc["command"]).lower()]
-
-
-def _terminate_process(pid: int) -> None:
-    if os.name == "nt":
-        subprocess.run(["taskkill", "/PID", str(pid), "/F"], check=False)
-    else:
-        os.kill(pid, signal.SIGKILL)
-
-
-def close_running_ghidra_for_deploy(
-    repo_root: Path,
-    ghidra_path: Path,
-    *,
-    mcp_url: str,
-    dry_run: bool = False,
-    wait_seconds: int = DEFAULT_GHIDRA_EXIT_WAIT_SECONDS,
-) -> bool:
-    # Warn about Ghidras running from a DIFFERENT install. We don't
-    # touch them (they may belong to unrelated work the operator hasn't
-    # agreed to close), but surfacing them keeps a version-mixing
-    # scenario from going undetected: an old Ghidra still bound to MCP
-    # port 8089 will respond to the deploy's post-start smoke checks
-    # instead of the just-deployed new version, producing confusing
-    # "wrong version" failures. This was the v5.10→v5.11 deploy gap
-    # the user flagged after the Ghidra 12.0.4 → 12.1 cutover.
-    mismatched = _find_mismatched_ghidra_processes(ghidra_path)
-    if mismatched:
-        print(
-            f"WARNING: {len(mismatched)} Ghidra process(es) running from a "
-            f"DIFFERENT install than deploy target {ghidra_path}:"
-        )
-        for proc in mismatched:
-            print(f"  PID {proc['pid']}: {proc['command']}")
-        print(
-            "  These may bind MCP port 8089 and intercept the post-deploy "
-            "smoke checks intended for the new install. If the deploy's "
-            "version probe reports the wrong version, close the other "
-            "Ghidra(s) (save work first) and re-run."
-        )
-
+def close_running_ghidra_for_deploy(repo_root: Path, ghidra_path: Path, *, dry_run: bool = False,
+                                    wait_seconds: int = DEFAULT_GHIDRA_EXIT_WAIT_SECONDS) -> bool:
     matches = _find_matching_ghidra_processes(ghidra_path)
     if not matches:
         print("No matching running Ghidra process detected.")
         return False
+    instances = _target_instances(repo_root, ghidra_path)
+    by_pid = {instance["pid"]: instance for instance in instances}
+    if {proc["pid"] for proc in matches} != set(by_pid):
+        raise RuntimeError("Cannot identify MCP socket for every target Ghidra process; deployment stopped")
     for proc in matches:
-        print(f"Detected running Ghidra PID {proc['pid']}: {proc['command']}")
+        pid = int(proc["pid"])
+        socket_path = by_pid[pid]["socket"]
+        if dry_run:
+            print(f"DRY RUN: save programs and close Ghidra PID {pid} via {socket_path}")
+            continue
+        status, payload = _mcp_request(repo_root, socket_path, "/save_all_programs", timeout=60)
+        if status != 200 or not isinstance(payload, dict) or payload.get("success") is not True or "error" in payload:
+            raise RuntimeError(f"Could not save programs for Ghidra PID {pid}: {payload}")
+    for proc in matches:
+        pid = int(proc["pid"])
+        if dry_run:
+            continue
+        if sys.platform == "darwin":
+            subprocess.run(["osascript", "-e", 'tell application "System Events"',
+                            "-e", f"set frontmost of first application process whose unix id is {pid} to true",
+                            "-e", "repeat 20 times",
+                            "-e", f"if (unix id of (first application process whose frontmost is true)) is {pid} then exit repeat",
+                            "-e", "delay 0.1", "-e", "end repeat",
+                            "-e", f'if (unix id of (first application process whose frontmost is true)) is not {pid} then error "Ghidra did not become frontmost"',
+                            "-e", 'keystroke "q" using command down', "-e", "end tell"], check=True)
+        elif sys.platform.startswith("linux"):
+            print(f"Close Ghidra PID {pid} using File > Exit; waiting for it to exit.")
+        else:
+            raise RuntimeError("Ghidra deployment supports Linux and macOS only")
     if dry_run:
-        print(f"DRY RUN: save all open programs via {mcp_url}/save_all_programs")
-        print(f"DRY RUN: graceful exit via {mcp_url}/exit_ghidra")
-        for proc in matches:
-            print(f"DRY RUN: force-kill PID {proc['pid']} if still running")
         return True
-
-    try:
-        _mcp_request(repo_root, mcp_url, "/save_all_programs", timeout=60)
-        print("Requested save for all open Ghidra programs.")
-    except Exception as exc:
-        raise RuntimeError("Could not save all open programs; deployment stopped") from exc
-    try:
-        _mcp_request(repo_root, mcp_url, "/exit_ghidra", timeout=10)
-        print("Requested graceful Ghidra exit.")
-    except Exception as exc:
-        print(f"WARNING: exit_ghidra failed before deploy: {exc}")
-
     deadline = time.monotonic() + wait_seconds
+    pids = {int(proc["pid"]) for proc in matches}
     while time.monotonic() < deadline:
-        if not _find_matching_ghidra_processes(ghidra_path):
+        for pid in tuple(pids):
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                pids.remove(pid)
+        if not pids:
             print("Ghidra exited cleanly.")
             return True
         time.sleep(1)
-    for proc in _find_matching_ghidra_processes(ghidra_path):
-        print(f"Force-killing Ghidra PID {proc['pid']}.")
-        _terminate_process(int(proc["pid"]))
-    return True
+    raise RuntimeError("Ghidra did not exit gracefully; deployment stopped")
 
 
-def wait_for_mcp(
-    repo_root: Path,
-    mcp_url: str,
-    *,
-    timeout_seconds: int = DEFAULT_MCP_WAIT_SECONDS,
-) -> None:
+def wait_for_mcp(repo_root: Path, ghidra_path: Path, *, timeout_seconds: int = DEFAULT_MCP_WAIT_SECONDS) -> str:
     deadline = time.monotonic() + timeout_seconds
-    last_error: Exception | None = None
     while time.monotonic() < deadline:
-        for path in ("/mcp/health", "/health", "/check_connection"):
-            try:
-                status, _payload = _mcp_request(repo_root, mcp_url, path, timeout=5)
-                if status == 200:
-                    print(f"MCP ready at {mcp_url} ({path}).")
-                    return
-            except Exception as exc:
-                last_error = exc
+        instances = _target_instances(repo_root, ghidra_path)
+        if len(instances) == 1:
+            print(f"MCP ready at {instances[0]['socket']}.")
+            return instances[0]["socket"]
+        if len(instances) > 1:
+            raise RuntimeError("Multiple target Ghidra instances found")
         time.sleep(2)
-    raise RuntimeError(f"MCP did not become ready at {mcp_url}: {last_error}")
+    raise RuntimeError("Target Ghidra MCP did not become ready")
 
 
-def wait_for_project(
-    repo_root: Path,
-    mcp_url: str,
-    *,
-    timeout_seconds: int = DEFAULT_MCP_WAIT_SECONDS,
-) -> None:
+def wait_for_project(repo_root: Path, socket_path: str, *, timeout_seconds: int = DEFAULT_MCP_WAIT_SECONDS) -> None:
     deadline = time.monotonic() + timeout_seconds
-    last_error: Exception | None = None
+    last_error = None
     while time.monotonic() < deadline:
         try:
-            _status, payload = _mcp_request(
-                repo_root,
-                mcp_url,
-                "/list_project_files",
-                params={"folder": "/"},
-                timeout=5,
-            )
-            if isinstance(payload, dict) and "error" not in payload:
+            status, payload = _mcp_request(repo_root, socket_path, "/list_project_files", params={"folder": "/"}, timeout=5)
+            if status == 200 and isinstance(payload, dict) and "error" not in payload:
                 print("Ghidra project is ready.")
                 return
-            last_error = RuntimeError(payload.get("error", str(payload)) if isinstance(payload, dict) else str(payload))
+            last_error = payload
         except Exception as exc:
             last_error = exc
         time.sleep(2)
@@ -539,20 +410,10 @@ def wait_for_project(
 
 
 def _resolve_debugger_python(repo_root: Path) -> Path | None:
-    """Find the Python interpreter Ghidra's debugger launchers actually use.
+    """Select the standalone Python used for debugger dependencies.
 
-    The Ghidra dbgeng / gdb / lldb launcher .bat / .sh scripts run
-    ``"%OPT_PYTHON_EXE%" ...`` (defaulting to ``python``), and the
-    GhidraMCP-next plugin propagates ``GHIDRA_DEBUGGER_PYTHON`` from .env into
-    that variable when running the debugger live test. So the
-    interpreter to install ``ghidratrace`` into is:
-
-      1. ``GHIDRA_DEBUGGER_PYTHON`` from the environment, if set
-      2. ``GHIDRA_DEBUGGER_PYTHON`` from ``<repo>/.env``, if set
-      3. ``shutil.which("python")`` as the system default
-
-    Returns ``None`` only when no resolvable interpreter is found —
-    rare on Windows but possible in headless CI containers.
+    VICE uses a standalone Python interpreter. GDB uses its own embedded Python,
+    which this setup does not provision.
     """
     candidate = os.environ.get("GHIDRA_DEBUGGER_PYTHON", "").strip()
     if not candidate:
@@ -572,7 +433,7 @@ def install_ghidratrace_for_debugger(
     *,
     dry_run: bool = False,
 ) -> int:
-    """Install the exact client's wheel and required protobuf into debugger Python."""
+    """Install the bundled wheel and protobuf into standalone Python."""
     wheel_dir = ghidra_path / "Ghidra" / "Debug" / "Debugger-rmi-trace" / "pypkg" / "dist"
     wheels = sorted(wheel_dir.glob("ghidratrace-12.2-py3-none-any.whl"))
     if not wheels:
@@ -581,7 +442,7 @@ def install_ghidratrace_for_debugger(
 
     debugger_python = _resolve_debugger_python(repo_root)
     if debugger_python is None:
-        raise RuntimeError("Set GHIDRA_DEBUGGER_PYTHON to the debugger Python interpreter")
+        raise RuntimeError("Set GHIDRA_DEBUGGER_PYTHON to a standalone Python interpreter")
 
     if dry_run:
         print(f"DRY RUN: {debugger_python} -m pip install --force-reinstall {wheel}")
@@ -751,8 +612,7 @@ def deploy_to_ghidra(
     destination_archive = extensions_dir / archive_path.name
     dotenv_source = repo_root / ".env"
     user_base_dir = ghidra_user_base_dir()
-    mcp_url = resolve_mcp_url(repo_root)
-    close_running_ghidra_for_deploy(repo_root, ghidra_path, mcp_url=mcp_url, dry_run=dry_run)
+    close_running_ghidra_for_deploy(repo_root, ghidra_path, dry_run=dry_run)
 
     if dry_run:
         print(f"DRY RUN: ensure directory {extensions_dir}")
@@ -766,7 +626,7 @@ def deploy_to_ghidra(
         target_user_dir = resolve_ghidra_user_dir(ghidra_path, user_base_dir)
         patch_ghidra_user_configs(user_base_dir, target_user_dir, dry_run=True)
         start_ghidra(ghidra_path, repo_root=repo_root, dry_run=True)
-        print(f"DRY RUN: wait up to {DEFAULT_MCP_WAIT_SECONDS}s for MCP at {mcp_url}")
+        print(f"DRY RUN: wait up to {DEFAULT_MCP_WAIT_SECONDS}s for target Ghidra MCP")
         print(f"DRY RUN: wait up to {DEFAULT_MCP_WAIT_SECONDS}s for active project")
         return 0
 
@@ -793,8 +653,8 @@ def deploy_to_ghidra(
     target_user_dir = resolve_ghidra_user_dir(ghidra_path, user_base_dir)
     patch_ghidra_user_configs(user_base_dir, target_user_dir)
     start_ghidra(ghidra_path, repo_root=repo_root)
-    wait_for_mcp(repo_root, mcp_url, timeout_seconds=DEFAULT_MCP_WAIT_SECONDS)
-    wait_for_project(repo_root, mcp_url, timeout_seconds=DEFAULT_MCP_WAIT_SECONDS)
+    socket_path = wait_for_mcp(repo_root, ghidra_path, timeout_seconds=DEFAULT_MCP_WAIT_SECONDS)
+    wait_for_project(repo_root, socket_path, timeout_seconds=DEFAULT_MCP_WAIT_SECONDS)
 
     return 0
 

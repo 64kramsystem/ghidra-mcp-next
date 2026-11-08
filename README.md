@@ -23,7 +23,7 @@ uv sync
 python -m tools.setup preflight --ghidra-path /path/to/ghidra
 python -m tools.setup ensure-prereqs --ghidra-path /path/to/ghidra
 python -m tools.setup build
-python -m tools.setup deploy --ghidra-path /path/to/ghidra
+uv run python -m tools.setup deploy --ghidra-path /path/to/ghidra
 ```
 
 Manual packaging after prerequisites are installed:
@@ -34,7 +34,6 @@ mvn clean package assembly:single -DskipTests
 
 Enable **GhidraMCP-next** in the Ghidra Project Window through **File > Configure**. The extension then keeps one per-process Unix-domain socket across project switches.
 
-Loopback TCP is optional. Enable **GhidraMCP-next > Enable TCP Transport** in Ghidra only for a local client that cannot use the stdio bridge, such as `c64-mcp`.
 
 ## Connect an MCP client
 

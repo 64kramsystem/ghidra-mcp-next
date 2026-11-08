@@ -6,6 +6,10 @@ Complete version history for the GhidraMCP-next project.
 
 ## Unreleased
 
+### Changed
+
+- **Breaking:** remove the optional loopback TCP transport; local clients use Unix-domain sockets.
+
 ## 0.109.0
 
 ### Changed

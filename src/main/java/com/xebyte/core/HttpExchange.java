@@ -10,8 +10,6 @@ import java.net.URI;
 
 /**
  * Transport-agnostic HTTP exchange interface.
- * Implemented by {@link UdsHttpExchange} (Unix domain sockets) and
- * {@link SunHttpExchangeAdapter} (com.sun.net.httpserver).
  */
 public interface HttpExchange extends Closeable {
     String getRequestMethod();

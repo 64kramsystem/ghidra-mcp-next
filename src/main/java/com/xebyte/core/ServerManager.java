@@ -1,6 +1,5 @@
 package com.xebyte.core;
 
-import com.sun.net.httpserver.HttpServer;
 
 import ghidra.framework.model.Project;
 import ghidra.framework.plugintool.PluginTool;
@@ -9,7 +8,6 @@ import ghidra.util.Msg;
 
 import java.io.IOException;
 import java.io.OutputStream;
-import java.net.InetSocketAddress;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -21,8 +19,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
 
 /** Owns one schema and the local transports shared by all Ghidra tool windows. */
@@ -41,30 +37,18 @@ public final class ServerManager {
     private final AtomicReference<String> activeToolId = new AtomicReference<>();
     private MultiToolProgramProvider programProvider;
     private UdsHttpServer udsServer;
-    private HttpServer tcpServer;
-    private ExecutorService tcpExecutor;
     private AnnotationScanner scanner;
     private String serviceOwner;
-    private boolean tcpRequested;
-    private int tcpPort = 8089;
 
     private ServerManager() {
     }
 
-    public synchronized void registerTool(
-            PluginTool tool, boolean enableTcp, int port) throws IOException {
+    public synchronized void registerTool(PluginTool tool) throws IOException {
         String toolId = String.valueOf(System.identityHashCode(tool));
         tools.put(toolId, tool);
         activeToolId.compareAndSet(null, toolId);
-        tcpRequested |= enableTcp;
-        if (enableTcp) {
-            tcpPort = port;
-        }
-
         if (udsServer == null) {
             start(toolId, tool);
-        } else if (enableTcp && tcpServer == null) {
-            startTcp(port);
         }
     }
 
@@ -97,10 +81,6 @@ public final class ServerManager {
 
     public Path getSocketPath() {
         return udsServer == null ? null : udsServer.getSocketPath();
-    }
-
-    public int getBoundTcpPort() {
-        return tcpServer == null ? -1 : tcpServer.getAddress().getPort();
     }
 
     private void start(String owner, PluginTool tool) throws IOException {
@@ -137,9 +117,6 @@ public final class ServerManager {
             new GuiContextService(this::getActiveTool, programProvider));
 
         startUds();
-        if (tcpRequested) {
-            startTcp(tcpPort);
-        }
         Msg.info(
             this,
             VersionPayload.getFullVersion() + ", "
@@ -166,42 +143,6 @@ public final class ServerManager {
         udsServer.start();
     }
 
-    private void startTcp(int port) {
-        try {
-            tcpServer = HttpServer.create(
-                new InetSocketAddress("127.0.0.1", port), 0);
-            for (EndpointDef endpoint : scanner.getEndpoints()) {
-                tcpServer.createContext(
-                    endpoint.path(),
-                    exchange -> dispatch(
-                        endpoint, new SunHttpExchangeAdapter(exchange)));
-            }
-            registerTcpContext("/mcp/schema", scanner.generateSchema());
-            registerTcpContext(
-                "/get_version",
-                VersionPayload.toJson(scanner.getDescriptors().size()));
-            tcpServer.createContext(
-                "/mcp/instance_info",
-                exchange -> sendJsonResponse(
-                    new SunHttpExchangeAdapter(exchange),
-                    buildInstanceInfoJson()));
-            registerTcpContext("/mcp/health", "{\"status\":\"ok\"}");
-            tcpExecutor = Executors.newFixedThreadPool(3, runnable -> {
-                Thread thread = new Thread(runnable, "GhidraMCP-next-TCP");
-                thread.setDaemon(true);
-                return thread;
-            });
-            tcpServer.setExecutor(tcpExecutor);
-            tcpServer.start();
-        } catch (IOException error) {
-            tcpServer = null;
-            Msg.warn(
-                this,
-                "TCP transport was requested but could not bind 127.0.0.1:"
-                    + port + ": " + error.getMessage());
-        }
-    }
-
     private void registerUdsContexts() {
         for (EndpointDef endpoint : scanner.getEndpoints()) {
             udsServer.createContext(
@@ -221,13 +162,6 @@ public final class ServerManager {
         udsServer.createContext(
             "/mcp/health",
             exchange -> sendJsonResponse(exchange, "{\"status\":\"ok\"}"));
-    }
-
-    private void registerTcpContext(String path, String body) {
-        tcpServer.createContext(
-            path,
-            exchange -> sendJsonResponse(
-                new SunHttpExchangeAdapter(exchange), body));
     }
 
     private void dispatch(EndpointDef endpoint, HttpExchange exchange) {
@@ -295,7 +229,6 @@ public final class ServerManager {
         info.put(
             "project_path",
             project == null ? null : project.getProjectLocator().toString());
-        info.put("tcp_port", getBoundTcpPort());
 
         Set<String> names = new LinkedHashSet<>();
         MultiToolProgramProvider provider = programProvider;
@@ -313,14 +246,6 @@ public final class ServerManager {
     }
 
     private void stop(boolean releasePrograms) {
-        if (tcpServer != null) {
-            tcpServer.stop(0);
-            tcpServer = null;
-        }
-        if (tcpExecutor != null) {
-            tcpExecutor.shutdownNow();
-            tcpExecutor = null;
-        }
         if (udsServer != null) {
             udsServer.stop();
             udsServer = null;

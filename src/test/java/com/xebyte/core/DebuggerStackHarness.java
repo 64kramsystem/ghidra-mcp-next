@@ -10,7 +10,6 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicReference;
 
-import com.sun.net.httpserver.HttpServer;
 import ghidra.app.plugin.core.debug.service.tracermi.TraceRmiPlugin;
 import ghidra.app.services.*;
 import ghidra.debug.api.target.Target;
@@ -64,9 +63,7 @@ public final class DebuggerStackHarness {
         rmi.setServerAddress(new InetSocketAddress("127.0.0.1", 0));
         rmi.startServer();
         var scanner = new AnnotationScanner(new DebuggerService(null, null, tool));
-        HttpServer http = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        ExecutorService executor = Executors.newCachedThreadPool();
-        http.setExecutor(executor);
+        UdsHttpServer http = new UdsHttpServer(Path.of(args[1]));
         for (EndpointDef endpoint : scanner.getEndpoints()) {
             http.createContext(endpoint.path(), exchange -> {
                 try {
@@ -95,12 +92,11 @@ public final class DebuggerStackHarness {
         http.start();
         Files.writeString(directory.resolve("ready.json"), JsonHelper.toJson(Map.of(
                 "trace_port", ((InetSocketAddress) rmi.getServerAddress()).getPort(),
-                "http_port", http.getAddress().getPort())));
+                "socket", args[1])));
         try {
             while (!Files.exists(directory.resolve("stop"))) Thread.sleep(50);
         } finally {
-            http.stop(0);
-            executor.shutdownNow();
+            http.stop();
             rmi.stopServer();
             for (var connection : rmi.getAllConnections()) connection.close();
             data.close();

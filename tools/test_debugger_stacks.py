@@ -84,10 +84,12 @@ def main() -> None:
                                 dependencies, *(str(p) for p in (ghidra / "Ghidra").rglob("*.jar"))])
     mockito = next(Path.home().glob(".m2/repository/org/mockito/mockito-core/5.23.0/*.jar"))
     java = Path(os.environ["JAVA_HOME"]) / "bin/java"
+    socket_dir = tempfile.TemporaryDirectory(prefix="gm-", dir="/tmp")
+    socket_path = str(Path(socket_dir.name) / "mcp.sock")
     server_log = (logs / "server.log").open("w")
     server = subprocess.Popen([str(java), f"-javaagent:{mockito}", "-Xshare:off",
         "-Dclass.searcher.search.all.jars=true", f"-Dghidra.test.install.dir={ghidra}",
-        "-cp", classpath, "com.xebyte.core.DebuggerStackHarness", str(logs)],
+        "-cp", classpath, "com.xebyte.core.DebuggerStackHarness", str(logs), socket_path],
         stdout=server_log, stderr=subprocess.STDOUT, start_new_session=True)
     child = emulator = None
     try:
@@ -96,7 +98,7 @@ def main() -> None:
         sys.path.insert(0, str(workspace / "c64-mcp/src"))
         from c64_mcp.ghidra_client import GhidraClient
         from c64_mcp.vice import ViceSession
-        client = GhidraClient(f"http://127.0.0.1:{addresses['http_port']}")
+        client = GhidraClient(socket_path=socket_path)
         env = os.environ.copy()
         rmi = ghidra / "Ghidra/Debug/Debugger-rmi-trace"
         env.update(MODULE_Debugger_rmi_trace_HOME=str(rmi),
@@ -175,6 +177,7 @@ def main() -> None:
         except subprocess.TimeoutExpired:
             stop(server)
         server_log.close()
+        socket_dir.cleanup()
 
 
 if __name__ == "__main__":
