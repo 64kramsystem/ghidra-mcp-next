@@ -1192,6 +1192,43 @@ public class DataRegionServiceGhidraTest {
     }
 
     @Test
+    public void defaultReplacementUsesWholeRequestedUnion() throws Exception {
+        builder.applyDataType("0x2500", WordDataType.dataType);
+        builder.applyDataType("0x2502", WordDataType.dataType);
+        builder.createComment("0x2500", "preserved", CommentType.PLATE);
+        Map<String, Object> first = contiguous("0x2500", "0x2500", "byte");
+        Map<String, Object> rest = contiguous("0x2501", "0x2503", "byte");
+        JsonObject preview = response(service.applyDataRegions(List.of(first, rest), true, ""));
+        assertEquals(2, preview.getAsJsonObject("clear_plan").getAsJsonArray("code_units").size());
+        assertEquals(2, program.getListing().getDefinedDataAt(builder.addr("0x2500")).getLength());
+        response(service.applyDataRegions(List.of(first, rest), false, ""));
+        assertEquals(1, program.getListing().getDefinedDataAt(builder.addr("0x2500")).getLength());
+        assertEquals("preserved", program.getListing().getComment(CommentType.PLATE, builder.addr("0x2500")));
+        assertTrue(response(service.applyDataRegions(List.of(first, rest), true, "")).get("clear_plan").isJsonNull());
+    }
+
+    @Test
+    public void defaultReplacementRejectsPartialAndInstructionEvenWithBroadNeighbor() throws Exception {
+        builder.applyDataType("0x2510", WordDataType.dataType);
+        Map<String, Object> partial = contiguous("0x2510", "0x2510", "byte");
+        Map<String, Object> broad = contiguous("0x2511", "0x2511", "byte");
+        broad.put("clear_conflicts", true);
+        // The final union covers the whole word, so the guarded object is safe.
+        response(service.applyDataRegions(List.of(partial, broad), true, ""));
+        assertTrue(service.applyDataRegions(List.of(partial), true, "") instanceof Response.Err);
+        Map<String, Object> otherBroad = contiguous("0x2530", "0x2530", "byte");
+        otherBroad.put("clear_conflicts", true);
+        builder.applyDataType("0x2530", WordDataType.dataType);
+        assertTrue(service.applyDataRegions(List.of(partial, otherBroad), true, "") instanceof Response.Err);
+        Map<String, Object> stride = contiguous("0x2510", "0x2512", "byte");
+        stride.put("stride", 2);
+        assertTrue(service.applyDataRegions(List.of(stride), true, "") instanceof Response.Err);
+        builder.setBytes("0x2520", "a9 01");
+        builder.disassemble("0x2520", 2);
+        assertTrue(service.applyDataRegions(List.of(contiguous("0x2520", "0x2521", "byte")), true, "") instanceof Response.Err);
+    }
+
+    @Test
     public void clearConflictsPreservesAnnotationsAndReportsWholeUnit()
             throws Exception {
         builder.setBytes("0x2500", "a9 01 60");

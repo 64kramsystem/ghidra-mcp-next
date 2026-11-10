@@ -291,6 +291,8 @@ final class DataRegionCore {
         AddressSet requestedBytes = new AddressSet();
         AddressSet clearBytes = new AddressSet();
         boolean anyClear = false;
+        boolean broadClear = false;
+        AddressSet guardedBytes = new AddressSet();
         long plannedElements = 0;
         TaskMonitor taskMonitor =
             monitor == null ? TaskMonitor.DUMMY : monitor;
@@ -323,9 +325,11 @@ final class DataRegionCore {
                 if (hasNonEquivalentUnit(
                         program, address, region.dataType(),
                         region.dataLength())) {
-                    if (!region.metadata().clearConflicts()) {
-                        throw new IllegalArgumentException(
-                            "code/data conflict at " + address);
+                    if (region.metadata().clearConflicts()) {
+                        broadClear = true;
+                    }
+                    else {
+                        guardedBytes.add(one);
                     }
                     clearBytes.add(one);
                     anyClear = true;
@@ -333,11 +337,24 @@ final class DataRegionCore {
             }
             regions.add(planActions(program, region));
         }
+        if (!guardedBytes.isEmpty()) {
+            ListingClearCore.Plan guarded = listingClear.plan(
+                program, guardedBytes,
+                new ListingClearCore.Selection(true, true, false),
+                ListingClearCore.Preservation.defaults());
+            for (ListingClearCore.CodeUnitSnapshot unit : guarded.units()) {
+                if (unit.kind() != ListingClearCore.UnitKind.DATA
+                        || !requestedBytes.contains(unit.start(), unit.end())) {
+                    throw new IllegalArgumentException(
+                        "code/data conflict at " + unit.start());
+                }
+            }
+        }
         ListingClearCore.Plan clearPlan = null;
         if (anyClear) {
             clearPlan = listingClear.plan(
                 program, clearBytes,
-                new ListingClearCore.Selection(true, true, true),
+                new ListingClearCore.Selection(broadClear, true, broadClear),
                 ListingClearCore.Preservation.defaults());
             if (!clearPlan.conflicts().isEmpty()) {
                 throw new IllegalArgumentException(
