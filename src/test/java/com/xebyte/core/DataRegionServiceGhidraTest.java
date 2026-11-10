@@ -1192,6 +1192,70 @@ public class DataRegionServiceGhidraTest {
     }
 
     @Test
+    public void equateAssignmentsAreOrderedGuardedAndAtomic() throws Exception {
+        builder.setBytes("0x2400", "a9 01 a9 01 a9 01 a9 02");
+        builder.disassemble("0x2400", 8);
+        HeadlessProgramProvider provider = new HeadlessProgramProvider();
+        provider.setCurrentProgram(program);
+        EquateService equates = new EquateService(provider, new DirectThreadingStrategy());
+        Map<String, Object> old = Map.of("address", "0x2400", "operand_index", 0, "value", 1, "name", "OLD");
+        Map<String, Object> oldOther = Map.of("address", "0x2402", "operand_index", 0, "value", 1, "name", "OLD");
+        Map<String, Object> replacement = Map.of("address", "0x2400", "operand_index", 0, "value", 1, "name", "NEW", "replaces", "OLD");
+        JsonObject result = response(equates.applyEquates(List.of(old, old, oldOther, replacement), ""));
+        JsonObject firstAssignment = result.getAsJsonArray("assignments").get(0).getAsJsonObject();
+        assertEquals("2400", firstAssignment.get("address").getAsString());
+        assertEquals(0, firstAssignment.get("operand_index").getAsInt());
+        assertEquals("OLD", firstAssignment.get("name").getAsString());
+        assertEquals(1, firstAssignment.get("value").getAsLong());
+        assertTrue(firstAssignment.get("changed").getAsBoolean());
+        assertFalse(result.getAsJsonArray("assignments").get(1).getAsJsonObject().get("changed").getAsBoolean());
+        assertEquals(1, program.getEquateTable().getEquate("OLD").getReferenceCount());
+        Map<String, Object> last = Map.of("address", "0x2402", "operand_index", 0, "value", 1, "name", "NEW", "replaces", "OLD");
+        response(equates.applyEquates(List.of(last), ""));
+        assertNull(program.getEquateTable().getEquate("OLD"));
+        Response clash = equates.applyEquates(List.of(Map.of(
+            "address", "0x2406", "operand_index", 0, "value", 2, "name", "NEW")), "");
+        assertTrue(clash.toJson(), clash instanceof Response.Err);
+        assertTrue(clash.toJson().contains("equate name already has another value"));
+        Map<String, Object> guarded = Map.of("address", "0x2400", "operand_index", 0, "value", 1, "name", "TEMP", "replaces", "NEW");
+        Response failure = equates.applyEquates(List.of(guarded, old), "");
+        assertTrue(failure.toJson(), failure instanceof Response.Err);
+        assertTrue(failure.toJson().contains("assignments[1]"));
+        assertNull(program.getEquateTable().getEquate("TEMP"));
+        assertEquals("NEW", program.getEquateTable().getEquates(builder.addr("0x2400"), 0).get(0).getName());
+        Map<String, Object> absent = Map.of("address", "0x2404", "operand_index", 0, "value", 1, "name", "OLD", "replaces", "missing");
+        response(equates.applyEquates(List.of(absent), ""));
+        assertNotNull(program.getEquateTable().getEquate("OLD"));
+        Map<String, Object> removeLast = Map.of("address", "0x2404", "operand_index", 0, "value", 1, "name", "TEMP", "replaces", "OLD");
+        failure = equates.applyEquates(List.of(removeLast, old), "");
+        assertTrue(failure.toJson(), failure instanceof Response.Err);
+        assertNotNull(program.getEquateTable().getEquate("OLD"));
+        assertNull(program.getEquateTable().getEquate("TEMP"));
+        int tx = program.startTransaction("multiple equates");
+        try {
+            program.getEquateTable().createEquate("EXTRA", 1).addReference(builder.addr("0x2400"), 0);
+        }
+        finally { program.endTransaction(tx, true); }
+        assertTrue(equates.applyEquates(List.of(replacement), "") instanceof Response.Err);
+    }
+
+    @Test
+    public void equateMatchesDisplacementScalar() throws Exception {
+        ProgramBuilder x86 = new ProgramBuilder("equates-x86", "x86:LE:32:default", "gcc", this);
+        try {
+            x86.createMemory("ram", "0x1000", 0x100);
+            x86.setBytes("0x1000", "8b 40 04");
+            x86.disassemble("0x1000", 3);
+            HeadlessProgramProvider provider = new HeadlessProgramProvider();
+            provider.setCurrentProgram(x86.getProgram());
+            EquateService equates = new EquateService(provider, new DirectThreadingStrategy());
+            response(equates.applyEquates(List.of(Map.of("address", "0x1000", "operand_index", 1, "value", 4, "name", "FIELD")), ""));
+            assertNotNull(x86.getProgram().getEquateTable().getEquate("FIELD"));
+        }
+        finally { x86.dispose(); }
+    }
+
+    @Test
     public void defaultReplacementUsesWholeRequestedUnion() throws Exception {
         builder.applyDataType("0x2500", WordDataType.dataType);
         builder.applyDataType("0x2502", WordDataType.dataType);

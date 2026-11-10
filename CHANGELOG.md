@@ -10,6 +10,7 @@ Complete version history for the GhidraMCP-next project.
 ### Changed
 
 - `apply_data_regions` and `describe_jump_table` replace existing data contained in the union of requested object bytes by default; `clear_conflicts` also permits clearing instructions and expanding to whole units and functions.
+- **Breaking:** replace `set_equate` with atomic `apply_equates`, accepting ordered assignments and guarded replacements.
 
 ## 0.111.0
 
