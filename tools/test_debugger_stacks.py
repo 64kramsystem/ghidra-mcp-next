@@ -51,6 +51,106 @@ def stop(process: subprocess.Popen | None) -> None:
         process.wait(timeout=5)
 
 
+def vice_behavior(session, logs: Path, repo: Path) -> None:
+    def result(response):
+        assert response.get("ok") is True, response
+        return response["result"]
+
+    banks = result(session.list_banks())["banks"]
+    ram = next(bank["id"] for bank in banks if bank["name"].lower() == "ram")
+
+    def memory(start, size):
+        data = result(session.read_memory(bank_id=ram, start=start, end=start + size - 1,
+                                          max_bytes=size))
+        assert data["byte_count"] == size, data
+        return bytes.fromhex(data["bytes"])
+
+    def registers():
+        records = result(session.get_registers())["registers"]
+        values = {record["name"]: record["value"] for record in records}
+        assert set(values) == {"PC", "A", "X", "Y", "SP", "00", "01", "FL", "LIN", "CYC"}, values
+        return values
+
+    def state():
+        return (b"".join(memory(start, 0x4000) for start in range(0, 0x10000, 0x4000)),
+                registers())
+
+    def checkpoint():
+        checkpoints = result(session.list_checkpoints())["checkpoints"]
+        assert len(checkpoints) == 1, checkpoints
+        return checkpoints[0]
+
+    def resume_to_loop(context):
+        count = session.status()["stop_count"]
+        result(session.resume())
+        stopped = session.wait_for_stop(after_stop_count=count, timeout_ms=3000)
+        assert stopped.get("ok") is True, (context, stopped)
+        assert stopped["pc"] == 0xC01A, (context, stopped)
+
+    fixture = repo / "tools/fixtures/c64-replay.hex"
+    code = bytes.fromhex(" ".join(line.split("#", 1)[0] for line in fixture.read_text().splitlines()))
+    result(session.write_memory(bank_id=ram, start=0xC000, bytes=code.hex()))
+    result(session.write_memory(bank_id=ram, start=0xC100, bytes="ff0000"))
+    result(session.write_memory(bank_id=0, start=0, bytes="2f37", side_effects=True))
+    result(session.set_registers(values={"PC": 0xC000, "A": 0, "X": 0, "Y": 0,
+                                         "SP": 0xFF, "FL": 0x24}))
+    result(session.step(count=9))
+    assert registers()["PC"] == 0xC017
+    result(session.set_joyport(port=1, value=0xFF))
+    assert result(session.list_checkpoints())["checkpoints"] == []
+    baseline = state()
+    snapshot = str(logs / "c64-baseline.vsf")
+    result(session.save_snapshot(filename=snapshot))
+    created = result(session.set_checkpoint(start=0xC01A, end=0xC01A))["checkpoint"]
+    fields = ("number", "start", "end", "stop_on_hit", "enabled", "operations", "temporary")
+    config = {key: created[key] for key in fields}
+    previous_hits = created["hit_count"]
+    replays = []
+    for replay in range(2):
+        if replay:
+            result(session.load_snapshot(filename=snapshot))
+            assert state() == baseline, "snapshot did not restore RAM and registers"
+            current = checkpoint()
+            assert {key: current[key] for key in fields} == config, current
+            assert current["hit_count"] == previous_hits, current
+            print("PASS: restored RAM, registers and retained checkpoint configuration/count", flush=True)
+            result(session.set_joyport(port=1, value=0xFF))
+        resume_to_loop("checkpoint remained listed but did not stop after snapshot load" if replay
+                       else "initial checkpoint")
+        current = checkpoint()
+        assert current["hit_count"] == previous_hits + 1, current
+        previous_hits = current["hit_count"]
+        stops = [state()]
+        for index, value in enumerate((0xFB, 0xFB, 0xFF)):
+            if index != 1:
+                result(session.set_joyport(port=1, value=value))
+            before = memory(0xC100, 1)
+            result(session.step())
+            regs = registers()
+            assert regs["PC"] == 0xC01D and regs["A"] == value, regs
+            assert memory(0xC100, 1) == before
+            result(session.step())
+            assert registers()["PC"] == 0xC020
+            assert memory(0xC100, 1) == bytes([value])
+            resume_to_loop("loop checkpoint")
+            regs = registers()
+            assert regs["X"] == index + 1 and memory(0xC102, 1) == bytes([index + 1]), regs
+            current = checkpoint()
+            assert current["hit_count"] == previous_hits + 1, current
+            previous_hits = current["hit_count"]
+            stops.append(state())
+        current = checkpoint()
+        assert {key: current[key] for key in fields} == config, current
+        assert current["hit_count"] == previous_hits, current
+        replays.append(stops)
+        if not replay:
+            print("PASS: initial C64 input and exact stop/step sequence", flush=True)
+    assert replays[0] == replays[1], "replayed RAM/register states differ"
+    result(session.delete_checkpoint(number=created["number"]))
+    result(session.set_joyport(port=1, value=0xFF))
+    print("PASS: C64 snapshot replay, checkpoint persistence, joystick input and exact stops", flush=True)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(__doc__)
     parser.add_argument("--ghidra", type=Path, default=os.environ.get("GHIDRA_INSTALL_DIR"))
@@ -127,6 +227,7 @@ def main() -> None:
             session = ViceSession(client)
             connected = session.connect()
             assert connected.get("ok") is True, connected
+            vice_behavior(session, logs, repo)
             watchpoint = client.call_post("/debugger/set_breakpoint", {},
                                           {"address": "RAM:0010", "kind": "RW", "length": 2})
             assert watchpoint.get("status") == "set", watchpoint

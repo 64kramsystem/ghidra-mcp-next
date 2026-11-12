@@ -1,0 +1,12 @@
+# C000: configure CIA1 port directions and timer A latch, then start it
+A9 FF 8D 02 DC
+A9 00 8D 03 DC
+A9 FF 8D 04 DC 8D 05 DC
+A9 11 8D 0E DC
+# C017: distinct pre-loop snapshot location
+4C 1A C0
+# C01A: sample joystick and timer, count passes, repeat
+AD 01 DC 8D 00 C1
+AD 04 DC 8D 01 C1
+E8 8E 02 C1
+4C 1A C0
