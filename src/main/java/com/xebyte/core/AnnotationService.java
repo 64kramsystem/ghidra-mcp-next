@@ -370,7 +370,10 @@ public final class AnnotationService {
                     || program.getListing().getInstructions(range, true).hasNext())
                 throw new IllegalArgumentException("data conflicts at " + start);
         }
-        for (JsonElement e : root.getAsJsonArray("instructions")) { JsonObject row = e.getAsJsonObject(); Address start = resolve(program, row); end(start, row); }
+        for (JsonElement e : root.getAsJsonArray("instructions")) {
+            JsonObject row = e.getAsJsonObject(); Address start = resolve(program, row);
+            if (!program.getMemory().contains(start, end(start, row))) throw new IllegalArgumentException("unmapped instruction range: " + start);
+        }
     }
 
     private static JsonArray losses(JsonObject old, JsonObject current, Program program) throws Exception {
