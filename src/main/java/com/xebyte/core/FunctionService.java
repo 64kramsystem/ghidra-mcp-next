@@ -1175,6 +1175,21 @@ public class FunctionService {
                 HighFunctionDBUtil.updateDBVariable(
                     symbol, symbol.getName(), dataType, SourceType.USER_DEFINED);
                 Variable persisted = HighFunctionDBUtil.getFunctionVariable(symbol);
+                if (persisted == null && !symbol.isParameter() && !symbol.isGlobal()
+                        && symbol.getSize() != dataType.getLength()) {
+                    Function function = symbol.getHighFunction().getFunction();
+                    var storage = VariableUtilities.resizeStorage(
+                        symbol.getStorage(), dataType, true, function);
+                    Address pc = symbol.getPCAddress();
+                    int firstUse = pc == null ? 0 : (int) pc.subtract(function.getEntryPoint());
+                    for (Variable variable : function.getLocalVariables()) {
+                        if (variable.getFirstUseOffset() == firstUse
+                                && variable.getVariableStorage().equals(storage)) {
+                            persisted = variable;
+                            break;
+                        }
+                    }
+                }
                 if (persisted == null || !symbol.getName().equals(persisted.getName())
                         || !persisted.getDataType().isEquivalent(dataType)) {
                     throw new IllegalStateException("Variable type did not persist");
