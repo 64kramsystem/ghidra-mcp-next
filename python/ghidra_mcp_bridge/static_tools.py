@@ -2,7 +2,7 @@
 
 import json
 
-from . import connection, discovery, registry, selection, state
+from . import connection, discovery, dispatch, registry, selection, state
 from .server import Context, mcp
 
 
@@ -34,7 +34,7 @@ async def connect_instance(project: str, ctx: Context | None = None) -> str:
             selected["socket"], selected.get("project") or project
         )
     except Exception as error:
-        return _error(error)
+        return dispatch.error_result(_error(error))
     notification_error = await connection.notify(ctx)
     if notification_error:
         result["notification_error"] = notification_error
@@ -61,7 +61,7 @@ async def create_and_connect_project(
     except Exception as error:
         if created:
             registry.clear()
-        return json.dumps({"created": created, "error": str(error)})
+        return dispatch.error_result(json.dumps({"created": created, "error": str(error)}))
     notification_error = await connection.notify(ctx)
     if notification_error:
         result["notification_error"] = notification_error
@@ -81,7 +81,7 @@ async def refresh_connection(ctx: Context | None = None) -> str:
         socket_path = state.connection.socket
         project = state.connection.project
     if socket_path is None:
-        return json.dumps({"error": "No active Ghidra connection."})
+        return dispatch.error_result(json.dumps({"error": "No active Ghidra connection."}))
     try:
         result = connection.connect(socket_path, project)
     except Exception as first_error:
@@ -89,7 +89,7 @@ async def refresh_connection(ctx: Context | None = None) -> str:
             selected = selection.select(discovery.discover_instances(), project)
             result = connection.connect(selected["socket"], project)
         except Exception:
-            return _error(first_error)
+            return dispatch.error_result(_error(first_error))
     notification_error = await connection.notify(ctx)
     if notification_error:
         result["notification_error"] = notification_error

@@ -75,12 +75,13 @@ def build_handler(definition: dict):
             if definition["method"] == "POST"
             else None
         )
-        return dispatch.dispatch(
+        result = dispatch.dispatch(
             definition["method"],
             definition["endpoint"],
             query=query or None,
             body=body,
         )
+        return dispatch.tool_result(result)
 
     handler.__name__ = definition["name"]
     handler.__doc__ = definition["description"]
