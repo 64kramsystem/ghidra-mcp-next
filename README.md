@@ -59,7 +59,7 @@ The bridge uses stdio outward and Unix-domain sockets inward. If exactly one Ghi
 
 ## Working with programs
 
-Most program-scoped tools accept `program`. Always supply it when more than one program is open.
+Most program-scoped tools accept `program`. Always supply it when more than one program is open. [Annotation snapshots](docs/ANNOTATION_SNAPSHOTS.md) preserve labels, comments, and data definitions across matching program views.
 
 ```text
 list_open_programs()

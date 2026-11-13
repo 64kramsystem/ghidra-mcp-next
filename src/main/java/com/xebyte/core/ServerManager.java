@@ -105,6 +105,7 @@ public final class ServerManager {
             new DataRegionService(programProvider, threading),
             new ControlFlowService(programProvider, threading),
             new ExportService(programProvider),
+            new AnnotationService(programProvider, threading),
             new ProjectArchiveService(this::activeProject, threading),
             new FlowDisassemblyService(programProvider, threading),
             new ListingRangeService(programProvider, threading),

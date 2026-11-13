@@ -1,0 +1,7 @@
+# Annotation snapshots
+
+`export_annotations` writes a deterministic JSON snapshot of user-defined and imported labels and function names, listing comments, defined data, instruction coverage, and opaque data markers. It records the original executable SHA-256, language, compiler, image base, mapped blocks, overlay bases, and initialized-byte digests. Paths obey `GHIDRA_MCP_FILE_ROOT`. An existing snapshot is replaced only with `overwrite=true`; replacement rejects lost comment slots, symbol aliases, data or instruction coverage, and opaque markers unless `allow_loss=true`. Renaming symbols, editing comments, and changing data types without losing coverage are not losses. The response includes any allowed losses.
+
+`import_annotations` requires the same original source and mapped bytes. It overlays data definitions, labels, comments, and opaque markers in one transaction, reports overwritten values, and leaves unmentioned annotations alone. Data types must already exist by exact path or be Ghidra builtins; arrays and pointers describe their element or target type. Existing conflicting code or data is not cleared. A function name becomes a label if there is no function at that address. Instruction coverage is evidence for export loss checks; import does not create or require matching instructions or functions. The import does not save the program.
+
+Snapshots do not contain memory bytes, instructions, functions, references, equates, datatype libraries, decompiler locals, or function signatures. Use a project archive when those are needed.

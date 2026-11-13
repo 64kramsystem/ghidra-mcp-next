@@ -7,9 +7,13 @@ Complete version history for the GhidraMCP-next project.
 
 ## Unreleased
 
+### Added
+
+- Export and import annotation snapshots with source and mapped-byte identity checks, guarded replacement, and transactional overlay.
+
 ### Fixed
 
-- Roll back variable retypes when the requested type is not persisted.
+- Roll back variable retypes when the requested type is not persisted, including readback after stack storage changes.
 - Retry saves briefly when an active transaction prevents locking.
 - Report native decompiler initialization errors and dispose failed interfaces.
 
