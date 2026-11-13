@@ -142,10 +142,6 @@ public class FunctionService {
             decomp = ServiceUtils.createConfiguredDecompiler(program);
             return decomp.decompileFunction(
                 func, DECOMPILE_TIMEOUT_SECONDS, new ConsoleTaskMonitor());
-        } catch (Exception e) {
-            Msg.warn(this, "Decompilation failed for " + func.getName()
-                + ": " + e.getMessage());
-            return null;
         } finally {
             if (decomp != null) {
                 try { decomp.dispose(); } catch (Exception ignored) {}
@@ -274,8 +270,9 @@ public class FunctionService {
             ServiceUtils.probeMutationAddressAmbiguity(program, functionAddress);
         if (addressAmbiguity != null) return Response.err(addressAmbiguity);
 
-        DecompInterface decomp = ServiceUtils.createConfiguredDecompiler(program);
+        DecompInterface decomp = null;
         try {
+            decomp = ServiceUtils.createConfiguredDecompiler(program);
             String functionRef = (functionAddress != null && !functionAddress.isEmpty()) ? functionAddress : functionName;
             Function func = ServiceUtils.resolveFunction(program, functionRef);
             if (func == null) {
@@ -345,7 +342,7 @@ public class FunctionService {
             Msg.error(this, errorMsg, e);
             return Response.err(errorMsg);
         } finally {
-            decomp.dispose();
+            if (decomp != null) decomp.dispose();
         }
         return Response.err("Failed to rename variable");
     }
