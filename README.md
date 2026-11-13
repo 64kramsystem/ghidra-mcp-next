@@ -73,7 +73,7 @@ The retained surface covers:
 - program import, open, save, close, memory reads, and rebasing;
 - functions, labels, equates, comments, references, and datatypes;
 - memory blocks, data creation, disassembly, flow, bytes, and coverage;
-- complete text listings, local project creation and opening, and project archives;
+- complete text listings, JSON program snapshots, local project creation and opening, and project archives;
 - TraceRMI memory, registers, breakpoints, execution, target methods, and launchers.
 
 Use address-space-qualified addresses for overlays or ambiguous maps.

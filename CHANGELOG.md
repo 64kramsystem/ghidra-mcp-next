@@ -10,6 +10,7 @@ Complete version history for the GhidraMCP-next project.
 ### Added
 
 - Export and import annotation snapshots with source and mapped-byte identity checks, guarded replacement, and transactional overlay.
+- Add `export_program_snapshot` for native program snapshots.
 
 ### Fixed
 
