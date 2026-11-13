@@ -13,6 +13,7 @@ import ghidra.program.database.ProgramBuilder;
 import ghidra.program.database.ProgramDB;
 import ghidra.program.model.data.ArrayDataType;
 import ghidra.program.model.data.ByteDataType;
+import ghidra.program.model.data.PointerDataType;
 import ghidra.program.model.listing.CommentType;
 import ghidra.program.model.symbol.SourceType;
 import java.io.File;
@@ -85,6 +86,7 @@ public class AnnotationServiceGhidraTest {
         source.disassemble("0x1000", 2);
         target.disassemble("0x1000", 2);
         source.applyDataType("0x1010", new ArrayDataType(ByteDataType.dataType, 4, 1));
+        source.applyDataType("0x1020", new PointerDataType(ByteDataType.dataType, 2));
         ProgramDB program = source.getProgram();
         int tx = program.startTransaction("annotations");
         try {
@@ -104,7 +106,7 @@ public class AnnotationServiceGhidraTest {
         JsonObject snapshot = JsonParser.parseString(Files.readString(first)).getAsJsonObject();
         assertEquals(3, snapshot.getAsJsonArray("comments").size());
         assertEquals(4, snapshot.getAsJsonArray("symbols").size());
-        assertEquals(1, snapshot.getAsJsonArray("data").size());
+        assertEquals(2, snapshot.getAsJsonArray("data").size());
         ok(service(target).importAnnotations(first.toString(), ""));
         long modification = target.getProgram().getModificationNumber();
         ok(service(target).importAnnotations(first.toString(), ""));
