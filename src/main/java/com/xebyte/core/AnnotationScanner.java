@@ -199,13 +199,7 @@ public class AnnotationScanner {
 
         } else if (type == int.class || type == Integer.class
                 || type == long.class || type == Long.class) {
-            if (value == null) {
-                if (hasDef) return parseInteger(binding, def);
-                if (type == int.class) return 0;
-                if (type == long.class) return 0L;
-                return null;
-            }
-            return parseInteger(binding, value);
+            return resolveInteger(binding, value);
 
         } else if (type == boolean.class) {
             boolean defaultVal = hasDef && Boolean.parseBoolean(def);
@@ -250,23 +244,12 @@ public class AnnotationScanner {
                 || type == long.class || type == Long.class) {
             if (binding.param.strictInteger()) {
                 if (type == int.class || type == Integer.class) {
-                    Integer value = resolveStrictBodyInteger(
+                    return resolveStrictBodyInteger(
                         binding, raw, Integer.MIN_VALUE, Integer.MAX_VALUE);
-                    if (value == null && type == int.class) {
-                        throw new IllegalArgumentException(
-                            "Missing required integer parameter: " + binding.param.value());
-                    }
-                    return value;
                 }
                 return resolveStrictBodyLong(binding, raw);
             }
-            if (raw == null) {
-                if (hasDef) return parseInteger(binding, def);
-                if (type == int.class) return 0;
-                if (type == long.class) return 0L;
-                return null;
-            }
-            return parseInteger(binding, raw);
+            return resolveInteger(binding, raw);
 
         } else if (type == boolean.class) {
             if (binding.param.strictBoolean()) {
@@ -411,6 +394,15 @@ public class AnnotationScanner {
             return result;
         }
         return new HashMap<>();
+    }
+
+    private static Object resolveInteger(ParamBinding binding, Object raw) {
+        if (raw != null) return parseInteger(binding, raw);
+        String def = binding.param.defaultValue();
+        if (!NO_DEFAULT.equals(def)) return parseInteger(binding, def);
+        if (binding.javaType == int.class) return 0;
+        if (binding.javaType == long.class) return 0L;
+        return null;
     }
 
     private static Object parseInteger(ParamBinding binding, Object raw) {
