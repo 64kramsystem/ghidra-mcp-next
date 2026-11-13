@@ -20,7 +20,7 @@ public class VariableResizeGhidraTest {
             var program = builder.getProgram();
             builder.createMemory(".text", "0x1000", 0x1100);
             builder.setBytes("0x1000", Files.readString(Path.of("src/test/resources/fixtures/stack-local-x64.hex")).trim());
-            builder.setBytes("0x2000", "c3");
+            builder.setBytes("0x2000", Files.readString(Path.of("src/test/resources/fixtures/return-x86.hex")).trim());
             builder.disassemble("0x2000", 1);
             builder.createFunction("0x2000");
             builder.disassemble("0x1000", 29);
@@ -36,10 +36,13 @@ public class VariableResizeGhidraTest {
                         && candidate.getSize() == 8) { symbol = candidate; break; }
             }
             assertNotNull("fixture must have 8-byte stack local", symbol);
+            String symbolName = symbol.getName();
             StringBuilder error = new StringBuilder();
             assertTrue(error.toString(), service.updateVariableType(program, symbol,
                 IntegerDataType.dataType, new AtomicBoolean(), error));
-            assertEquals(4, function.getLocalVariables()[0].getDataType().getLength());
+            assertEquals(4, java.util.Arrays.stream(function.getLocalVariables())
+                .filter(variable -> variable.getName().equals(symbolName)).findFirst().orElseThrow()
+                .getDataType().getLength());
         } finally { builder.dispose(); }
     }
 }
