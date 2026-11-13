@@ -40,8 +40,12 @@ public class ProgramSnapshotGhidraTest {
         builder.createMemory("text", "0x1000", 2);
         builder.setBytes("0x1000", Files.readString(Path.of("src/test/resources/snapshot/bytes.txt")).trim());
         builder.disassemble("0x1000", 2);
+        var uninitialized = builder.createUninitializedMemory("bss", "0x2000", 3);
+        var overlay = builder.createOverlayMemory("bank", "0x1000", 2);
         int tx = program.startTransaction("fixture");
         try {
+            uninitialized.setComment("uninitialized storage");
+            overlay.setComment("overlay bank");
             program.getSymbolTable().createLabel(builder.addr("0x1000"), "entry", SourceType.USER_DEFINED);
             program.getListing().setComment(builder.addr("0x1000"), CommentType.EOL, "hello");
             program.getReferenceManager().addMemoryReference(builder.addr("0x1000"),
@@ -58,7 +62,7 @@ public class ProgramSnapshotGhidraTest {
         assertTrue(response.toJson(), response instanceof Response.Ok);
         var result = (com.google.gson.JsonObject) ((Response.Ok) response).data();
         assertEquals(output.toString(), result.get("output_path").getAsString());
-        assertEquals(1, result.get("blocks").getAsInt());
+        assertEquals(3, result.get("blocks").getAsInt());
         assertEquals(2, result.get("symbols").getAsInt());
         assertEquals(1, result.get("references").getAsInt());
         assertEquals(2, result.get("instructions").getAsInt());
@@ -98,7 +102,7 @@ public class ProgramSnapshotGhidraTest {
             .exportProgramSnapshot(output.toString(), "");
 
         assertFalse(response instanceof Response.Ok);
-        assertTrue(response.toJson(), response.toJson().contains("changed during snapshot"));
+        assertTrue(response.toJson(), response.toJson().contains("changed during export"));
         assertFalse(Files.exists(output));
         try (var paths = Files.list(temp.getRoot().toPath())) { assertEquals(0, paths.count()); }
     }

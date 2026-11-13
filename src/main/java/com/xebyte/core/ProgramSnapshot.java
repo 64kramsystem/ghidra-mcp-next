@@ -3,21 +3,17 @@ package com.xebyte.core;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import ghidra.program.model.listing.Program;
-import ghidra.util.task.TaskMonitor;
 import ghidra.program.model.listing.CommentType;
 import java.util.HexFormat;
 
 /** Collects the native program snapshot. */
 final class ProgramSnapshot {
     static JsonObject collect(Program currentProgram) throws Exception {
-        TaskMonitor monitor = TaskMonitor.DUMMY;
-        long modification = currentProgram.getModificationNumber();
         var report = new JsonObject();
         report.addProperty("program", currentProgram.getName());
 
         var blocks = new JsonArray();
         for (var block : currentProgram.getMemory().getBlocks()) {
-            monitor.checkCancelled();
             var row = new JsonObject();
             row.addProperty("name", block.getName());
             row.addProperty("start", block.getStart().toString(true));
@@ -39,7 +35,6 @@ final class ProgramSnapshot {
 
         var symbols = new JsonArray();
         for (var symbol : currentProgram.getSymbolTable().getAllSymbols(true)) {
-            monitor.checkCancelled();
             var row = new JsonObject();
             row.addProperty("address", symbol.getAddress().toString(true));
             row.addProperty("name", symbol.getName(true));
@@ -53,7 +48,6 @@ final class ProgramSnapshot {
         var references = new JsonArray();
         var manager = currentProgram.getReferenceManager();
         for (var address : manager.getReferenceSourceIterator(currentProgram.getMemory(), true)) {
-            monitor.checkCancelled();
             for (var reference : manager.getReferencesFrom(address)) {
                 var row = new JsonObject();
                 row.addProperty("from", reference.getFromAddress().toString(true));
@@ -69,7 +63,6 @@ final class ProgramSnapshot {
 
         var instructions = new JsonArray();
         for (var instruction : currentProgram.getListing().getInstructions(true)) {
-            monitor.checkCancelled();
             var row = new JsonObject();
             row.addProperty("address", instruction.getAddress().toString(true));
             row.addProperty("bytes", HexFormat.of().formatHex(instruction.getBytes()));
@@ -95,15 +88,10 @@ final class ProgramSnapshot {
         if (opaque != null) {
             var addresses = opaque.getPropertyIterator();
             while (addresses.hasNext()) {
-                monitor.checkCancelled();
                 markers.add(addresses.next().toString(true));
             }
         }
         report.add("opaque", markers);
-        monitor.checkCancelled();
-        if (currentProgram.getModificationNumber() != modification) {
-            throw new IllegalStateException("Program changed during snapshot");
-        }
         return report;
     }
 }

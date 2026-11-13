@@ -8,6 +8,23 @@
       "initialized": true,
       "permissions": "r--",
       "bytes": "55c3"
+    },
+    {
+      "name": "bss",
+      "start": "ram:00002000",
+      "end": "ram:00002002",
+      "initialized": false,
+      "permissions": "r--",
+      "comment": "uninitialized storage"
+    },
+    {
+      "name": "bank",
+      "start": "bank::00001000",
+      "end": "bank::00001001",
+      "initialized": true,
+      "permissions": "r--",
+      "comment": "overlay bank",
+      "bytes": "0000"
     }
   ],
   "symbols": [
