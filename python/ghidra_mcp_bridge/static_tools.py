@@ -2,6 +2,8 @@
 
 import json
 
+from mcp.types import CallToolResult
+
 from . import connection, discovery, dispatch, registry, selection, state
 from .server import Context, mcp
 
@@ -26,7 +28,7 @@ def list_instances() -> str:
 
 
 @mcp.tool()
-async def connect_instance(project: str, ctx: Context | None = None) -> str:
+async def connect_instance(project: str, ctx: Context | None = None) -> CallToolResult:
     """Connect by exact project name, PID, or socket and publish all tools."""
     try:
         selected = selection.select(discovery.discover_instances(), project)
@@ -38,7 +40,7 @@ async def connect_instance(project: str, ctx: Context | None = None) -> str:
     notification_error = await connection.notify(ctx)
     if notification_error:
         result["notification_error"] = notification_error
-    return json.dumps(result)
+    return dispatch.tool_result(json.dumps(result))
 
 
 @mcp.tool()
@@ -47,7 +49,7 @@ async def create_and_connect_project(
     name: str,
     instance: str | None = None,
     ctx: Context | None = None,
-) -> str:
+) -> CallToolResult:
     """Create a GUI project once, then connect to it."""
     created = False
     try:
@@ -65,7 +67,7 @@ async def create_and_connect_project(
     notification_error = await connection.notify(ctx)
     if notification_error:
         result["notification_error"] = notification_error
-    return json.dumps(result)
+    return dispatch.tool_result(json.dumps(result))
 
 
 @mcp.tool()
@@ -75,7 +77,7 @@ def get_connection_info() -> str:
 
 
 @mcp.tool()
-async def refresh_connection(ctx: Context | None = None) -> str:
+async def refresh_connection(ctx: Context | None = None) -> CallToolResult:
     """Refetch the active instance schema and replace its dynamic tools."""
     with state.lock:
         socket_path = state.connection.socket
@@ -93,7 +95,7 @@ async def refresh_connection(ctx: Context | None = None) -> str:
     notification_error = await connection.notify(ctx)
     if notification_error:
         result["notification_error"] = notification_error
-    return json.dumps(result)
+    return dispatch.tool_result(json.dumps(result))
 
 
 def auto_connect() -> None:

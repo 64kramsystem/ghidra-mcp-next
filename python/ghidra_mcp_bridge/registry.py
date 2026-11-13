@@ -4,6 +4,8 @@ import inspect
 import json
 from copy import deepcopy
 
+from mcp.types import CallToolResult
+
 from . import dispatch, state
 from .schema import TYPE_MAP
 from .server import mcp
@@ -85,11 +87,11 @@ def build_handler(definition: dict):
 
     handler.__name__ = definition["name"]
     handler.__doc__ = definition["description"]
-    handler.__signature__ = inspect.Signature(parameters, return_annotation=str)
+    handler.__signature__ = inspect.Signature(parameters, return_annotation=CallToolResult)
     handler.__annotations__ = {
         parameter.name: parameter.annotation for parameter in parameters
     }
-    handler.__annotations__["return"] = str
+    handler.__annotations__["return"] = CallToolResult
     return handler
 
 

@@ -123,5 +123,6 @@ def test_connect_instance_selects_exact_project(monkeypatch):
         lambda: [{"socket": "/tmp/a.sock", "project": "P"}],
     )
     monkeypatch.setattr(transport, "request", responses)
-    result = json.loads(asyncio.run(static_tools.connect_instance("P")))
+    result = asyncio.run(static_tools.connect_instance("P"))
+    result = json.loads(result.content[0].text)
     assert result["project"] == "P"

@@ -37,11 +37,8 @@ def test_create_project_posts_once_then_connects(monkeypatch):
             "socket": socket,
         },
     )
-    result = json.loads(
-        asyncio.run(
-            static_tools.create_and_connect_project("/projects", "New")
-        )
-    )
+    result = asyncio.run(static_tools.create_and_connect_project("/projects", "New"))
+    result = json.loads(result.content[0].text)
     assert calls == [("/tmp/ghidra.sock", "/projects", "New")]
     assert result["created"] is True
 

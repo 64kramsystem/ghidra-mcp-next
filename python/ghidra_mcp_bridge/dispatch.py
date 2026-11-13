@@ -43,19 +43,19 @@ def dispatch(
     return json.dumps({"error": f"HTTP {status}: {text.strip()}"})
 
 
-def tool_result(text: str) -> str | CallToolResult:
+def tool_result(text: str) -> CallToolResult:
     """Mark top-level Ghidra failures as MCP errors, preserving their payload."""
     try:
         payload = json.loads(text)
     except (ValueError, TypeError):
-        return text
+        return CallToolResult(content=[TextContent(type="text", text=text)])
     if isinstance(payload, dict) and (
         isinstance(payload.get("error"), str) and payload["error"].strip()
         or payload.get("success") is False
         or payload.get("status") == "rejected"
     ):
         return error_result(text)
-    return text
+    return CallToolResult(content=[TextContent(type="text", text=text)])
 
 
 def error_result(text: str) -> CallToolResult:
