@@ -954,7 +954,7 @@ public class FunctionService {
 
                     // Apply the type change in a transaction
                     StringBuilder errorDetails = new StringBuilder();
-                    if (updateVariableType(program, symbol, dataType, success, errorDetails)) {
+                    if (updateVariableType(program, func, symbol, dataType, success, errorDetails)) {
                         resultMsg.append("Success: Changed type of variable '").append(variableName)
                                 .append("' from '").append(oldType).append("' to '")
                                 .append(dataType.getName()).append("'")
@@ -1167,21 +1167,29 @@ public class FunctionService {
         return null;
     }
 
-    private static boolean updateVariableType(
-            Program program,
-            HighSymbol symbol,
-            DataType dataType,
-            AtomicBoolean success,
-            StringBuilder errorDetails) {
+    boolean updateVariableType(
+            Program program, Function function, HighSymbol symbol, DataType dataType,
+            AtomicBoolean success, StringBuilder errorDetails) {
         try {
-            HighFunctionDBUtil.updateDBVariable(
-                symbol, symbol.getName(), dataType, SourceType.USER_DEFINED);
+            threadingStrategy.executeWrite(program, "Set variable type", () -> {
+                HighFunctionDBUtil.updateDBVariable(
+                    symbol, symbol.getName(), dataType, SourceType.USER_DEFINED);
+                Variable persisted = null;
+                for (Variable variable : function.getAllVariables()) {
+                    if (symbol.getName().equals(variable.getName())) {
+                        persisted = variable;
+                        break;
+                    }
+                }
+                if (persisted == null || !persisted.getDataType().isEquivalent(dataType)) {
+                    throw new IllegalStateException("Variable type did not persist");
+                }
+                return null;
+            });
             success.set(true);
             return true;
         } catch (Exception error) {
-            if (errorDetails != null) {
-                errorDetails.append(error.getMessage());
-            }
+            errorDetails.append(error.getMessage());
             return false;
         }
     }
