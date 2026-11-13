@@ -295,4 +295,64 @@ public class AnnotationScannerOfflineTest extends TestCase {
             return Response.ok("ok");
         }
     }
+    public void testIntegerBindingsAreExact() throws Exception {
+        AnnotationScanner fixtureScanner = new AnnotationScanner(new IntegerFixture());
+        EndpointDef body = fixtureScanner.getEndpoints().stream()
+            .filter(ep -> ep.path().equals("/integer_body")).findFirst().orElseThrow();
+        EndpointDef query = fixtureScanner.getEndpoints().stream()
+            .filter(ep -> ep.path().equals("/integer_query")).findFirst().orElseThrow();
+        Map<String, String> noQuery = Collections.emptyMap();
+        Map<String, Object> noBody = Collections.emptyMap();
+
+        assertEquals("100", body.handler().handle(noQuery, noBody).toJson());
+        assertEquals("100", query.handler().handle(noQuery, noBody).toJson());
+        for (String value : List.of("4294967297", "1.5", "bad", "")) {
+            assertTrue(body.handler().handle(noQuery, Map.of("value", value)) instanceof Response.Err);
+            assertTrue(query.handler().handle(Map.of("value", value), noBody) instanceof Response.Err);
+        }
+        assertTrue(body.handler().handle(noQuery, Map.of("value", new java.math.BigDecimal("4294967297")))
+            instanceof Response.Err);
+        assertEquals("2147483647", body.handler().handle(noQuery,
+            Map.of("value", new java.math.BigDecimal("2147483647"))).toJson());
+        assertEquals("-2147483648", query.handler().handle(
+            Map.of("value", "-2147483648"), noBody).toJson());
+
+        EndpointDef strict = fixtureScanner.getEndpoints().stream()
+            .filter(ep -> ep.path().equals("/integer_strict")).findFirst().orElseThrow();
+        assertTrue(strict.handler().handle(noQuery, Map.of("value", "1")) instanceof Response.Err);
+        assertTrue(strict.handler().handle(noQuery, Map.of("value", new java.math.BigDecimal("1.5")))
+            instanceof Response.Err);
+        assertEquals("1", strict.handler().handle(noQuery,
+            Map.of("value", new java.math.BigDecimal("1"))).toJson());
+
+        EndpointDef longs = fixtureScanner.getEndpoints().stream()
+            .filter(ep -> ep.path().equals("/integer_long")).findFirst().orElseThrow();
+        assertEquals("9223372036854775807", longs.handler().handle(noQuery,
+            Map.of("value", new java.math.BigDecimal("9223372036854775807"))).toJson());
+        assertTrue(longs.handler().handle(noQuery,
+            Map.of("value", new java.math.BigDecimal("9223372036854775808"))) instanceof Response.Err);
+    }
+
+    static class IntegerFixture {
+        @McpTool(path = "/integer_body", method = "POST", description = "integer body")
+        public Response body(@Param(value = "value", source = ParamSource.BODY, defaultValue = "100") int value) {
+            return Response.ok(value);
+        }
+
+        @McpTool(path = "/integer_query", method = "GET", description = "integer query")
+        public Response query(@Param(value = "value", defaultValue = "100") int value) {
+            return Response.ok(value);
+        }
+
+        @McpTool(path = "/integer_strict", method = "POST", description = "strict integer")
+        public Response strict(@Param(value = "value", source = ParamSource.BODY, strictInteger = true) int value) {
+            return Response.ok(value);
+        }
+
+        @McpTool(path = "/integer_long", method = "POST", description = "long integer")
+        public Response longs(@Param(value = "value", source = ParamSource.BODY) Long value) {
+            return Response.ok(value);
+        }
+    }
+
 }

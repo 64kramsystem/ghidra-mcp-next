@@ -230,18 +230,6 @@ public final class JsonHelper {
     }
 
     /**
-     * Safely extract an int from a parsed JSON map value.
-     * Gson parses JSON numbers as Double by default; this handles Double, Integer, Long, and String.
-     */
-    public static int getInt(Object obj, int defaultValue) {
-        if (obj instanceof Number n) return n.intValue();
-        if (obj instanceof String s) {
-            try { return Integer.parseInt(s); } catch (NumberFormatException e) { return defaultValue; }
-        }
-        return defaultValue;
-    }
-
-    /**
      * Convert parsed JSON list of objects to List<Map<String, String>> for legacy callers.
      * Gson returns nested objects as LinkedTreeMap<String, Object>; this converts values to strings.
      */
