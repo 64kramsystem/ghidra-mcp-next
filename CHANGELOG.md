@@ -7,6 +7,8 @@ Complete version history for the GhidraMCP-next project.
 
 ## Unreleased
 
+## 0.113.0
+
 ### Added
 
 - Export and import annotation snapshots with source and mapped-byte identity checks, guarded replacement, and transactional overlay.
