@@ -2,6 +2,8 @@
 
 import json
 
+from mcp.types import CallToolResult, TextContent
+
 from . import state, transport
 from .config import READ_TIMEOUT, WRITE_TIMEOUT
 
@@ -39,3 +41,22 @@ def dispatch(
     if status == 200:
         return text
     return json.dumps({"error": f"HTTP {status}: {text.strip()}"})
+
+
+def tool_result(text: str) -> CallToolResult:
+    """Mark top-level Ghidra failures as MCP errors, preserving their payload."""
+    try:
+        payload = json.loads(text)
+    except (ValueError, TypeError):
+        return CallToolResult(content=[TextContent(type="text", text=text)])
+    if isinstance(payload, dict) and (
+        isinstance(payload.get("error"), str) and payload["error"].strip()
+        or payload.get("success") is False
+        or payload.get("status") == "rejected"
+    ):
+        return error_result(text)
+    return CallToolResult(content=[TextContent(type="text", text=text)])
+
+
+def error_result(text: str) -> CallToolResult:
+    return CallToolResult(content=[TextContent(type="text", text=text)], is_error=True)

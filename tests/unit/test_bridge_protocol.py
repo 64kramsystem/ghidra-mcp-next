@@ -139,6 +139,7 @@ def test_failed_refresh_keeps_previous_tools_callable(monkeypatch, failure):
                 expected_error = "registration rejected"
 
             refreshed = await client.call_tool("refresh_connection", {})
+            assert refreshed.is_error
             assert json.loads(refreshed.content[0].text)["error"] == expected_error
             listing = await client.list_tools()
             names = {tool.name for tool in listing.tools}
@@ -150,6 +151,71 @@ def test_failed_refresh_keeps_previous_tools_callable(monkeypatch, failure):
             assert json.loads(result.content[0].text) == {"original": True}
 
     registry.clear()
+    try:
+        asyncio.run(run())
+    finally:
+        registry.clear()
+
+
+@pytest.mark.parametrize(
+    ("body", "status", "expected_error"),
+    [
+        ('{"error":"missing function"}', 200, True),
+        ('{"success":false,"message":"load failed"}', 200, True),
+        ('{"status":"rejected","message":"invalid name"}', 200, True),
+        ('{"results":[{"error":"missing instruction"}]}', 200, False),
+        ('{"status":"success"}', 200, False),
+        ('unavailable', 503, True),
+    ],
+)
+def test_dynamic_results_signal_only_top_level_failures(monkeypatch, body, status, expected_error):
+    definition = {
+        "name": "probe", "endpoint": "/probe", "method": "GET", "description": "probe",
+        "input_schema": {"type": "object", "properties": {}},
+    }
+    registry.clear()
+    registry.publish(registry.build_tools([definition]))
+    registry.state.connection.dynamic_names = {"probe"}
+    registry.state.connection.socket = "/tmp/test.sock"
+    monkeypatch.setattr(transport, "request", lambda *args, **kwargs: (body, status))
+
+    async def run():
+        async with Client(registry.mcp, mode="2026-07-28") as client:
+            result = await client.call_tool("probe", {})
+            assert bool(result.is_error) is expected_error
+            if status == 200:
+                assert result.content[0].text == body
+            else:
+                assert json.loads(result.content[0].text)["error"] == "HTTP 503: unavailable"
+
+    try:
+        asyncio.run(run())
+    finally:
+        registry.clear()
+
+
+def test_disconnected_dynamic_and_management_failures_signal_errors(monkeypatch):
+    definition = {
+        "name": "probe", "endpoint": "/probe", "method": "GET", "description": "probe",
+        "input_schema": {"type": "object", "properties": {}},
+    }
+    registry.clear()
+    registry.publish(registry.build_tools([definition]))
+    registry.state.connection.dynamic_names = {"probe"}
+    monkeypatch.setattr(static_tools.discovery, "discover_instances", lambda: [])
+
+    async def run():
+        async with Client(registry.mcp, mode="2026-07-28") as client:
+            for name, arguments in [
+                ("probe", {}),
+                ("refresh_connection", {}),
+                ("connect_instance", {"project": "missing"}),
+                ("create_and_connect_project", {"parent_dir": "/tmp", "name": "New"}),
+            ]:
+                result = await client.call_tool(name, arguments)
+                assert result.is_error, name
+                assert json.loads(result.content[0].text)["error"]
+
     try:
         asyncio.run(run())
     finally:

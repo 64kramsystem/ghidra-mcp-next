@@ -85,18 +85,20 @@ public class ProgramScriptService {
         }
     }
 
-    private void suppressAnalysisPrompt(Program program) throws IOException, ghidra.util.exception.CancelledException {
+    private void suppressAnalysisPrompt(Program program) throws Exception {
         ghidra.program.util.GhidraProgramUtilities.markProgramNotToAskToAnalyze(program);
         persistProgram(program, "Suppress analysis prompt");
     }
 
-    private void persistProgram(Program program, String reason)
-            throws IOException, ghidra.util.exception.CancelledException {
+    void persistProgram(Program program, String reason) throws Exception {
         if (program == null || !program.canSave()) {
             return;
         }
         program.flushEvents();
-        program.save(reason, ghidra.util.task.TaskMonitor.DUMMY);
+        saveWithRetry(() -> {
+            program.save(reason, ghidra.util.task.TaskMonitor.DUMMY);
+            return null;
+        });
     }
 
 
@@ -114,39 +116,47 @@ public class ProgramScriptService {
         if (pe.hasError()) return pe.error();
         Program program = pe.program();
 
-        final AtomicReference<Map<String, Object>> resultData = new AtomicReference<>();
-        final AtomicReference<String> errorMsg = new AtomicReference<>();
-
         try {
-            SwingUtilities.invokeAndWait(() -> {
-                try {
-                    ghidra.framework.model.DomainFile df = program.getDomainFile();
-                    if (df == null) {
-                        errorMsg.set("Program has no domain file");
-                        return;
-                    }
-                    df.save(new ConsoleTaskMonitor());
-                    resultData.set(JsonHelper.mapOf(
-                        "success", true,
-                        "program", program.getName(),
-                        "message", "Program saved successfully"
-                    ));
-                } catch (Throwable e) {
-                    String msg = e.getMessage() != null ? e.getMessage() : e.toString();
-                    errorMsg.set(msg);
-                    Msg.error(this, "Error saving program", e);
-                }
-            });
-
-            if (errorMsg.get() != null) {
-                return Response.err(errorMsg.get());
-            }
-        } catch (Throwable e) {
-            String msg = e.getMessage() != null ? e.getMessage() : e.toString();
-            return Response.err(msg);
+            ghidra.framework.model.DomainFile file = program.getDomainFile();
+            if (file == null) return Response.err("Program has no domain file");
+            saveWithRetry(file);
+            return Response.ok(JsonHelper.mapOf(
+                "success", true, "program", program.getName(),
+                "message", "Program saved successfully"));
+        } catch (Exception error) {
+            Msg.error(this, "Error saving program", error);
+            return Response.err(error.getMessage() != null ? error.getMessage() : error.toString());
         }
+    }
 
-        return resultData.get() != null ? Response.ok(resultData.get()) : Response.err("Unknown failure");
+    private static void saveWithRetry(ghidra.framework.model.DomainFile file) throws Exception {
+        saveWithRetry(() -> {
+            file.save(new ConsoleTaskMonitor());
+            return null;
+        });
+    }
+
+    private static void saveWithRetry(java.util.concurrent.Callable<Void> saveAction) throws Exception {
+        for (int attempt = 0; ; attempt++) {
+            AtomicReference<Exception> failure = new AtomicReference<>();
+            Runnable save = () -> {
+                try {
+                    saveAction.call();
+                } catch (Exception error) {
+                    failure.set(error);
+                }
+            };
+            if (SwingUtilities.isEventDispatchThread()) save.run();
+            else SwingUtilities.invokeAndWait(save);
+            Exception error = failure.get();
+            if (error == null) return;
+            if (!(error instanceof IOException)
+                    || !"Unable to lock due to active transaction".equals(error.getMessage())
+                    || attempt == 9 || SwingUtilities.isEventDispatchThread()) {
+                throw error;
+            }
+            Thread.sleep(100);
+        }
     }
 
     /**
@@ -168,66 +178,53 @@ public class ProgramScriptService {
             ));
         }
 
-        final AtomicReference<List<Map<String, Object>>> saved = new AtomicReference<>(new ArrayList<>());
-        final AtomicReference<List<Map<String, Object>>> errors = new AtomicReference<>(new ArrayList<>());
+        List<Map<String, Object>> saved = new ArrayList<>();
+        List<Map<String, Object>> errors = new ArrayList<>();
 
-        Runnable saveTask = () -> {
-            Set<Program> seen = Collections.newSetFromMap(new IdentityHashMap<>());
-            for (Program program : programs) {
-                if (program == null || !seen.add(program)) {
+        Set<Program> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+        for (Program program : programs) {
+            if (program == null || !seen.add(program)) {
+                continue;
+            }
+
+            Map<String, Object> info = new LinkedHashMap<>();
+            info.put("program", program.getName());
+            try {
+                ghidra.framework.model.DomainFile df = program.getDomainFile();
+                if (df == null) {
+                    info.put("error", "Program has no domain file");
+                    errors.add(info);
                     continue;
                 }
-
-                Map<String, Object> info = new LinkedHashMap<>();
-                info.put("program", program.getName());
-                try {
-                    ghidra.framework.model.DomainFile df = program.getDomainFile();
-                    if (df == null) {
-                        info.put("error", "Program has no domain file");
-                        errors.get().add(info);
-                        continue;
-                    }
-                    info.put("path", df.getPathname());
-                    // A DomainFile that is not in a writable project is a proxy
-                    // (no on-disk location) \u2014 calling save() on it throws the
-                    // cryptic "Location does not exist for a save operation!".
-                    // Surface a specific message so callers know to re-load
-                    // with an active project open.
-                    if (!df.isInWritableProject()) {
-                        info.put("error",
-                            "Program is not attached to a writable project "
-                            + "(transient DomainFileProxy); re-load it with a "
-                            + "project open before saving.");
-                        errors.get().add(info);
-                        continue;
-                    }
-                    df.save(new ConsoleTaskMonitor());
-                    saved.get().add(info);
-                } catch (Throwable e) {
-                    info.put("error", e.getMessage() != null ? e.getMessage() : e.toString());
-                    errors.get().add(info);
-                    Msg.error(this, "Error saving program " + program.getName(), e);
+                info.put("path", df.getPathname());
+                // A DomainFile that is not in a writable project is a proxy
+                // (no on-disk location) \u2014 calling save() on it throws the
+                // cryptic "Location does not exist for a save operation!".
+                // Surface a specific message so callers know to re-load
+                // with an active project open.
+                if (!df.isInWritableProject()) {
+                    info.put("error",
+                        "Program is not attached to a writable project "
+                        + "(transient DomainFileProxy); re-load it with a "
+                        + "project open before saving.");
+                    errors.add(info);
+                    continue;
                 }
+                saveWithRetry(df);
+                saved.add(info);
+            } catch (Throwable e) {
+                info.put("error", e.getMessage() != null ? e.getMessage() : e.toString());
+                errors.add(info);
+                Msg.error(this, "Error saving program " + program.getName(), e);
             }
-        };
-
-        try {
-            if (SwingUtilities.isEventDispatchThread()) {
-                saveTask.run();
-            } else {
-                SwingUtilities.invokeAndWait(saveTask);
-            }
-        } catch (Throwable e) {
-            return Response.err("Failed to save all programs: " +
-                    (e.getMessage() != null ? e.getMessage() : e.toString()));
         }
 
         return Response.ok(JsonHelper.mapOf(
-            "success", errors.get().isEmpty(),
-            "saved_count", saved.get().size(),
+            "success", errors.isEmpty(),
+            "saved_count", saved.size(),
             "open_program_count", programs.length,
-            "programs", saved.get(),
-            "errors", errors.get()
+            "programs", saved,
+            "errors", errors
         ));
     }
 

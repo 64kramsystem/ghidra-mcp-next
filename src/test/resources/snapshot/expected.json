@@ -1,0 +1,82 @@
+{
+  "program": "snapshot-fixture",
+  "blocks": [
+    {
+      "name": "text",
+      "start": "ram:00001000",
+      "end": "ram:00001001",
+      "initialized": true,
+      "permissions": "r--",
+      "bytes": "55c3"
+    },
+    {
+      "name": "bss",
+      "start": "ram:00002000",
+      "end": "ram:00002002",
+      "initialized": false,
+      "permissions": "r--",
+      "comment": "uninitialized storage"
+    },
+    {
+      "name": "bank",
+      "start": "bank::00001000",
+      "end": "bank::00001001",
+      "initialized": true,
+      "permissions": "r--",
+      "comment": "overlay bank",
+      "bytes": "0000"
+    }
+  ],
+  "symbols": [
+    {
+      "address": "ram:00001000",
+      "name": "entry",
+      "type": "Label",
+      "source": "USER_DEFINED",
+      "primary": true
+    },
+    {
+      "address": "ram:00001001",
+      "name": "LAB_00001001",
+      "type": "Label",
+      "source": "DEFAULT",
+      "primary": true
+    }
+  ],
+  "references": [
+    {
+      "from": "ram:00001000",
+      "to": "ram:00001001",
+      "type": "DATA",
+      "operand": 0,
+      "source": "USER_DEFINED",
+      "primary": true
+    }
+  ],
+  "instructions": [
+    {
+      "address": "ram:00001000",
+      "bytes": "55",
+      "text": "PUSH RBP",
+      "fallthrough": "ram:00001001",
+      "flow_type": "FALL_THROUGH",
+      "override": "NONE",
+      "flows": [],
+      "comments": {
+        "EOL": "hello"
+      }
+    },
+    {
+      "address": "ram:00001001",
+      "bytes": "c3",
+      "text": "RET",
+      "flow_type": "TERMINATOR",
+      "override": "NONE",
+      "flows": [],
+      "comments": {}
+    }
+  ],
+  "opaque": [
+    "ram:00001001"
+  ]
+}

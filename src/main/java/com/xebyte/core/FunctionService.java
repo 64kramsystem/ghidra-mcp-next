@@ -142,10 +142,6 @@ public class FunctionService {
             decomp = ServiceUtils.createConfiguredDecompiler(program);
             return decomp.decompileFunction(
                 func, DECOMPILE_TIMEOUT_SECONDS, new ConsoleTaskMonitor());
-        } catch (Exception e) {
-            Msg.warn(this, "Decompilation failed for " + func.getName()
-                + ": " + e.getMessage());
-            return null;
         } finally {
             if (decomp != null) {
                 try { decomp.dispose(); } catch (Exception ignored) {}
@@ -274,8 +270,9 @@ public class FunctionService {
             ServiceUtils.probeMutationAddressAmbiguity(program, functionAddress);
         if (addressAmbiguity != null) return Response.err(addressAmbiguity);
 
-        DecompInterface decomp = ServiceUtils.createConfiguredDecompiler(program);
+        DecompInterface decomp = null;
         try {
+            decomp = ServiceUtils.createConfiguredDecompiler(program);
             String functionRef = (functionAddress != null && !functionAddress.isEmpty()) ? functionAddress : functionName;
             Function func = ServiceUtils.resolveFunction(program, functionRef);
             if (func == null) {
@@ -345,7 +342,7 @@ public class FunctionService {
             Msg.error(this, errorMsg, e);
             return Response.err(errorMsg);
         } finally {
-            decomp.dispose();
+            if (decomp != null) decomp.dispose();
         }
         return Response.err("Failed to rename variable");
     }
@@ -1170,21 +1167,39 @@ public class FunctionService {
         return null;
     }
 
-    private static boolean updateVariableType(
-            Program program,
-            HighSymbol symbol,
-            DataType dataType,
-            AtomicBoolean success,
-            StringBuilder errorDetails) {
+    boolean updateVariableType(
+            Program program, HighSymbol symbol, DataType dataType,
+            AtomicBoolean success, StringBuilder errorDetails) {
         try {
-            HighFunctionDBUtil.updateDBVariable(
-                symbol, symbol.getName(), dataType, SourceType.USER_DEFINED);
+            threadingStrategy.executeWrite(program, "Set variable type", () -> {
+                HighFunctionDBUtil.updateDBVariable(
+                    symbol, symbol.getName(), dataType, SourceType.USER_DEFINED);
+                Variable persisted = HighFunctionDBUtil.getFunctionVariable(symbol);
+                if (persisted == null && !symbol.isParameter() && !symbol.isGlobal()
+                        && symbol.getSize() != dataType.getLength()) {
+                    Function function = symbol.getHighFunction().getFunction();
+                    var storage = VariableUtilities.resizeStorage(
+                        symbol.getStorage(), dataType, true, function);
+                    Address pc = symbol.getPCAddress();
+                    int firstUse = pc == null ? 0 : (int) pc.subtract(function.getEntryPoint());
+                    for (Variable variable : function.getLocalVariables()) {
+                        if (variable.getFirstUseOffset() == firstUse
+                                && variable.getVariableStorage().equals(storage)) {
+                            persisted = variable;
+                            break;
+                        }
+                    }
+                }
+                if (persisted == null || !symbol.getName().equals(persisted.getName())
+                        || !persisted.getDataType().isEquivalent(dataType)) {
+                    throw new IllegalStateException("Variable type did not persist");
+                }
+                return null;
+            });
             success.set(true);
             return true;
         } catch (Exception error) {
-            if (errorDetails != null) {
-                errorDetails.append(error.getMessage());
-            }
+            errorDetails.append(error.getMessage());
             return false;
         }
     }

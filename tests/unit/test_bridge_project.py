@@ -37,11 +37,8 @@ def test_create_project_posts_once_then_connects(monkeypatch):
             "socket": socket,
         },
     )
-    result = json.loads(
-        asyncio.run(
-            static_tools.create_and_connect_project("/projects", "New")
-        )
-    )
+    result = asyncio.run(static_tools.create_and_connect_project("/projects", "New"))
+    result = json.loads(result.content[0].text)
     assert calls == [("/tmp/ghidra.sock", "/projects", "New")]
     assert result["created"] is True
 
@@ -58,11 +55,9 @@ def test_create_is_not_retried_when_transport_fails(monkeypatch):
         raise OSError("uncertain")
 
     monkeypatch.setattr(connection, "create_project", fail)
-    result = json.loads(
-        asyncio.run(
-            static_tools.create_and_connect_project("/projects", "New")
-        )
-    )
+    result = asyncio.run(static_tools.create_and_connect_project("/projects", "New"))
+    assert result.is_error
+    result = json.loads(result.content[0].text)
     assert calls == 1
     assert result == {"created": False, "error": "uncertain"}
 
@@ -89,10 +84,7 @@ def test_successful_create_with_schema_failure_clears_old_tools(monkeypatch):
         "connect",
         lambda *args: (_ for _ in ()).throw(ValueError("bad schema")),
     )
-    result = json.loads(
-        asyncio.run(
-            static_tools.create_and_connect_project("/projects", "New")
-        )
-    )
-    assert result["created"] is True
+    result = asyncio.run(static_tools.create_and_connect_project("/projects", "New"))
+    assert result.is_error
+    assert json.loads(result.content[0].text)["created"] is True
     assert state.connection.connected is False

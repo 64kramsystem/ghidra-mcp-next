@@ -59,7 +59,7 @@ The bridge uses stdio outward and Unix-domain sockets inward. If exactly one Ghi
 
 ## Working with programs
 
-Most program-scoped tools accept `program`. Always supply it when more than one program is open.
+Most program-scoped tools accept `program`. Always supply it when more than one program is open. [Annotation snapshots](docs/ANNOTATION_SNAPSHOTS.md) preserve labels, comments, and data definitions across matching program views.
 
 ```text
 list_open_programs()
@@ -73,7 +73,7 @@ The retained surface covers:
 - program import, open, save, close, memory reads, and rebasing;
 - functions, labels, equates, comments, references, and datatypes;
 - memory blocks, data creation, disassembly, flow, bytes, and coverage;
-- complete text listings, local project creation and opening, and project archives;
+- complete text listings, JSON program snapshots, local project creation and opening, and project archives;
 - TraceRMI memory, registers, breakpoints, execution, target methods, and launchers.
 
 Use address-space-qualified addresses for overlays or ambiguous maps.

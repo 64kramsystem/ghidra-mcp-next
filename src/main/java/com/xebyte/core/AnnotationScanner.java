@@ -197,20 +197,9 @@ public class AnnotationScanner {
             if (value != null) return value;
             return hasDef ? (def.isEmpty() ? null : def) : null;
 
-        } else if (type == int.class) {
-            int defaultVal = hasDef ? parseIntSafe(def, 0) : 0;
-            if (value == null || value.isEmpty()) return defaultVal;
-            return parseIntSafe(value, defaultVal);
-
-        } else if (type == Integer.class) {
-            if (value == null || value.isEmpty()) {
-                if (hasDef) {
-                    try { return Integer.valueOf(def); }
-                    catch (NumberFormatException e) { return null; }
-                }
-                return null;
-            }
-            try { return Integer.parseInt(value); } catch (NumberFormatException e) { return null; }
+        } else if (type == int.class || type == Integer.class
+                || type == long.class || type == Long.class) {
+            return resolveInteger(binding, value);
 
         } else if (type == boolean.class) {
             boolean defaultVal = hasDef && Boolean.parseBoolean(def);
@@ -227,11 +216,6 @@ public class AnnotationScanner {
             double defaultVal = hasDef ? parseDoubleSafe(def, 0.0) : 0.0;
             if (value == null || value.isEmpty()) return defaultVal;
             return parseDoubleSafe(value, defaultVal);
-
-        } else if (type == long.class) {
-            long defaultVal = hasDef ? parseLongSafe(def, 0L) : 0L;
-            if (value == null || value.isEmpty()) return defaultVal;
-            return parseLongSafe(value, defaultVal);
         }
         return value;
     }
@@ -256,69 +240,16 @@ public class AnnotationScanner {
             if (raw != null) return String.valueOf(raw);
             return hasDef ? (def.isEmpty() ? null : def) : null;
 
-        } else if (type == int.class) {
-            int defaultVal = hasDef ? parseIntSafe(def, 0) : 0;
-            return JsonHelper.getInt(raw, defaultVal);
-
-        } else if (type == Integer.class) {
+        } else if (type == int.class || type == Integer.class
+                || type == long.class || type == Long.class) {
             if (binding.param.strictInteger()) {
-                return resolveStrictBodyInteger(
-                    binding, raw, Integer.MIN_VALUE, Integer.MAX_VALUE);
-            }
-            if (raw == null) {
-                if (hasDef) {
-                    try { return Integer.valueOf(def); }
-                    catch (NumberFormatException e) { return null; }
+                if (type == int.class || type == Integer.class) {
+                    return resolveStrictBodyInteger(
+                        binding, raw, Integer.MIN_VALUE, Integer.MAX_VALUE);
                 }
-                return null;
-            }
-            return JsonHelper.getInt(raw, 0);
-
-        } else if (type == long.class) {
-            if (binding.param.strictInteger()) {
-                Long value = resolveStrictBodyLong(binding, raw);
-                if (value == null) {
-                    String integerDefault =
-                        binding.param.defaultValue();
-                    if (!NO_DEFAULT.equals(integerDefault)) {
-                        return Long.parseLong(integerDefault);
-                    }
-                    throw new IllegalArgumentException(
-                        "Missing required integer parameter: "
-                            + binding.param.value());
-                }
-                return value;
-            }
-            long defaultVal = hasDef ? parseLongSafe(def, 0L) : 0L;
-            if (raw == null) return defaultVal;
-            if (raw instanceof Number n) return n.longValue();
-            try { return Long.parseLong(String.valueOf(raw)); }
-            catch (NumberFormatException e) { return defaultVal; }
-
-        } else if (type == Long.class) {
-            if (binding.param.strictInteger()) {
                 return resolveStrictBodyLong(binding, raw);
             }
-            if (raw == null) {
-                if (hasDef) {
-                    try {
-                        return Long.valueOf(def);
-                    }
-                    catch (NumberFormatException e) {
-                        return null;
-                    }
-                }
-                return null;
-            }
-            if (raw instanceof Number number) {
-                return number.longValue();
-            }
-            try {
-                return Long.valueOf(String.valueOf(raw));
-            }
-            catch (NumberFormatException e) {
-                return null;
-            }
+            return resolveInteger(binding, raw);
 
         } else if (type == boolean.class) {
             if (binding.param.strictBoolean()) {
@@ -407,7 +338,7 @@ public class AnnotationScanner {
             Object raw) {
         String name = binding.param.value();
         if (raw == null) {
-            if (binding.javaType != long.class
+            if (binding.javaType != long.class && binding.javaType != int.class
                     && binding.param.optional()) {
                 return null;
             }
@@ -465,12 +396,32 @@ public class AnnotationScanner {
         return new HashMap<>();
     }
 
-    private static int parseIntSafe(String s, int def) {
-        try { return Integer.parseInt(s); } catch (NumberFormatException e) { return def; }
+    private static Object resolveInteger(ParamBinding binding, Object raw) {
+        if (raw != null) return parseInteger(binding, raw);
+        String def = binding.param.defaultValue();
+        if (!NO_DEFAULT.equals(def)) return parseInteger(binding, def);
+        if (binding.javaType == int.class) return 0;
+        if (binding.javaType == long.class) return 0L;
+        return null;
     }
 
-    private static long parseLongSafe(String s, long def) {
-        try { return Long.parseLong(s); } catch (NumberFormatException e) { return def; }
+    private static Object parseInteger(ParamBinding binding, Object raw) {
+        try {
+            if (!(raw instanceof Number) && !(raw instanceof String)) {
+                throw new NumberFormatException();
+            }
+            java.math.BigDecimal value = new java.math.BigDecimal(raw.toString());
+            if (binding.javaType == int.class || binding.javaType == Integer.class) {
+                return value.intValueExact();
+            }
+            return value.longValueExact();
+        }
+        catch (NumberFormatException | ArithmeticException error) {
+            throw new IllegalArgumentException(
+                "Parameter '" + binding.param.value() + "' must be an exact "
+                    + (binding.javaType == int.class || binding.javaType == Integer.class ? 32 : 64)
+                    + "-bit integer", error);
+        }
     }
 
     private static double parseDoubleSafe(String s, double def) {

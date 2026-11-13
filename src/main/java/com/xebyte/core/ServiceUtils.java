@@ -490,12 +490,19 @@ public final class ServiceUtils {
      */
     public static DecompInterface createConfiguredDecompiler(Program program) {
         DecompInterface decomp = new DecompInterface();
-        DecompileOptions opts = new DecompileOptions();
-        opts.grabFromProgram(program);              // GUI-faithful; respects per-program setting
-        decomp.setOptions(opts);
-        decomp.setSimplificationStyle("decompile"); // default style; explicit for consistency
-        decomp.openProgram(program);                // openProgram AFTER setOptions
-        return decomp;
+        try {
+            DecompileOptions opts = new DecompileOptions();
+            opts.grabFromProgram(program);
+            decomp.setOptions(opts);
+            decomp.setSimplificationStyle("decompile");
+            if (!decomp.openProgram(program)) {
+                throw new IllegalStateException(decomp.getLastMessage());
+            }
+            return decomp;
+        } catch (RuntimeException | Error error) {
+            decomp.dispose();
+            throw error;
+        }
     }
 
     // ========================================================================
