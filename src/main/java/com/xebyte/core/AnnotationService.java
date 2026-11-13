@@ -311,7 +311,6 @@ public final class AnnotationService {
     private static DataType resolveType(Program program, JsonObject object) {
         String kind = object.get("kind").getAsString();
         if (kind.equals("named")) {
-            fields(object, "kind", "path");
             String path = object.get("path").getAsString();
             if (!path.startsWith("/")) throw new IllegalArgumentException("datatype path must be absolute: " + path);
             DataType result = program.getDataTypeManager().getDataType(path);
@@ -321,13 +320,11 @@ public final class AnnotationService {
             return result;
         }
         if (kind.equals("array")) {
-            fields(object, "kind", "element", "count");
             DataType base = resolveType(program, object.getAsJsonObject("element")); int count = object.get("count").getAsInt();
             if (count <= 0 || base.getLength() <= 0) throw new IllegalArgumentException("invalid array type");
             return new ArrayDataType(base, count, base.getLength(), program.getDataTypeManager());
         }
         if (kind.equals("pointer")) {
-            fields(object, "kind", "target", "length", "dynamic");
             DataType target = object.get("target").isJsonNull() ? null : resolveType(program, object.getAsJsonObject("target"));
             int length = object.get("length").getAsInt();
             if (length <= 0) throw new IllegalArgumentException("invalid pointer length");
