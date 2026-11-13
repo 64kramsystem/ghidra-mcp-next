@@ -333,6 +333,35 @@ public class AnnotationServiceGhidraTest {
         assertNotNull(target.getProgram().getSymbolTable().getGlobalSymbol("ENTRY", target.addr("0x1000")));
     }
     @Test
+    public void functionImportAbsorbsMatchingLabel() throws Exception {
+        int tx = source.getProgram().startTransaction("source label");
+        try { source.getProgram().getSymbolTable().createLabel(source.addr("0x1000"), "ENTRY", SourceType.USER_DEFINED); }
+        finally { source.getProgram().endTransaction(tx, true); }
+        target.disassemble("0x1000", 2);
+        var function = target.createFunction("0x1000");
+        tx = target.getProgram().startTransaction("target symbols");
+        try {
+            function.setName("EXISTING", SourceType.USER_DEFINED);
+            target.getProgram().getSymbolTable().createLabel(target.addr("0x1000"), "OTHER", SourceType.USER_DEFINED);
+        } finally { target.getProgram().endTransaction(tx, true); }
+        Path labels = directory.resolve("labels.json");
+        ok(service(source).exportAnnotations(labels.toString(), false, false, ""));
+        ok(service(target).importAnnotations(labels.toString(), ""));
+        source.disassemble("0x1000", 2);
+        var sourceFunction = source.createFunction("0x1000");
+        assertEquals("ENTRY", sourceFunction.getName());
+        Path functions = directory.resolve("functions.json");
+        ok(service(source).exportAnnotations(functions.toString(), false, false, ""));
+        ok(service(target).importAnnotations(functions.toString(), ""));
+        assertEquals("ENTRY", function.getName());
+        assertTrue(function.getSymbol().isPrimary());
+        assertNotNull(target.getProgram().getSymbolTable().getGlobalSymbol("OTHER", target.addr("0x1000")));
+        long modification = target.getProgram().getModificationNumber();
+        ok(service(target).importAnnotations(functions.toString(), ""));
+        assertEquals(modification, target.getProgram().getModificationNumber());
+    }
+
+    @Test
     public void reportsOverwrittenComment() throws Exception {
         for (ProgramBuilder builder : new ProgramBuilder[] {source, target}) {
             int tx = builder.getProgram().startTransaction("comment");

@@ -440,6 +440,8 @@ public final class AnnotationService {
             Symbol symbol = program.getSymbolTable().getSymbol(name, start, ns); boolean changed = false;
             Function function = row.get("kind").getAsString().equals("function") ? program.getFunctionManager().getFunctionAt(start) : null;
             if (function != null) {
+                if (symbol != null && symbol.getSymbolType() == SymbolType.LABEL && !symbol.delete())
+                    throw new IllegalStateException("could not absorb label at " + start);
                 symbol = function.getSymbol();
                 if (!symbol.getName().equals(name) || !symbol.getParentNamespace().equals(ns)) {
                     overwritten.add(JsonHelper.mapOf("kind", "function", "address", start.toString(true), "name", symbol.getName(true)));
