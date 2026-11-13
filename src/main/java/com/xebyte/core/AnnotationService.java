@@ -446,7 +446,12 @@ public final class AnnotationService {
                     symbol.setNameAndNamespace(name, ns, source); changed = true;
                 }
             } else if (symbol == null) {
+                Function existingFunction = program.getFunctionManager().getFunctionAt(start);
+                String previousFunctionName = existingFunction == null ? null : existingFunction.getSymbol().getName(true);
                 symbol = program.getSymbolTable().createLabel(start, name, ns, source); changed = true;
+                if (existingFunction != null && symbol.getSymbolType() == SymbolType.FUNCTION) {
+                    overwritten.add(JsonHelper.mapOf("kind", "function", "address", start.toString(true), "name", previousFunctionName));
+                }
             }
             if (symbol.getSource() != source) {
                 overwritten.add(JsonHelper.mapOf("kind", "symbol_source", "address", start.toString(true), "source", symbol.getSource().name()));
