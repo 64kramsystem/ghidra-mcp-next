@@ -69,4 +69,38 @@ public class ProgramSnapshotGhidraTest {
         assertEquals(actual, Files.readString(output));
         try (var paths = Files.list(temp.getRoot().toPath())) { assertEquals(1, paths.count()); }
     }
+    @Test public void rejectsProgramChangedDuringCollectionWithoutLeavingFiles() throws Exception {
+        builder = new ProgramBuilder("changing-snapshot", ProgramBuilder._X64, "gcc", this);
+        var program = builder.getProgram();
+        builder.createMemory("text", "0x1000", 2);
+        builder.setBytes("0x1000", Files.readString(
+            Path.of("src/test/resources/snapshot/bytes.txt")).trim());
+        var instrumented = mock(ghidra.program.model.listing.Program.class,
+            org.mockito.AdditionalAnswers.delegatesTo(program));
+        doAnswer(invocation -> {
+            int transaction = program.startTransaction("change during collection");
+            try {
+                program.getListing().setComment(builder.addr("0x1000"), CommentType.EOL, "changed");
+            }
+            finally {
+                program.endTransaction(transaction, true);
+            }
+            return program.getMemory();
+        }).when(instrumented).getMemory();
+        var provider = mock(ProgramProvider.class);
+        when(provider.resolveProgram("")).thenReturn(instrumented);
+        var security = mock(SecurityConfig.class);
+        when(security.resolveWithinFileRoot(anyString())).thenAnswer(
+            i -> Path.of(i.getArgument(0, String.class)));
+        Path output = temp.getRoot().toPath().resolve("snapshot.json");
+
+        Response response = new ExportService(provider, security)
+            .exportProgramSnapshot(output.toString(), "");
+
+        assertFalse(response instanceof Response.Ok);
+        assertTrue(response.toJson(), response.toJson().contains("changed during snapshot"));
+        assertFalse(Files.exists(output));
+        try (var paths = Files.list(temp.getRoot().toPath())) { assertEquals(0, paths.count()); }
+    }
+
 }
