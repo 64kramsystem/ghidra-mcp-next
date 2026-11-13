@@ -239,7 +239,7 @@ public final class AnnotationService {
                 throw new IllegalArgumentException("overlapping ranges");
         }
     }
-    private static void validateShape(JsonObject root) {
+    private static void validateShape(JsonObject root) throws Exception {
         fields(root, "format", "schema", "source", "view", "symbols", "comments", "data", "instructions");
         if (!"ghidra-mcp-annotations".equals(string(root.get("format"))) || integer(root.get("schema")) != 1)
             throw new IllegalArgumentException("unsupported annotation format or schema");
@@ -266,7 +266,8 @@ public final class AnnotationService {
             JsonObject row = e.getAsJsonObject(); fields(row, "space", "offset", "namespace", "name", "kind", "source", "primary"); shapeAddress(row);
             String kind = string(row.get("kind")), sourceKind = string(row.get("source"));
             if (!(kind.equals("label") || kind.equals("function")) || !(sourceKind.equals("USER_DEFINED") || sourceKind.equals("IMPORTED")) || string(row.get("name")).isBlank()) throw new IllegalArgumentException("invalid symbol");
-            for (JsonElement part : row.getAsJsonArray("namespace")) if (string(part).isBlank()) throw new IllegalArgumentException("invalid namespace");
+            SymbolUtilities.validateName(string(row.get("name")));
+            for (JsonElement part : row.getAsJsonArray("namespace")) SymbolUtilities.validateName(string(part));
             if (!keys.add(slot(row, "namespace", "name"))) throw new IllegalArgumentException("duplicate symbol");
             if (bool(row.get("primary")) && !primaries.add(slot(row))) throw new IllegalArgumentException("conflicting primary symbols");
         }
