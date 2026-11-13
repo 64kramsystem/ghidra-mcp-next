@@ -954,7 +954,7 @@ public class FunctionService {
 
                     // Apply the type change in a transaction
                     StringBuilder errorDetails = new StringBuilder();
-                    if (updateVariableType(program, func, symbol, dataType, success, errorDetails)) {
+                    if (updateVariableType(program, symbol, dataType, success, errorDetails)) {
                         resultMsg.append("Success: Changed type of variable '").append(variableName)
                                 .append("' from '").append(oldType).append("' to '")
                                 .append(dataType.getName()).append("'")
@@ -1168,20 +1168,15 @@ public class FunctionService {
     }
 
     boolean updateVariableType(
-            Program program, Function function, HighSymbol symbol, DataType dataType,
+            Program program, HighSymbol symbol, DataType dataType,
             AtomicBoolean success, StringBuilder errorDetails) {
         try {
             threadingStrategy.executeWrite(program, "Set variable type", () -> {
                 HighFunctionDBUtil.updateDBVariable(
                     symbol, symbol.getName(), dataType, SourceType.USER_DEFINED);
-                Variable persisted = null;
-                for (Variable variable : function.getAllVariables()) {
-                    if (symbol.getName().equals(variable.getName())) {
-                        persisted = variable;
-                        break;
-                    }
-                }
-                if (persisted == null || !persisted.getDataType().isEquivalent(dataType)) {
+                Variable persisted = HighFunctionDBUtil.getFunctionVariable(symbol);
+                if (persisted == null || !symbol.getName().equals(persisted.getName())
+                        || !persisted.getDataType().isEquivalent(dataType)) {
                     throw new IllegalStateException("Variable type did not persist");
                 }
                 return null;
