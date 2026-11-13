@@ -114,39 +114,39 @@ public class ProgramScriptService {
         if (pe.hasError()) return pe.error();
         Program program = pe.program();
 
-        final AtomicReference<Map<String, Object>> resultData = new AtomicReference<>();
-        final AtomicReference<String> errorMsg = new AtomicReference<>();
-
         try {
-            SwingUtilities.invokeAndWait(() -> {
-                try {
-                    ghidra.framework.model.DomainFile df = program.getDomainFile();
-                    if (df == null) {
-                        errorMsg.set("Program has no domain file");
-                        return;
-                    }
-                    df.save(new ConsoleTaskMonitor());
-                    resultData.set(JsonHelper.mapOf(
-                        "success", true,
-                        "program", program.getName(),
-                        "message", "Program saved successfully"
-                    ));
-                } catch (Throwable e) {
-                    String msg = e.getMessage() != null ? e.getMessage() : e.toString();
-                    errorMsg.set(msg);
-                    Msg.error(this, "Error saving program", e);
-                }
-            });
-
-            if (errorMsg.get() != null) {
-                return Response.err(errorMsg.get());
-            }
-        } catch (Throwable e) {
-            String msg = e.getMessage() != null ? e.getMessage() : e.toString();
-            return Response.err(msg);
+            ghidra.framework.model.DomainFile file = program.getDomainFile();
+            if (file == null) return Response.err("Program has no domain file");
+            saveWithRetry(file);
+            return Response.ok(JsonHelper.mapOf(
+                "success", true, "program", program.getName(),
+                "message", "Program saved successfully"));
+        } catch (Exception error) {
+            return Response.err(error.getMessage() != null ? error.getMessage() : error.toString());
         }
+    }
 
-        return resultData.get() != null ? Response.ok(resultData.get()) : Response.err("Unknown failure");
+    private static void saveWithRetry(ghidra.framework.model.DomainFile file) throws Exception {
+        for (int attempt = 0; ; attempt++) {
+            AtomicReference<Exception> failure = new AtomicReference<>();
+            Runnable save = () -> {
+                try {
+                    file.save(new ConsoleTaskMonitor());
+                } catch (Exception error) {
+                    failure.set(error);
+                }
+            };
+            if (SwingUtilities.isEventDispatchThread()) save.run();
+            else SwingUtilities.invokeAndWait(save);
+            Exception error = failure.get();
+            if (error == null) return;
+            if (!(error instanceof IOException)
+                    || !"Unable to lock due to active transaction".equals(error.getMessage())
+                    || attempt == 9 || SwingUtilities.isEventDispatchThread()) {
+                throw error;
+            }
+            Thread.sleep(100);
+        }
     }
 
     /**
@@ -201,7 +201,7 @@ public class ProgramScriptService {
                         errors.get().add(info);
                         continue;
                     }
-                    df.save(new ConsoleTaskMonitor());
+                    saveWithRetry(df);
                     saved.get().add(info);
                 } catch (Throwable e) {
                     info.put("error", e.getMessage() != null ? e.getMessage() : e.toString());
@@ -212,11 +212,7 @@ public class ProgramScriptService {
         };
 
         try {
-            if (SwingUtilities.isEventDispatchThread()) {
-                saveTask.run();
-            } else {
-                SwingUtilities.invokeAndWait(saveTask);
-            }
+            saveTask.run();
         } catch (Throwable e) {
             return Response.err("Failed to save all programs: " +
                     (e.getMessage() != null ? e.getMessage() : e.toString()));
