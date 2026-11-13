@@ -34,6 +34,38 @@ public class ProgramSaveTest {
         verify(file, times(1)).save(any());
     }
 
+    @Test
+    public void activeTransactionRetryIsBounded() throws Exception {
+        DomainFile file = mock(DomainFile.class);
+        doThrow(new IOException("Unable to lock due to active transaction")).when(file).save(any());
+        assertTrue(service(file).saveCurrentProgram("") instanceof Response.Err);
+        verify(file, times(10)).save(any());
+    }
+
+    @Test
+    public void activeTransactionOnEdtFailsWithoutWaiting() throws Exception {
+        DomainFile file = mock(DomainFile.class);
+        doThrow(new IOException("Unable to lock due to active transaction")).when(file).save(any());
+        ProgramScriptService service = service(file);
+        SwingUtilities.invokeAndWait(() -> assertTrue(service.saveCurrentProgram("") instanceof Response.Err));
+        verify(file, times(1)).save(any());
+    }
+
+    @Test
+    public void analysisCompletionSaveRetriesActiveTransaction() throws Exception {
+        Program program = mock(Program.class);
+        when(program.canSave()).thenReturn(true);
+        AtomicInteger calls = new AtomicInteger();
+        doAnswer(invocation -> {
+            assertTrue(SwingUtilities.isEventDispatchThread());
+            if (calls.getAndIncrement() == 0) throw new IOException("Unable to lock due to active transaction");
+            return null;
+        }).when(program).save(anyString(), any());
+        service(mock(DomainFile.class)).persistProgram(program, "analysis completed");
+        assertEquals(2, calls.get());
+        verify(program).flushEvents();
+    }
+
     private ProgramScriptService service(DomainFile file) {
         Program program = mock(Program.class);
         ProgramProvider provider = mock(ProgramProvider.class);
