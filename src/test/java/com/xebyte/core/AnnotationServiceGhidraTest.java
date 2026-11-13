@@ -1,6 +1,7 @@
 package com.xebyte.core;
 
 import static org.junit.Assert.*;
+import static org.mockito.Mockito.*;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -430,6 +431,58 @@ public class AnnotationServiceGhidraTest {
         }
         finally { source.getProgram().endTransaction(tx, true); }
         ok(service(source).exportAnnotations(snapshot.toString(), true, false, ""));
+    }
+
+    @Test
+    public void unsignedHighAddressRoundTrips() throws Exception {
+        ProgramBuilder from = new ProgramBuilder("high-source", ProgramBuilder._X64, "gcc", this);
+        ProgramBuilder to = new ProgramBuilder("high-target", ProgramBuilder._X64, "gcc", this);
+        try {
+            for (ProgramBuilder builder : new ProgramBuilder[] {from, to}) {
+                builder.createMemory("high", "0x8000000000003000", 0x100);
+                int tx = builder.getProgram().startTransaction("identity");
+                try { builder.getProgram().setExecutableSHA256(SHA); }
+                finally { builder.getProgram().endTransaction(tx, true); }
+            }
+            var address = from.addr("0x8000000000003004");
+            int tx = from.getProgram().startTransaction("high annotations");
+            try {
+                from.getProgram().getSymbolTable().createLabel(address, "HIGH", SourceType.USER_DEFINED);
+                from.getProgram().getListing().setComment(address, CommentType.EOL, "high address");
+            }
+            finally { from.getProgram().endTransaction(tx, true); }
+            Path first = directory.resolve("high.json");
+            Path second = directory.resolve("high-roundtrip.json");
+            ok(service(from).exportAnnotations(first.toString(), false, false, ""));
+            JsonObject snapshot = JsonParser.parseString(Files.readString(first)).getAsJsonObject();
+            assertEquals("8000000000003004", snapshot.getAsJsonArray("symbols").get(0)
+                .getAsJsonObject().get("offset").getAsString());
+            ok(service(to).importAnnotations(first.toString(), ""));
+            var destination = to.addr("0x8000000000003004");
+            assertNotNull(to.getProgram().getSymbolTable().getGlobalSymbol("HIGH", destination));
+            assertEquals("high address", to.getProgram().getListing().getComment(CommentType.EOL, destination));
+            ok(service(to).exportAnnotations(second.toString(), false, false, ""));
+            assertEquals(Files.readString(first), Files.readString(second));
+        }
+        finally { from.dispose(); to.dispose(); }
+    }
+
+    @Test
+    public void modificationDuringExportKeepsPreviousFile() throws Exception {
+        Path snapshot = directory.resolve("changed-during-export.json");
+        ok(service(source).exportAnnotations(snapshot.toString(), false, false, ""));
+        String original = Files.readString(snapshot);
+        ProgramDB spied = spy(source.getProgram());
+        long version = source.getProgram().getModificationNumber();
+        doReturn(version, version + 1).when(spied).getModificationNumber();
+        HeadlessProgramProvider provider = new HeadlessProgramProvider();
+        provider.setCurrentProgram(spied);
+        AnnotationService instrumented = new AnnotationService(provider, new DirectThreadingStrategy(),
+            SecurityConfig.forFileRootTesting(directory));
+        Response response = instrumented.exportAnnotations(snapshot.toString(), true, false, "");
+        error(response);
+        assertTrue(response.toJson(), response.toJson().contains("changed during export"));
+        assertEquals(original, Files.readString(snapshot));
     }
 
 }
