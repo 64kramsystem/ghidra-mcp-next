@@ -73,9 +73,11 @@ public final class AnnotationService {
             Program program = pe.program();
             JsonObject snapshot = parse(path(inputPath));
             validateShape(snapshot);
+            long modification = program.getModificationNumber();
             validate(program, snapshot);
+            if (program.getModificationNumber() != modification) throw new IllegalStateException("program changed during import validation");
             return threading.executeWrite(program, "Import annotations", () -> {
-                validate(program, snapshot);
+                if (program.getModificationNumber() != modification) throw new IllegalStateException("program changed during import validation");
                 return Response.ok(apply(program, snapshot));
             });
         } catch (Exception e) { return Response.err(message(e)); }
@@ -188,7 +190,7 @@ public final class AnnotationService {
         if (type instanceof Array array) {
             result.addProperty("kind", "array"); result.add("element", type(array.getDataType())); result.addProperty("count", array.getNumElements());
         } else if (type instanceof Pointer pointer) {
-            result.addProperty("kind", "pointer"); result.add("target", pointer.getDataType() == null ? JsonNull.INSTANCE : type(pointer.getDataType())); result.addProperty("length", pointer.getLength());
+            result.addProperty("kind", "pointer"); result.add("target", pointer.getDataType() == null ? JsonNull.INSTANCE : type(pointer.getDataType())); result.addProperty("length", pointer.getLength()); result.addProperty("dynamic", pointer.hasLanguageDependantLength());
         } else { result.addProperty("kind", "named"); result.addProperty("path", type.getPathName()); }
         return result;
     }
@@ -219,7 +221,7 @@ public final class AnnotationService {
         switch (kind) {
             case "named" -> { fields(type, "kind", "path"); if (!string(type.get("path")).startsWith("/")) throw new IllegalArgumentException("invalid datatype path"); }
             case "array" -> { fields(type, "kind", "element", "count"); if (integer(type.get("count")) <= 0 || integer(type.get("count")) > Integer.MAX_VALUE) throw new IllegalArgumentException("invalid array count"); shapeType(type.getAsJsonObject("element")); }
-            case "pointer" -> { fields(type, "kind", "target", "length"); if (integer(type.get("length")) <= 0 || integer(type.get("length")) > Integer.MAX_VALUE) throw new IllegalArgumentException("invalid pointer length"); if (!type.get("target").isJsonNull()) shapeType(type.getAsJsonObject("target")); }
+            case "pointer" -> { fields(type, "kind", "target", "length", "dynamic"); bool(type.get("dynamic")); if (integer(type.get("length")) <= 0 || integer(type.get("length")) > Integer.MAX_VALUE) throw new IllegalArgumentException("invalid pointer length"); if (!type.get("target").isJsonNull()) shapeType(type.getAsJsonObject("target")); }
             default -> throw new IllegalArgumentException("invalid datatype kind");
         }
     }
@@ -325,36 +327,26 @@ public final class AnnotationService {
             return new ArrayDataType(base, count, base.getLength(), program.getDataTypeManager());
         }
         if (kind.equals("pointer")) {
-            fields(object, "kind", "target", "length");
+            fields(object, "kind", "target", "length", "dynamic");
             DataType target = object.get("target").isJsonNull() ? null : resolveType(program, object.getAsJsonObject("target"));
             int length = object.get("length").getAsInt();
             if (length <= 0) throw new IllegalArgumentException("invalid pointer length");
-            return new PointerDataType(target, length, program.getDataTypeManager());
+            DataType pointer = object.get("dynamic").getAsBoolean()
+                ? new PointerDataType(target, program.getDataTypeManager())
+                : new PointerDataType(target, length, program.getDataTypeManager());
+            if (pointer.getLength() != length) throw new IllegalArgumentException("pointer length mismatch");
+            return pointer;
         }
         throw new IllegalArgumentException("unknown datatype kind: " + kind);
     }
     private static void validate(Program program, JsonObject root) throws Exception {
         if (!root.get("source").equals(source(program))) throw new IllegalArgumentException("source identity mismatch");
         if (!root.get("view").equals(view(program))) throw new IllegalArgumentException("program view mismatch");
-        Set<String> keys = new HashSet<>(); AddressSet dataRanges = new AddressSet();
-        for (JsonElement e : root.getAsJsonArray("comments")) {
-            JsonObject row = e.getAsJsonObject(); resolve(program, row);
-            CommentType.valueOf(row.get("kind").getAsString()); row.get("text").getAsString();
-            if (!keys.add("comment" + row.get("space") + row.get("offset") + row.get("kind"))) throw new IllegalArgumentException("duplicate comment");
-        }
-        for (JsonElement e : root.getAsJsonArray("symbols")) {
-            JsonObject row = e.getAsJsonObject(); resolve(program, row);
-            String kind = row.get("kind").getAsString(), source = row.get("source").getAsString();
-            if (!(kind.equals("label") || kind.equals("function")) || !(source.equals("USER_DEFINED") || source.equals("IMPORTED"))) throw new IllegalArgumentException("invalid symbol kind or source");
-            if (row.get("name").getAsString().isBlank()) throw new IllegalArgumentException("empty symbol name");
-            for (JsonElement part : row.getAsJsonArray("namespace")) if (part.getAsString().isBlank()) throw new IllegalArgumentException("empty namespace");
-            String key = "symbol" + row.get("space") + row.get("offset") + row.get("namespace") + row.get("name");
-            if (!keys.add(key)) throw new IllegalArgumentException("duplicate symbol");
-        }
+        for (JsonElement e : root.getAsJsonArray("comments")) resolve(program, e.getAsJsonObject());
+        for (JsonElement e : root.getAsJsonArray("symbols")) resolve(program, e.getAsJsonObject());
         for (JsonElement e : root.getAsJsonArray("data")) {
             JsonObject row = e.getAsJsonObject(); Address start = resolve(program, row), end = end(start, row);
-            if (!program.getMemory().contains(start, end) || dataRanges.intersects(start, end)) throw new IllegalArgumentException("invalid or overlapping data range: " + start);
-            dataRanges.add(start, end);
+            if (!program.getMemory().contains(start, end)) throw new IllegalArgumentException("unmapped data range: " + start);
             DataType type = resolveType(program, row.getAsJsonObject("type"));
             int length = row.get("length").getAsInt();
             if (length <= 0 || (type.getLength() > 0 && type.getLength() != length)
@@ -418,7 +410,7 @@ public final class AnnotationService {
         for (JsonElement part : components) {
             String name = part.getAsString();
             Namespace existing = program.getSymbolTable().getNamespace(name, namespace);
-            if (existing == null) existing = program.getSymbolTable().createNameSpace(namespace, name, SourceType.USER_DEFINED);
+            if (existing == null) throw new IllegalArgumentException("namespace does not exist: " + name);
             namespace = existing;
         }
         return namespace;
@@ -426,6 +418,7 @@ public final class AnnotationService {
     private static Map<String, Object> apply(Program program, JsonObject root) throws Exception {
         int applied = 0, unchanged = 0;
         List<Map<String, Object>> overwritten = new ArrayList<>();
+        List<Map<String, Object>> skipped = new ArrayList<>();
         var listing = program.getListing();
         for (JsonElement e : root.getAsJsonArray("data")) {
             JsonObject row = e.getAsJsonObject(); Address start = resolve(program, row);
@@ -440,8 +433,12 @@ public final class AnnotationService {
             }
             if (changed) applied++; else unchanged++;
         }
-        for (JsonElement e : root.getAsJsonArray("symbols")) {
-            JsonObject row = e.getAsJsonObject(); Address start = resolve(program, row); String name = row.get("name").getAsString();
+        List<JsonObject> symbolRows = new ArrayList<>();
+        for (JsonElement e : root.getAsJsonArray("symbols")) symbolRows.add(e.getAsJsonObject());
+        symbolRows.sort(Comparator.comparingInt((JsonObject row) -> row.get("kind").getAsString().equals("function") ? 0 : 1)
+            .thenComparingInt(row -> row.getAsJsonArray("namespace").size()));
+        for (JsonObject row : symbolRows) {
+            Address start = resolve(program, row); String name = row.get("name").getAsString();
             Namespace ns = namespace(program, row.getAsJsonArray("namespace")); SourceType source = SourceType.valueOf(row.get("source").getAsString());
             Symbol symbol = program.getSymbolTable().getSymbol(name, start, ns); boolean changed = false;
             Function function = row.get("kind").getAsString().equals("function") ? program.getFunctionManager().getFunctionAt(start) : null;
@@ -460,9 +457,13 @@ public final class AnnotationService {
             }
             if (row.get("primary").getAsBoolean() && !symbol.isPrimary()) {
                 Symbol primary = program.getSymbolTable().getPrimarySymbol(start);
-                if (primary != null) overwritten.add(JsonHelper.mapOf("kind", "primary_symbol", "address", start.toString(true), "name", primary.getName(true)));
-                if (!symbol.setPrimary()) throw new IllegalStateException("could not set primary symbol at " + start);
-                changed = true;
+                if (program.getFunctionManager().getFunctionAt(start) != null) {
+                    skipped.add(JsonHelper.mapOf("kind", "primary_symbol", "address", start.toString(true), "name", name));
+                } else {
+                    if (primary != null) overwritten.add(JsonHelper.mapOf("kind", "primary_symbol", "address", start.toString(true), "name", primary.getName(true)));
+                    if (!symbol.setPrimary()) throw new IllegalStateException("could not set primary symbol at " + start);
+                    changed = true;
+                }
             }
             if (changed) applied++; else unchanged++;
         }
@@ -473,6 +474,6 @@ public final class AnnotationService {
             if (old != null) overwritten.add(JsonHelper.mapOf("kind", kind.name(), "address", start.toString(true), "text", old));
             listing.setComment(start, kind, text); applied++;
         }
-        return JsonHelper.mapOf("applied", applied, "unchanged", unchanged, "overwritten", overwritten);
+        return JsonHelper.mapOf("applied", applied, "unchanged", unchanged, "overwritten", overwritten, "skipped", skipped);
     }
 }
