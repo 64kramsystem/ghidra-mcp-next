@@ -12,6 +12,9 @@ Complete version history for the GhidraMCP-next project.
 - Roll back variable retypes when the requested type is not persisted.
 - Retry saves briefly when an active transaction prevents locking.
 - Report native decompiler initialization errors and dispose failed interfaces.
+
+### Changed
+
 - Signal failed bridge and management calls as MCP errors.
 - Reject fractional and out-of-range integer parameters instead of truncating them.
 
