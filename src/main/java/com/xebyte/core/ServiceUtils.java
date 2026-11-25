@@ -15,7 +15,6 @@ import ghidra.program.model.symbol.Symbol;
 import ghidra.program.model.symbol.SymbolIterator;
 import ghidra.program.model.symbol.SymbolTable;
 import ghidra.program.model.symbol.SymbolType;
-import ghidra.util.Msg;
 
 import java.util.*;
 import java.util.regex.Matcher;
@@ -938,7 +937,7 @@ public final class ServiceUtils {
      * Maps common C type names to Ghidra built-in DataType instances.
      */
     public static DataType resolveWellKnownType(String typeName) {
-        switch (typeName.toLowerCase()) {
+        switch (typeName.toLowerCase(Locale.ROOT)) {
             case "int":        return IntegerDataType.dataType;
             case "uint":       return UnsignedIntegerDataType.dataType;
             case "short":      return ShortDataType.dataType;
@@ -946,7 +945,10 @@ public final class ServiceUtils {
             case "long":       return LongDataType.dataType;
             case "ulong":      return UnsignedLongDataType.dataType;
             case "longlong":
+            case "__int64":
             case "long long":  return LongLongDataType.dataType;
+            case "unsigned __int64":
+            case "ulonglong":  return UnsignedLongLongDataType.dataType;
             case "char":       return CharDataType.dataType;
             case "uchar":      return UnsignedCharDataType.dataType;
             case "float":      return FloatDataType.dataType;
@@ -992,142 +994,157 @@ public final class ServiceUtils {
      * @return The resolved DataType, or null if not found
      */
     public static DataType resolveDataType(DataTypeManager dtm, String typeName) {
-        // ZERO: Map common C type names to Ghidra built-in DataType instances
-        DataType wellKnown = resolveWellKnownType(typeName);
-        if (wellKnown != null) {
-            Msg.info(ServiceUtils.class, "Resolved well-known type: " + typeName + " -> " + wellKnown.getName());
-            return wellKnown;
+        return resolveDataType(dtm, typeName, true);
+    }
+
+    static DataType resolveDataType(DataTypeManager dtm, String typeName,
+                                    boolean allowVoidPointerFallback) {
+        String name = typeName.trim();
+        if (name.isEmpty()) {
+            return null;
         }
 
-        // FIRST: Try Ghidra builtin types in root category
-        DataType builtinType = dtm.getDataType("/" + typeName);
-        if (builtinType != null) {
-            Msg.info(ServiceUtils.class, "Found builtin data type: " + builtinType.getPathName());
-            return builtinType;
+        boolean qualified = name.contains("/");
+        String path = name.startsWith("/") ? name : "/" + name;
+        DataType type = dtm.getDataType(path);
+        if (type == null && qualified && !path.equals(name)) {
+            type = dtm.getDataType(name);
+        }
+        if (type != null) {
+            return type;
+        }
+        if (!qualified) {
+            List<DataType> matches = new ArrayList<>();
+            dtm.findDataTypes(name, matches);
+            // Ghidra also returns .conflict variants of the requested name.
+            matches.removeIf(match -> !match.getName().equals(name));
+            if (matches.size() > 1) {
+                List<String> paths = matches.stream().map(DataType::getPathName).sorted().toList();
+                throw new IllegalArgumentException("ambiguous datatype name: " + name + " matches " + paths);
+            }
+            if (!matches.isEmpty()) {
+                return matches.getFirst();
+            }
+            DataType wellKnown = resolveWellKnownType(name);
+            if (wellKnown != null) {
+                return bindBuiltInDataType(dtm, name, wellKnown, false);
+            }
+            type = searchByNameInAllCategories(dtm, name);
+            if (type != null) {
+                return type;
+            }
         }
 
-        // SECOND: Try lowercase version of builtin types
-        DataType builtinTypeLower = dtm.getDataType("/" + typeName.toLowerCase());
-        if (builtinTypeLower != null) {
-            Msg.info(ServiceUtils.class, "Found builtin data type (lowercase): " + builtinTypeLower.getPathName());
-            return builtinTypeLower;
+        DataTypeManager builtIns = BuiltInDataTypeManager.getDataTypeManager();
+        type = qualified ? builtIns.getDataType(path)
+                         : searchByNameInAllCategories(builtIns, name);
+        if (type != null) {
+            return bindBuiltInDataType(dtm, name, type, false);
         }
 
-        // THIRD: Search all categories as fallback
-        DataType dataType = findDataTypeByNameInAllCategories(dtm, typeName);
-        if (dataType != null) {
-            Msg.info(ServiceUtils.class, "Found data type in categories: " + dataType.getPathName());
-            return dataType;
-        }
-
-        // Check for array syntax: "type[count]"
-        if (typeName.contains("[") && typeName.endsWith("]")) {
-            int bracketPos = typeName.indexOf('[');
-            String baseTypeName = typeName.substring(0, bracketPos);
-            String countStr = typeName.substring(bracketPos + 1, typeName.length() - 1);
-
+        int bracket = name.indexOf('[');
+        if (bracket > 0 && name.endsWith("]")) {
+            int count;
             try {
-                int count = Integer.parseInt(countStr);
-                DataType baseType = resolveDataType(dtm, baseTypeName);
-
-                if (baseType != null && count > 0) {
-                    ArrayDataType arrayType = new ArrayDataType(baseType, count, baseType.getLength());
-                    Msg.info(ServiceUtils.class, "Auto-created array type: " + typeName +
-                            " (base: " + baseType.getName() + ", count: " + count +
-                            ", total size: " + arrayType.getLength() + " bytes)");
-                    return arrayType;
-                } else if (baseType == null) {
-                    Msg.error(ServiceUtils.class, "Cannot create array: base type '" + baseTypeName + "' not found");
-                    return null;
-                }
+                count = Integer.parseInt(name.substring(bracket + 1, name.length() - 1).trim());
             } catch (NumberFormatException e) {
-                Msg.error(ServiceUtils.class, "Invalid array count in type: " + typeName);
                 return null;
             }
+            DataType element = resolveDataType(dtm, name.substring(0, bracket), allowVoidPointerFallback);
+            int elementLength = element == null ? -1 : element.getAlignedLength();
+            if (elementLength < 1 || count < 1 || count > Integer.MAX_VALUE / elementLength) {
+                return null;
+            }
+            return new ArrayDataType(element, count, -1, dtm);
         }
 
-        // Check for C-style pointer types (type*)
-        if (typeName.endsWith("*")) {
-            String baseTypeName = typeName.substring(0, typeName.length() - 1).trim();
-
-            if (baseTypeName.equals("void") || baseTypeName.isEmpty()) {
-                Msg.info(ServiceUtils.class, "Creating void* pointer type");
-                return new PointerDataType(dtm.getDataType("/void"));
+        if (name.endsWith("*")) {
+            String base = name.substring(0, name.length() - 1).trim();
+            if (base.isEmpty() || base.equalsIgnoreCase("void")) {
+                return new PointerDataType(dtm.getDataType("/void"), dtm);
             }
-
-            DataType baseType = resolveDataType(dtm, baseTypeName);
-            if (baseType != null) {
-                Msg.info(ServiceUtils.class, "Creating pointer type: " + typeName +
-                        " (base: " + baseType.getName() + ")");
-                return new PointerDataType(baseType);
+            type = resolveDataType(dtm, base, allowVoidPointerFallback);
+        } else if (!qualified && name.startsWith("P") && name.length() > 1) {
+            String base = name.substring(1);
+            if (base.equals("VOID")) {
+                return new PointerDataType(dtm.getDataType("/void"), dtm);
             }
-
-            Msg.warn(ServiceUtils.class, "Base type not found for " + typeName + ", defaulting to void*");
-            return new PointerDataType(dtm.getDataType("/void"));
+            type = searchByNameInAllCategories(dtm, base);
+        } else {
+            return null;
         }
-
-        // Check for Windows-style pointer types (PXXX)
-        if (typeName.startsWith("P") && typeName.length() > 1) {
-            String baseTypeName = typeName.substring(1);
-
-            if (baseTypeName.equals("VOID")) {
-                return new PointerDataType(dtm.getDataType("/void"));
-            }
-
-            DataType baseType = findDataTypeByNameInAllCategories(dtm, baseTypeName);
-            if (baseType != null) {
-                return new PointerDataType(baseType);
-            }
-
-            Msg.warn(ServiceUtils.class, "Base type not found for " + typeName + ", defaulting to void*");
-            return new PointerDataType(dtm.getDataType("/void"));
+        if (type != null) {
+            return new PointerDataType(type, dtm);
         }
+        return allowVoidPointerFallback ? new PointerDataType(dtm.getDataType("/void"), dtm) : null;
+    }
 
-        // Handle common built-in types via DTM path lookup
-        switch (typeName.toLowerCase()) {
-            case "int":
-            case "long":
-                return dtm.getDataType("/int");
-            case "uint":
-            case "unsigned int":
-            case "unsigned long":
-            case "dword":
-                return dtm.getDataType("/uint");
-            case "short":
-                return dtm.getDataType("/short");
-            case "ushort":
-            case "unsigned short":
-            case "word":
-                return dtm.getDataType("/ushort");
-            case "char":
-            case "byte":
-                return dtm.getDataType("/char");
-            case "uchar":
-            case "unsigned char":
-                return dtm.getDataType("/uchar");
-            case "longlong":
-            case "__int64":
-                return dtm.getDataType("/longlong");
-            case "ulonglong":
-            case "unsigned __int64":
-                return dtm.getDataType("/ulonglong");
-            case "bool":
-            case "boolean":
-                return dtm.getDataType("/bool");
-            case "float":
-                return dtm.getDataType("/dword");
-            case "double":
-                return dtm.getDataType("/double");
-            case "void":
-                return dtm.getDataType("/void");
-            default:
-                DataType directType = dtm.getDataType("/" + typeName);
-                if (directType != null) {
-                    return directType;
+    static Collection<DataType> searchDataTypes(DataTypeManager dtm, String pattern) {
+        String needle = pattern.toLowerCase(Locale.ROOT);
+        Map<String, DataType> matches = new LinkedHashMap<>();
+        for (DataTypeManager manager : List.of(dtm, BuiltInDataTypeManager.getDataTypeManager())) {
+            Iterator<DataType> types = manager.getAllDataTypes();
+            while (types.hasNext()) {
+                DataType type = types.next();
+                String path = type.getPathName();
+                if (type.getName().toLowerCase(Locale.ROOT).contains(needle)
+                        || path.toLowerCase(Locale.ROOT).contains(needle)) {
+                    matches.computeIfAbsent(path, ignored -> type.clone(dtm));
                 }
-                Msg.error(ServiceUtils.class, "Unknown type: " + typeName);
-                return null;
+            }
         }
+        try {
+            DataType exact = resolveDataType(dtm, pattern, false);
+            if (exact != null) {
+                matches.putIfAbsent(exact.getPathName(), exact);
+            }
+        } catch (IllegalArgumentException ignored) {
+            // A partial-name search can still list matches when exact resolution fails.
+        }
+        return matches.values();
+    }
+
+    static DataType bindBuiltInDataType(DataTypeManager dtm, String name,
+                                       DataType builtIn, boolean splitPointerSource) {
+        DataType candidate = builtIn.clone(dtm);
+        DataType existing = dtm.getDataType(candidate.getPathName());
+        if (existing == null) {
+            return candidate;
+        }
+        if (existing.isEquivalent(candidate) || candidate.isEquivalent(existing)) {
+            return existing;
+        }
+        boolean existingPlaceable =
+            existing.getLength() == candidate.getLength() && isFixedPlaceable(existing);
+        if (splitPointerSource && existingPlaceable && existing.getLength() == 1) {
+            return existing;
+        }
+        String request = splitPointerSource
+            ? "requested=" + name + ", usage=split_pointer_source"
+            : "type_name=" + name;
+        String alternative = !splitPointerSource && existingPlaceable
+            ? "; or request the existing program datatype with type_name=" + existing.getName()
+            : "";
+        throw new IllegalArgumentException(
+            "well-known datatype path conflicts: " + request
+                + ", canonical_path=" + candidate.getPathName()
+                + ", occupant_length=" + existing.getLength()
+                + "; rename or remove the program datatype at " + candidate.getPathName()
+                + alternative);
+    }
+
+    static boolean isFixedPlaceable(DataType type) {
+        Set<DataType> visited = Collections.newSetFromMap(new IdentityHashMap<>());
+        while (type != null && visited.add(type)
+                && type.getLength() > 0 && !Undefined.isUndefined(type)
+                && !(type instanceof Dynamic) && !(type instanceof FactoryDataType)
+                && !(type instanceof BitFieldDataType)) {
+            if (!(type instanceof TypeDef typeDef)) {
+                return true;
+            }
+            type = typeDef.getDataType();
+        }
+        return false;
     }
 
     /**

@@ -7,9 +7,6 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.xebyte.headless.DirectThreadingStrategy;
 import com.xebyte.headless.HeadlessProgramProvider;
-import ghidra.GhidraApplicationLayout;
-import ghidra.framework.Application;
-import ghidra.framework.ApplicationConfiguration;
 import ghidra.program.database.ProgramBuilder;
 import ghidra.program.database.ProgramDB;
 import ghidra.program.model.data.ArrayDataType;
@@ -19,7 +16,6 @@ import ghidra.program.model.data.StructureDataType;
 import ghidra.program.model.data.DataTypeConflictHandler;
 import ghidra.program.model.listing.CommentType;
 import ghidra.program.model.symbol.SourceType;
-import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import org.junit.After;
@@ -35,12 +31,7 @@ public class AnnotationServiceGhidraTest {
 
     @BeforeClass
     public static void initializeGhidra() throws Exception {
-        if (!Application.isInitialized()) {
-            ApplicationConfiguration config = new ApplicationConfiguration();
-            config.setInitializeLogging(false);
-            Application.initializeApplication(new GhidraApplicationLayout(
-                new File(System.getProperty("ghidra.test.install.dir"))), config);
-        }
+        GhidraTestRuntime.initialize();
     }
 
     @Before

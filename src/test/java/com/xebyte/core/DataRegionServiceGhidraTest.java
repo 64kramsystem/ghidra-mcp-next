@@ -8,7 +8,6 @@ import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
-import java.io.File;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -25,11 +24,9 @@ import com.google.gson.JsonParser;
 import com.xebyte.headless.DirectThreadingStrategy;
 import com.xebyte.headless.HeadlessProgramProvider;
 
-import ghidra.GhidraApplicationLayout;
-import ghidra.framework.Application;
-import ghidra.framework.ApplicationConfiguration;
 import ghidra.program.database.ProgramBuilder;
 import ghidra.program.database.ProgramDB;
+import ghidra.program.model.data.Array;
 import ghidra.program.model.data.BitFieldDataType;
 import ghidra.program.model.data.ByteDataType;
 import ghidra.program.model.data.CategoryPath;
@@ -37,7 +34,6 @@ import ghidra.program.model.data.DataType;
 import ghidra.program.model.data.DataTypeConflictHandler;
 import ghidra.program.model.data.InvalidDataTypeException;
 import ghidra.program.model.data.StructureDataType;
-import ghidra.program.model.data.StringDataType;
 import ghidra.program.model.data.TypedefDataType;
 import ghidra.program.model.data.TypeDef;
 import ghidra.program.model.data.Undefined1DataType;
@@ -56,19 +52,11 @@ public class DataRegionServiceGhidraTest {
     private ProgramBuilder builder;
     private ProgramDB program;
     private DataRegionService service;
+    private DataTypeService types;
 
     @BeforeClass
     public static void initializeGhidra() throws Exception {
-        String installDir = System.getProperty("ghidra.test.install.dir");
-        org.junit.Assert.assertTrue("Pass -Dghidra.test.install.dir for Ghidra 12.2 tests", installDir != null && !installDir.isBlank());
-        if (!Application.isInitialized()) {
-            ApplicationConfiguration configuration =
-                new ApplicationConfiguration();
-            configuration.setInitializeLogging(false);
-            Application.initializeApplication(
-                new GhidraApplicationLayout(new File(installDir)),
-                configuration);
-        }
+        GhidraTestRuntime.initialize();
     }
 
     @Before
@@ -88,17 +76,15 @@ public class DataRegionServiceGhidraTest {
             program.getDataTypeManager().addDataType(
                 WordDataType.dataType,
                 DataTypeConflictHandler.REPLACE_HANDLER);
-            program.getDataTypeManager().addDataType(
-                StringDataType.dataType,
-                DataTypeConflictHandler.REPLACE_HANDLER);
         }
         finally {
             program.endTransaction(transaction, true);
         }
         HeadlessProgramProvider provider = new HeadlessProgramProvider();
         provider.setCurrentProgram(program);
-        service = new DataRegionService(
-            provider, new DirectThreadingStrategy());
+        DirectThreadingStrategy threading = new DirectThreadingStrategy();
+        service = new DataRegionService(provider, threading);
+        types = new DataTypeService(provider, threading);
     }
 
     @After
@@ -869,15 +855,120 @@ public class DataRegionServiceGhidraTest {
     }
 
     @Test
-    public void dynamicAndTopLevelBitFieldTypesFailInPreview()
-            throws Exception {
-        Map<String, Object> dynamic = contiguous(
-            "0x2b00", "0x2b03", "string");
-        Response dynamicResult = service.applyDataRegions(
-            List.of(dynamic), true, "");
-        assertTrue(dynamicResult.toJson(),
-            dynamicResult instanceof Response.Err);
+    public void lookupAndSearchFindTypesBeforeTheyAreApplied() {
+        assertNull(program.getDataTypeManager().getDataType("/char"));
+        assertNull(program.getDataTypeManager().getDataType("/string"));
+        assertTypeSize("dword", 4);
+        assertTypeSize("uint8", 1);
+        assertTypeSize("char", 1);
+        assertTypeSize("char[37]", 37);
+        assertTypeSize("string", -1);
+        assertTypeSize("TerminatedCString", -1);
+        assertTypeSize("unicode", -1);
+        assertTypeSize("/Record6", 6);
+        assertTrue(types.searchDataTypes("str", 0, 100, "").toJson()
+            .contains("TerminatedCString | Size: -1 | Path: /TerminatedCString"));
+        assertTrue(types.searchDataTypes("string", 0, 100, "").toJson()
+            .contains("string | Size: -1 | Path: /string"));
+        assertTrue(types.searchDataTypes("CHAR", 0, 100, "").toJson()
+            .contains("char | Size: 1 | Path: /char"));
+        assertTrue(types.searchDataTypes("uint8", 0, 100, "").toJson()
+            .contains("byte | Size: 1 | Path: /byte"));
+        assertTrue(types.searchDataTypes("char[37]", 0, 100, "").toJson()
+            .contains("char[37] | Size: 37 | Path: /char[37]"));
+    }
 
+    @Test
+    public void bareTypeLookupIgnoresConflictVariants() {
+        CategoryPath category = new CategoryPath("/Cat");
+        builder.addDataType(new StructureDataType(category, "Foo", 2));
+        builder.withTransaction(() -> program.getDataTypeManager().addDataType(
+            new StructureDataType(category, "Foo", 4), DataTypeConflictHandler.DEFAULT_HANDLER));
+
+        assertNotNull(program.getDataTypeManager().getDataType("/Cat/Foo.conflict"));
+        assertTypeSize("Foo", 2);
+    }
+
+    @Test
+    public void ambiguousBareTypeLookupListsBothPaths() {
+        builder.addDataType(new StructureDataType(new CategoryPath("/CatA"), "Foo", 2));
+        builder.addDataType(new StructureDataType(new CategoryPath("/CatB"), "Foo", 4));
+
+        Response result = types.getTypeSize("Foo", "");
+        assertTrue(result.toJson(), result instanceof Response.Err);
+        assertTrue(result.toJson(), result.toJson().contains("ambiguous datatype name: Foo"));
+        assertTrue(result.toJson(), result.toJson().contains("/CatA/Foo"));
+        assertTrue(result.toJson(), result.toJson().contains("/CatB/Foo"));
+    }
+
+    private void assertTypeSize(String name, int size) {
+        Response result = types.getTypeSize(name, "");
+        assertTrue(result.toJson(), result instanceof Response.Text);
+        assertTrue(result.toJson(), result.toJson().contains("Size: " + size + " bytes\n"));
+    }
+
+    @Test
+    public void applyDataTypeCreatesBuiltInStringsAndArrays() throws Exception {
+        builder.setBytes("0x2b00", "48 69 00");
+        Response string = types.applyDataType("0x2b00", "TerminatedCString", true, "");
+        assertTrue(string.toJson(), string instanceof Response.Text);
+        Data data = program.getListing().getDefinedDataAt(builder.addr("0x2b00"));
+        assertEquals("/TerminatedCString", data.getDataType().getPathName());
+        assertEquals(3, data.getLength());
+        assertEquals("Hi", data.getValue());
+
+        Response array = types.applyDataType("0x2b10", "char[37]", true, "");
+        assertTrue(array.toJson(), array instanceof Response.Text);
+        assertCharArray("0x2b10");
+    }
+
+    @Test
+    public void applyDataRegionsPreviewsAndCommitsStringsAndArrays() throws Exception {
+        builder.setBytes("0x2b00", "4e 61 6d 65 00");
+        builder.setBytes("0x2b10", "48 69 00");
+        builder.setBytes("0x2b50", "41 00 a9 03");
+        List<Map<String, Object>> regions = List.of(
+            contiguous("0x2b00", "0x2b03", "string"),
+            contiguous("0x2b10", "0x2b12", "TerminatedCString"),
+            contiguous("0x2b20", "0x2b44", "char[37]"),
+            contiguous("0x2b50", "0x2b53", "unicode"));
+        Response tooShort = service.applyDataRegions(List.of(
+            contiguous("0x2b10", "0x2b11", "TerminatedCString")), true, "");
+        assertTrue(tooShort.toJson(), tooShort instanceof Response.Err);
+        assertTrue(tooShort.toJson().contains("string does not fit in region"));
+
+        JsonObject preview = response(service.applyDataRegions(regions, true, ""));
+        assertEquals(4, preview.getAsJsonArray("regions").get(0).getAsJsonObject()
+            .get("data_length").getAsInt());
+        assertNull(program.getListing().getDefinedDataAt(builder.addr("0x2b00")));
+
+        response(service.applyDataRegions(regions, false, ""));
+        Data fixed = program.getListing().getDefinedDataAt(builder.addr("0x2b00"));
+        assertEquals("/string", fixed.getDataType().getPathName());
+        assertEquals(4, fixed.getLength());
+        assertEquals("Name", fixed.getValue());
+        Data terminated = program.getListing().getDefinedDataAt(builder.addr("0x2b10"));
+        assertEquals("/TerminatedCString", terminated.getDataType().getPathName());
+        assertEquals(3, terminated.getLength());
+        assertEquals("Hi", terminated.getValue());
+        assertCharArray("0x2b20");
+        Data unicode = program.getListing().getDefinedDataAt(builder.addr("0x2b50"));
+        assertEquals("/unicode", unicode.getDataType().getPathName());
+        assertEquals(4, unicode.getLength());
+        assertEquals("AΩ", unicode.getValue());
+    }
+
+    private void assertCharArray(String address) {
+        Data data = program.getListing().getDefinedDataAt(builder.addr(address));
+        assertEquals(37, data.getLength());
+        assertTrue(data.getDataType() instanceof Array);
+        Array array = (Array) data.getDataType();
+        assertEquals(37, array.getNumElements());
+        assertEquals("/char", array.getDataType().getPathName());
+    }
+
+    @Test
+    public void topLevelBitFieldTypesFailInPreview() throws Exception {
         DataType bitField;
         TestBitFieldDataType candidate =
             new TestBitFieldDataType();

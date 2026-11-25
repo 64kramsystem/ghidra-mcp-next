@@ -102,7 +102,8 @@ public final class DataRegionService {
         path = "/apply_data_regions",
         method = "POST",
         description =
-            "Atomically define fixed data ranges and generic pointer tables")
+            "Atomically define data ranges and generic pointer tables. "
+                + "A string region defines one string within the inclusive start and end addresses.")
     public Response applyDataRegions(
             @Param(
                 value = "regions",

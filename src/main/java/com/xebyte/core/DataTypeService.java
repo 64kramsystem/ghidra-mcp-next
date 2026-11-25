@@ -4,6 +4,7 @@ import ghidra.program.model.address.Address;
 import ghidra.program.model.data.*;
 import ghidra.program.model.listing.*;
 import ghidra.program.model.mem.Memory;
+import ghidra.program.model.mem.MemoryBufferImpl;
 import ghidra.program.model.symbol.SourceType;
 import ghidra.program.model.symbol.Symbol;
 import ghidra.program.model.symbol.SymbolTable;
@@ -66,23 +67,12 @@ public class DataTypeService {
         Program program = pe.program();
         if (pattern == null || pattern.isEmpty()) return Response.err("Search pattern is required");
 
-        List<String> matches = new ArrayList<>();
-        DataTypeManager dtm = program.getDataTypeManager();
-
-        Iterator<DataType> allTypes = dtm.getAllDataTypes();
-        while (allTypes.hasNext()) {
-            DataType dt = allTypes.next();
-            String name = dt.getName();
-            String path = dt.getPathName();
-
-            if (name.toLowerCase().contains(pattern.toLowerCase()) ||
-                path.toLowerCase().contains(pattern.toLowerCase())) {
-                matches.add(String.format("%s | Size: %d | Path: %s",
-                           name, dt.getLength(), path));
-            }
-        }
-
-        Collections.sort(matches);
+        List<String> matches = ServiceUtils.searchDataTypes(program.getDataTypeManager(), pattern)
+            .stream()
+            .map(type -> String.format("%s | Size: %d | Path: %s",
+                type.getName(), type.getLength(), type.getPathName()))
+            .sorted()
+            .toList();
         return Response.text(ServiceUtils.paginateList(matches, offset, limit));
     }
 
@@ -98,8 +88,12 @@ public class DataTypeService {
         Program program = pe.program();
         if (typeName == null || typeName.isEmpty()) return Response.err("Type name is required");
 
-        DataTypeManager dtm = program.getDataTypeManager();
-        DataType dataType = ServiceUtils.findDataTypeByNameInAllCategories(dtm, typeName);
+        DataType dataType;
+        try {
+            dataType = ServiceUtils.resolveDataType(program.getDataTypeManager(), typeName);
+        } catch (IllegalArgumentException e) {
+            return Response.err(e.getMessage());
+        }
 
         if (dataType == null) {
             return Response.err("Data type not found: " + typeName);
@@ -753,8 +747,12 @@ public class DataTypeService {
             return Response.err(ServiceUtils.getLastParseError());
         }
 
-        DataTypeManager dtm = program.getDataTypeManager();
-        DataType dataType = ServiceUtils.resolveDataType(dtm, typeName);
+        DataType dataType;
+        try {
+            dataType = ServiceUtils.resolveDataType(program.getDataTypeManager(), typeName);
+        } catch (IllegalArgumentException e) {
+            return Response.err(e.getMessage());
+        }
 
         if (dataType == null) {
             return Response.err("Unknown data type: " + typeName + ". " +
@@ -774,23 +772,25 @@ public class DataTypeService {
         // with transaction commit/rollback handled centrally.
         try {
             return threadingStrategy.executeWrite(program, "Apply Data Type: " + typeName, () -> {
+                    int expectedSize = dataType instanceof AbstractStringDataType stringType
+                        ? stringType.getLength(new MemoryBufferImpl(program.getMemory(), address), -1)
+                        : dataType.getLength();
                     // Clear existing code/data if requested
                     if (clearExisting) {
                         CodeUnit existingCU = listing.getCodeUnitAt(address);
                         if (existingCU != null) {
                             listing.clearCodeUnits(address,
-                                address.add(Math.max(dataType.getLength() - 1, 0)), false);
+                                address.add(Math.max(expectedSize - 1, 0)), false);
                         }
                     }
 
                     // Apply the data type
-                    Data data = listing.createData(address, dataType);
+                    Data data = listing.createData(address, dataType, expectedSize);
 
                     // Validate size matches expectation
-                    int expectedSize = dataType.getLength();
                     int actualSize = (data != null) ? data.getLength() : 0;
 
-                    if (actualSize != expectedSize) {
+                    if (expectedSize >= 0 && actualSize != expectedSize) {
                         Msg.warn(this, String.format("Size mismatch: expected %d bytes but applied %d bytes at %s",
                                                      expectedSize, actualSize, addressStr));
                     }

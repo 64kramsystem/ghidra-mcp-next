@@ -2,8 +2,6 @@ package com.xebyte.core;
 
 import java.math.BigInteger;
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -14,17 +12,15 @@ import java.util.Set;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressSet;
 import ghidra.program.model.address.AddressSpace;
+import ghidra.program.model.data.AbstractStringDataType;
 import ghidra.program.model.data.ArrayDataType;
-import ghidra.program.model.data.BitFieldDataType;
+import ghidra.program.model.data.ByteDataType;
 import ghidra.program.model.data.DataType;
-import ghidra.program.model.data.Dynamic;
-import ghidra.program.model.data.FactoryDataType;
-import ghidra.program.model.data.TypeDef;
-import ghidra.program.model.data.Undefined;
 import ghidra.program.model.listing.CommentType;
 import ghidra.program.model.listing.Data;
 import ghidra.program.model.listing.Program;
 import ghidra.program.model.mem.Memory;
+import ghidra.program.model.mem.MemoryBufferImpl;
 import ghidra.program.model.symbol.Namespace;
 import ghidra.program.model.symbol.RefType;
 import ghidra.program.model.symbol.Reference;
@@ -398,8 +394,12 @@ final class DataRegionCore {
             for (DataAction action : region.dataActions()) {
                 taskMonitor.checkCancelled();
                 if ("create".equals(action.action())) {
-                    program.getListing().createData(
-                        action.address(), action.dataType());
+                    Data data = program.getListing().createData(
+                        action.address(), action.dataType(), action.length());
+                    if (data == null || data.getLength() != action.length()) {
+                        throw new IllegalStateException(
+                            "created data length differs from plan at " + action.address());
+                    }
                 }
             }
             if (region.platePlan() != null) {
@@ -419,10 +419,39 @@ final class DataRegionCore {
         Address start = resolve(program, request.start());
         Address end = resolve(program, request.end());
         requireSameSpace(start, end);
-        DataType type = resolveFixedType(program, request.typeName());
-        int length = type.getLength();
-        BigInteger stride = request.stride() == null
-            ? BigInteger.valueOf(length) : request.stride();
+        DataType type = ServiceUtils.resolveDataType(
+            program.getDataTypeManager(), request.typeName(), false);
+        if (type == null) {
+            throw new IllegalArgumentException(
+                "datatype not found: " + request.typeName());
+        }
+        int length;
+        BigInteger stride;
+        if (type instanceof AbstractStringDataType stringType) {
+            if (request.stride() != null) {
+                throw new IllegalArgumentException("a string region defines one string without stride");
+            }
+            stride = end.getOffsetAsBigInteger()
+                .subtract(start.getOffsetAsBigInteger()).add(BigInteger.ONE);
+            if (stride.signum() <= 0) {
+                throw new IllegalArgumentException("end must not precede start");
+            }
+            int span;
+            try {
+                span = stride.intValueExact();
+            } catch (ArithmeticException e) {
+                throw new IllegalArgumentException(
+                    "string region size exceeds " + Integer.MAX_VALUE + " bytes", e);
+            }
+            length = stringType.getLength(new MemoryBufferImpl(program.getMemory(), start), span);
+            if (length <= 0 || length > span) {
+                throw new IllegalArgumentException("string does not fit in region at " + start);
+            }
+        } else {
+            length = requireFixedPlaceable(type, request.typeName()).getLength();
+            stride = request.stride() == null
+                ? BigInteger.valueOf(length) : request.stride();
+        }
         RangeMath math = rangeMath(
             start.getOffsetAsBigInteger(), end.getOffsetAsBigInteger(),
             BigInteger.valueOf(length), stride,
@@ -484,9 +513,8 @@ final class DataRegionCore {
         }
         validateSplitRanges(
             first, second, request.count());
-        DataType byteType = Objects.requireNonNull(
-            bindWellKnownType(program, "byte", true),
-            "well-known byte datatype is unavailable");
+        DataType byteType = ServiceUtils.bindBuiltInDataType(
+            program.getDataTypeManager(), "byte", ByteDataType.dataType, true);
         List<Address> firstSources = new ArrayList<>();
         List<Address> secondSources = new ArrayList<>();
         for (int i = 0; i < request.count(); i++) {
@@ -635,107 +663,12 @@ final class DataRegionCore {
         return space;
     }
 
-    private static DataType resolveFixedType(
-            Program program, String name) {
-        if (name == null || name.isBlank()) {
-            throw new IllegalArgumentException("type_name is required");
-        }
-        DataType type = program.getDataTypeManager().getDataType(name);
-        if (type == null && !name.startsWith("/")) {
-            type = program.getDataTypeManager().getDataType("/" + name);
-        }
-        if (type == null) {
-            List<DataType> matches = new ArrayList<>();
-            program.getDataTypeManager().findDataTypes(name, matches);
-            if (matches.size() == 1) {
-                type = matches.get(0);
-            }
-            else if (matches.size() > 1) {
-                throw new IllegalArgumentException(
-                    "ambiguous datatype name: " + name);
-            }
-        }
-        if (type == null) {
-            type = bindWellKnownType(program, name, false);
-        }
-        if (type == null) {
+    static DataType requireFixedPlaceable(DataType type, String name) {
+        if (!ServiceUtils.isFixedPlaceable(type)) {
             throw new IllegalArgumentException(
-                "datatype not found: " + name);
+                "datatype must be fixed and placeable as top-level data: " + name);
         }
-        return requireFixedPlaceable(type, name);
-    }
-
-    private static DataType bindWellKnownType(
-            Program program, String name, boolean splitPointerSource) {
-        DataType wellKnown =
-            ServiceUtils.resolveWellKnownType(name);
-        if (wellKnown == null) {
-            return null;
-        }
-        DataType candidate =
-            wellKnown.clone(program.getDataTypeManager());
-        DataType existing = program.getDataTypeManager()
-            .getDataType(candidate.getPathName());
-        if (existing == null) {
-            return candidate;
-        }
-        if (existing.isEquivalent(candidate)
-                || candidate.isEquivalent(existing)) {
-            return existing;
-        }
-        boolean existingPlaceable = false;
-        if (existing.getLength() == candidate.getLength()) {
-            try {
-                requireFixedPlaceable(existing, existing.getName());
-                existingPlaceable = true;
-            }
-            catch (IllegalArgumentException ignored) {
-                // Preserve the canonical collision error below.
-            }
-        }
-        if (splitPointerSource
-                && existingPlaceable
-                && existing.getLength() == 1) {
-            return existing;
-        }
-        String request = splitPointerSource
-            ? "requested=" + name + ", usage=split_pointer_source"
-            : "type_name=" + name;
-        String alternative =
-            !splitPointerSource && existingPlaceable
-                ? "; or request the existing program datatype "
-                    + "with type_name=" + existing.getName()
-                : "";
-        throw new IllegalArgumentException(
-            "well-known datatype path conflicts: " + request
-                + ", canonical_path=" + candidate.getPathName()
-                + ", occupant_length=" + existing.getLength()
-                + "; rename or remove the program datatype at "
-                + candidate.getPathName()
-                + alternative);
-    }
-
-    static DataType requireFixedPlaceable(
-            DataType type, String name) {
-        DataType current = type;
-        Set<DataType> visited =
-            Collections.newSetFromMap(new IdentityHashMap<>());
-        while (true) {
-            if (current == null || !visited.add(current)
-                    || current.getLength() <= 0
-                    || Undefined.isUndefined(current)
-                    || current instanceof Dynamic
-                    || current instanceof FactoryDataType
-                    || current instanceof BitFieldDataType) {
-                throw new IllegalArgumentException(
-                    "datatype must be fixed and placeable as top-level data: "
-                        + name);
-            }
-            if (!(current instanceof TypeDef typeDef)) {
-                return type;
-            }
-            current = typeDef.getDataType();
-        }
+        return type;
     }
 
     private Address resolve(Program program, String text) {

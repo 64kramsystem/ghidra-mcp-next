@@ -7,6 +7,11 @@ Complete version history for the GhidraMCP-next project.
 
 ## Unreleased
 
+### Fixed
+
+- Share program, built-in, alias, and array type lookup across `get_type_size`, `search_data_types`, `apply_data_type`, and `apply_data_regions`. A string region defines one string within its inclusive address range.
+- A program type such as a typedef named `DWORD` takes precedence over a matching well-known built-in name.
+
 ## 0.113.1
 
 ### Fixed
