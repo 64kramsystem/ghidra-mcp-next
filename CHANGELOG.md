@@ -7,6 +7,8 @@ Complete version history for the GhidraMCP-next project.
 
 ## Unreleased
 
+## 0.113.2
+
 ### Fixed
 
 - Share program, built-in, alias, and array type lookup across `get_type_size`, `search_data_types`, `apply_data_type`, and `apply_data_regions`. A string region defines one string within its inclusive address range.
