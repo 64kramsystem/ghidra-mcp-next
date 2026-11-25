@@ -207,7 +207,6 @@ public class ProgramOpenOwnershipGhidraTest {
                 program.endTransaction(transaction, true);
             }
             JsonObject refused = json(service.closeProgram("/fixture"));
-            System.out.println("close_program on tool-held changed program: " + refused);
             assertEquals("Save modified program before closing: /fixture",
                 refused.get("error").getAsString());
             verify(pm, never()).closeProgram(program, false);
