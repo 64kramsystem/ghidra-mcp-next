@@ -47,6 +47,7 @@ public class ProgramOpenOwnershipGhidraTest {
     private ProjectData projectData;
     private Project project;
     private ToolManager toolManager;
+    private PluginTool tool;
     private MultiToolProgramProvider provider;
     private ProgramScriptService service;
 
@@ -82,7 +83,7 @@ public class ProgramOpenOwnershipGhidraTest {
 
         project = mock(Project.class);
         toolManager = mock(ToolManager.class);
-        PluginTool tool = mock(PluginTool.class);
+        tool = mock(PluginTool.class);
         when(project.getProjectData()).thenReturn(projectData);
         when(project.getToolManager()).thenReturn(toolManager);
         when(toolManager.getRunningTools()).thenReturn(new PluginTool[0]);
@@ -186,6 +187,33 @@ public class ProgramOpenOwnershipGhidraTest {
 
         JsonObject repeated = json(service.deleteProjectFile("/fixture"));
         assertTrue(repeated.get("error").getAsString().contains("not found"));
+    }
+
+    @Test
+    public void closeRefusesUnsavedToolHeldProgram() throws Exception {
+        Program program = (Program) projectData.getFile("/fixture")
+            .getDomainObject(this, false, false, TaskMonitor.DUMMY);
+        try {
+            ProgramManager pm = mock(ProgramManager.class);
+            when(pm.getAllOpenPrograms()).thenReturn(new Program[] { program });
+            when(tool.getService(ProgramManager.class)).thenReturn(pm);
+            assertEquals("tool", json(service.listOpenPrograms()).getAsJsonArray("programs")
+                .get(0).getAsJsonObject().get("held_by").getAsString());
+
+            int transaction = program.startTransaction("unsaved tool close fixture");
+            try {
+                program.getOptions("MCP test").setString("changed", "yes");
+            } finally {
+                program.endTransaction(transaction, true);
+            }
+            JsonObject refused = json(service.closeProgram("/fixture"));
+            assertEquals("Save modified program before closing: /fixture",
+                refused.get("error").getAsString());
+            verify(pm, never()).closeProgram(program, false);
+            assertFalse(program.isClosed());
+        } finally {
+            program.release(this);
+        }
     }
 
     private static JsonObject json(Response response) {

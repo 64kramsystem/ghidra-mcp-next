@@ -7,6 +7,10 @@ Complete version history for the GhidraMCP-next project.
 
 ## Unreleased
 
+### Fixed
+
+- `close_program` refuses unsaved changes whatever holds the program (previously only MCP-held ones), and both `close_program` and `delete_project_file` re-check on the Swing thread, so a headless close can't open the modal save dialog.
+
 ## 0.113.0
 
 ### Added

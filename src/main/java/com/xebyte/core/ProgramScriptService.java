@@ -272,7 +272,7 @@ public class ProgramScriptService {
     }
 
     @McpTool(path = "/close_program", method = "POST",
-             description = "Close an open program by project path or name; refuses unsaved MCP-held changes")
+             description = "Close an open program by project path or name; refuses unsaved changes")
     public Response closeProgram(
             @Param(value = "name", source = ParamSource.BODY,
                     description = "Program name or project path") String name) {
@@ -284,8 +284,9 @@ public class ProgramScriptService {
         Set<Program> matchingPrograms = Collections.newSetFromMap(new IdentityHashMap<>());
         for (Program program : programProvider.getAllOpenPrograms()) {
             if (programMatches(program, search)) {
-                if (programProvider.ownsProgram(program) && program.isChanged()) {
-                    return Response.err("Save modified MCP-held program before closing: "
+                // A tool-held close would block the EDT on a modal "Save Program?" dialog.
+                if (program.isChanged()) {
+                    return Response.err("Save modified program before closing: "
                         + program.getDomainFile().getPathname());
                 }
                 matchingPrograms.add(program);
@@ -293,6 +294,7 @@ public class ProgramScriptService {
         }
         Set<Program> closedPrograms = Collections.newSetFromMap(new IdentityHashMap<>());
         AtomicReference<String> error = new AtomicReference<>();
+        AtomicReference<String> refused = new AtomicReference<>();
 
         try {
             SwingUtilities.invokeAndWait(() -> {
@@ -300,7 +302,12 @@ public class ProgramScriptService {
                     for (ProgramManager pm : findAllProgramManagers()) {
                         for (Program program : pm.getAllOpenPrograms()) {
                             if (programMatches(program, search)) {
-                                if (pm.closeProgram(program, false)) {
+                                // Re-check on the EDT: a change queued since the pre-check would
+                                // otherwise open the modal "Save Program?" dialog.
+                                if (program.isChanged()) {
+                                    refused.set("Save modified program before closing: "
+                                        + program.getDomainFile().getPathname());
+                                } else if (pm.closeProgram(program, false)) {
                                     closedPrograms.add(program);
                                 }
                             }
@@ -313,6 +320,10 @@ public class ProgramScriptService {
         } catch (Exception e) {
             return Response.err("Failed to close program: " +
                     (e.getMessage() != null ? e.getMessage() : e.toString()));
+        }
+
+        if (refused.get() != null) {
+            return Response.err(refused.get());
         }
 
         for (Program program : matchingPrograms) {
@@ -586,8 +597,14 @@ public class ProgramScriptService {
                 try {
                     for (ProgramManager pm : findAllProgramManagers()) {
                         for (Program program : pm.getAllOpenPrograms()) {
-                            if (programPathEquals(program, filePath)
-                                    && !pm.closeProgram(program, false)) {
+                            if (!programPathEquals(program, filePath)) {
+                                continue;
+                            }
+                            // Re-check on the EDT, as in closeProgram.
+                            if (program.isChanged()) {
+                                closeError.set("Save modified program before deleting: "
+                                    + filePath);
+                            } else if (!pm.closeProgram(program, false)) {
                                 closeError.set("Program could not be closed: " + filePath);
                             }
                         }
