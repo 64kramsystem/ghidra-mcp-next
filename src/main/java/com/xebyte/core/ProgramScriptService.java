@@ -272,7 +272,7 @@ public class ProgramScriptService {
     }
 
     @McpTool(path = "/close_program", method = "POST",
-             description = "Close an open program by project path or name; refuses unsaved MCP-held changes")
+             description = "Close an open program by project path or name; refuses unsaved changes")
     public Response closeProgram(
             @Param(value = "name", source = ParamSource.BODY,
                     description = "Program name or project path") String name) {
@@ -284,8 +284,9 @@ public class ProgramScriptService {
         Set<Program> matchingPrograms = Collections.newSetFromMap(new IdentityHashMap<>());
         for (Program program : programProvider.getAllOpenPrograms()) {
             if (programMatches(program, search)) {
-                if (programProvider.ownsProgram(program) && program.isChanged()) {
-                    return Response.err("Save modified MCP-held program before closing: "
+                // A tool-held close would block the EDT on a modal "Save Program?" dialog.
+                if (program.isChanged()) {
+                    return Response.err("Save modified program before closing: "
                         + program.getDomainFile().getPathname());
                 }
                 matchingPrograms.add(program);
